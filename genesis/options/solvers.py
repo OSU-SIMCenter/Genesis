@@ -385,6 +385,8 @@ class MPMOptions(Options):
         Whether to use sparse grid. Defaults to False. Don't touch unless you know what you are doing.
     leaf_block_size : int, optional
         Size of the leaf block for sparse mode. Defaults to 8.
+    use_legacy_solver : bool, optional
+        Whether to use the legacy MPM solver. Defaults to True.
     """
 
     dt: Optional[float] = None
@@ -402,6 +404,8 @@ class MPMOptions(Options):
     leaf_block_size: int = (
         8  # NOTE: taichi_elements uses 4, which in our case will hang and crash. Probably due to some memory access issue.
     )
+
+    use_legacy_solver: bool = True
 
     def __init__(self, **data):
         super().__init__(**data)
