@@ -460,8 +460,12 @@ class RasterizerContext:
                     )
                     mesh.visual = mu.surface_uvs_to_trimesh_visual(mpm_entity.surface, n_verts=len(mesh.vertices))
 
-                    tfs = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
-                    tfs[:, :3, 3] = mpm_entity.init_particles
+                    tfs = []; tfs_base = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
+                    for i in self.rendered_envs_idx:
+                        tfs_temp = tfs_base.copy()
+                        tfs_temp[:, :3, 3] = mpm_entity.init_particles + self.scene.envs_offset[i]
+                        tfs.append(tfs_temp)
+                    tfs = np.concatenate(tfs)
                     self.add_static_node(mpm_entity, pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs))
 
                 elif mpm_entity.surface.vis_mode == "visual":
@@ -473,53 +477,58 @@ class RasterizerContext:
 
             # boundary
             if self.visualize_mpm_boundary:
-                self.add_node(
-                    pyrender.Mesh.from_trimesh(
-                        mu.create_box(
-                            bounds=np.array(
-                                [self.sim.mpm_solver.boundary.lower, self.sim.mpm_solver.boundary.upper],
-                                dtype=np.float32,
+                for i in self.rendered_envs_idx:
+                    self.add_node(
+                        pyrender.Mesh.from_trimesh(
+                            mu.create_box(
+                                bounds=np.array(
+                                    [self.sim.mpm_solver.boundary.lower, self.sim.mpm_solver.boundary.upper],
+                                    dtype=np.float32,
+                                ) + self.scene.envs_offset[i],
+                                wireframe=True,
+                                color=(1.0, 1.0, 0.0, 1.0),
                             ),
-                            wireframe=True,
-                            color=(1.0, 1.0, 0.0, 1.0),
-                        ),
-                        smooth=True,
+                            smooth=True,
+                        )
                     )
-                )
 
     def update_mpm(self, buffer_updates):
         if self.sim.mpm_solver.is_active():
-            idx = self.rendered_envs_idx[0]
-            particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()[:, idx]
-            active_all = self.sim.mpm_solver.particles_render.active.to_numpy(dtype=gs.np_bool)[:, idx]
-            active_all = active_all.astype(dtype=np.bool_, copy=False)
-            vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()[:, idx, :]
+            particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()
+            active_all = self.sim.mpm_solver.particles_render.active.to_numpy(dtype=np.bool_)
+            vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()
 
             for mpm_entity in self.sim.mpm_solver.entities:
                 if mpm_entity.surface.vis_mode == "recon":
-                    mesh = pu.particles_to_mesh(
-                        positions=particles_all[mpm_entity.particle_start : mpm_entity.particle_end][
-                            active_all[mpm_entity.particle_start : mpm_entity.particle_end]
-                        ],
-                        radius=self.sim.mpm_solver.particle_radius,
-                        backend=mpm_entity.surface.recon_backend,
-                    )
-                    mesh.visual = mu.surface_uvs_to_trimesh_visual(mpm_entity.surface, n_verts=len(mesh.vertices))
-                    self.add_dynamic_node(mpm_entity, pyrender.Mesh.from_trimesh(mesh, smooth=True))
+                    for i in self.rendered_envs_idx:
+                        mesh = pu.particles_to_mesh(
+                            positions=particles_all[mpm_entity.particle_start : mpm_entity.particle_end, i][
+                                active_all[mpm_entity.particle_start : mpm_entity.particle_end, i]
+                            ] + self.scene.envs_offset[i],
+                            radius=self.sim.mpm_solver.particle_radius,
+                            backend=mpm_entity.surface.recon_backend,
+                        )
+                        mesh.visual = mu.surface_uvs_to_trimesh_visual(mpm_entity.surface, n_verts=len(mesh.vertices))
+                        self.add_dynamic_node(mpm_entity, pyrender.Mesh.from_trimesh(mesh, smooth=True))
 
                 elif mpm_entity.surface.vis_mode == "particle":
-                    tfs = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
-                    tfs[:, :3, 3] = particles_all[mpm_entity.particle_start : mpm_entity.particle_end]
+                    tfs = []; tfs_base = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
+                    for i in self.rendered_envs_idx:
+                        tfs_temp = tfs_base.copy()
+                        tfs_temp[:, :3, 3] = particles_all[mpm_entity.particle_start : mpm_entity.particle_end, i] + self.scene.envs_offset[i]
+                        tfs.append(tfs_temp)
+                    tfs = np.concatenate(tfs)
 
                     node = self._scene.get_buffer_id(self.static_nodes[mpm_entity.uid], "model")
                     buffer_updates[node] = tfs.transpose((0, 2, 1))
 
                 elif mpm_entity.surface.vis_mode == "visual":
-                    mpm_entity._vmesh.verts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end]
-                    self.add_dynamic_node(
-                        mpm_entity,
-                        pyrender.Mesh.from_trimesh(mpm_entity.vmesh.trimesh, smooth=mpm_entity.surface.smooth),
-                    )
+                    for i in self.rendered_envs_idx:
+                        mpm_entity._vmesh.verts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end, i] + self.scene.envs_offset[i]
+                        self.add_dynamic_node(
+                            mpm_entity,
+                            pyrender.Mesh.from_trimesh(mpm_entity.vmesh.trimesh, smooth=mpm_entity.surface.smooth),
+                        )
 
     def on_sph(self):
         if self.sim.sph_solver.is_active():
