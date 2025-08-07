@@ -1,0 +1,44 @@
+<mujoco model="agforge_demo">
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
+  <option timestep="0.01" iterations="4" gravity="0 0 0"/>
+
+  <default>
+    <joint armature="0.1" damping="1" limited="true"/>
+    <geom contype="1" conaffinity="1" condim="3" density="1000" friction="1 0.5 0.5"/>
+  </default>
+
+  <asset>
+    <material name="gripper" rgba="0.8 0.2 0.2 1"/>
+  </asset>
+
+  <worldbody>
+    <light cutoff="100" diffuse="1 1 1" dir="0 0 -1" directional="true" pos="0 0 3"/>
+    <body name="base_plate" pos="0 0 0">
+      <joint name="x_slider" type="slide" axis="1 0 0" range="-0.3 0.1"/>
+      <inertial pos="0 0 0" mass="1e-7" diaginertia="1e-7 1e-7 1e-7"/>
+
+      <body name="hinge_cylinder" pos="0 0 0.3">
+        <joint name="x_hinge" type="hinge" axis="1 0 0" limited="false"/>
+        <inertial pos="0 0 0" mass="1e-7" diaginertia="1e-7 1e-7 1e-7"/>
+
+        <body name="clamp_bar" pos="0 0 0">
+          <body name="left_gripper" pos="0 -0.11 0">
+            <joint name="left_gripper_slide" type="slide" axis="0 1 0" range="-0.01 0.11"/>
+            <geom type="box" size="0.025 0.02 0.06" material="gripper"/>
+          </body>
+          <body name="right_gripper" pos="0 0.11 0">
+            <joint name="right_gripper_slide" type="slide" axis="0 -1 0" range="-0.01 0.11"/>
+            <geom type="box" size="0.025 0.02 0.06" material="gripper"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position joint="x_slider"            kp="1000" kv="100"/>
+    <position joint="x_hinge"             kp="1000" kv="100"/>
+    <position joint="left_gripper_slide"  kp="1000" kv="100"/>
+    <position joint="right_gripper_slide" kp="1000" kv="100"/>
+  </actuator>
+</mujoco>
