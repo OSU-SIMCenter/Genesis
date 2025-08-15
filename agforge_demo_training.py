@@ -41,7 +41,7 @@ class AgilityForgeEnv:
     An RL environment for a robotic forging task.
     The goal is to deform a cylindrical MPM object into a target rectangular shape.
     """
-    def __init__(self, num_envs: int, show_viewer: bool = False):
+    def __init__(self, num_envs: int, show_viewer: bool = False, record: bool = False):
         self.num_envs = num_envs
         self.device = gs.device
         self.ctrl_dt = 0.005
@@ -68,15 +68,17 @@ class AgilityForgeEnv:
         self._add_visual_guides()
         
         # Add recording camera
-        self.recording_camera = self.scene.add_camera(
-            res=(1280, 720),
-            pos=(-0.9, 0.05, 0.87),
-            lookat=(0.62, 0.58, 0.017),
-            fov=45,
-            GUI=False,
-        )
+        if record:
+            self.recording_camera = self.scene.add_camera(
+                res=(1280, 720),
+                pos=(-0.9, 0.05, 0.87),
+                lookat=(0.62, 0.58, 0.017),
+                fov=45,
+                GUI=False,
+            )
+            self.scene.add_camera(GUI=True)
+        self.record = record
         
-        self.scene.add_camera(GUI=True)
         self.scene.build(n_envs=num_envs, env_spacing=(0.75, 0.5))
 
         # Final Initializations
@@ -170,6 +172,14 @@ class AgilityForgeEnv:
         obs, _ = self.get_observations()
         return obs, None
 
+    def step_action(self, num_action_steps):
+        if self.record:
+            for _ in range(num_action_steps):
+                self.scene.step()
+                self.recording_camera.render(rgb=True)
+        else:
+            for _ in range(num_action_steps): self.scene.step()
+
     def step(self, actions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """Applies an action and steps the simulation forward."""
         self.episode_length_buf += 1
@@ -179,25 +189,19 @@ class AgilityForgeEnv:
         qpos = self.robot.entity.get_qpos()
         qpos[:, 0:2] = actions[:, 0:2]
         self.robot.apply_action(qpos)
-        for _ in range(self.action_duration_steps):
-            self.scene.step()
-            self.recording_camera.render(rgb=True)
+        self.step_action(self.action_duration_steps)
 
         # Phase 2: Close/open gripper
         qpos[:, 2:4] = actions[:, 2].unsqueeze(-1)
         self.robot.apply_action(qpos)
-        for _ in range(self.action_duration_steps):
-            self.scene.step()
-            self.recording_camera.render(rgb=True)
+        self.step_action(self.action_duration_steps)
 
         # Phase 3: Reset gripper, keeping slider and hinge positions
         qpos_prev = self.robot.entity.get_qpos()
         reset_qpos = self.initial_robot_qpos.clone()
         reset_qpos[:, 0:2] = qpos_prev[:, 0:2]
         self.robot.apply_action(reset_qpos)
-        for _ in range(self.reset_duration_steps):
-            self.scene.step()
-            self.recording_camera.render(rgb=True)
+        self.step_action(self.reset_duration_steps)
 
         # Check for episode termination
         self.reset_buf = (self.episode_length_buf >= self.max_episode_length)
@@ -227,15 +231,16 @@ class AgilityForgeEnv:
 
 def main():
     # --- Hyperparameters ---
-    NUM_ENVS = 6
+    NUM_ENVS = 10
     MAX_ITERATIONS = 1
-    SHOW_VIEWER = True
+    SHOW_VIEWER = False
+    RECORD = False
 
-    gs.init(logging_level="warning", precision="32", backend=gs.gpu)
-    env = AgilityForgeEnv(num_envs=NUM_ENVS, show_viewer=SHOW_VIEWER)
+    gs.init(logging_level="info", precision="32", backend=gs.gpu)
+    env = AgilityForgeEnv(num_envs=NUM_ENVS, show_viewer=SHOW_VIEWER, record=RECORD)
 
     # Start recording
-    env.start_recording()
+    if RECORD: env.start_recording()
 
     # Configuration for the PPO algorithm from rsl_rl
     train_cfg = {
@@ -243,7 +248,7 @@ def main():
         "policy": {"class_name": "ActorCritic", "actor_hidden_dims": [256, 128], "critic_hidden_dims": [256, 128]},
         "runner": {"max_iterations": MAX_ITERATIONS, "run_name": "agforge_demo"},
         "runner_class_name": "OnPolicyRunner",
-        "num_steps_per_env": 3,
+        "num_steps_per_env": 1,
         "empirical_normalization": False,
         "save_interval": 50,
     }
@@ -253,7 +258,7 @@ def main():
     runner.learn(num_learning_iterations=MAX_ITERATIONS, init_at_random_ep_len=True)
     
     # Stop recording and save video
-    env.stop_recording()
+    if RECORD: env.stop_recording()
 
 if __name__ == "__main__":
     main()
