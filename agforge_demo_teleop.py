@@ -25,7 +25,7 @@ class KeyboardDevice:
             self.pressed.discard(key)
 
 def build_scene():
-    gs.init(seed=0, precision="32", backend=gs.gpu, logging_level="warning")
+    gs.init(seed=0, precision="32", backend=gs.gpu, logging_level="info")
     dt = 0.005
 
     scene = gs.Scene(
