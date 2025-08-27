@@ -1,5 +1,5 @@
 import inspect
-import taichi as ti
+import gstaichi as ti
 from .base_mpm_solver import BaseMPMSolver
 
 _BASE_INIT_SIG = inspect.signature(BaseMPMSolver.__init__)
