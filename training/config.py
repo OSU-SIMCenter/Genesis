@@ -6,6 +6,8 @@ from typing import Tuple, List
 
 ureg = UnitRegistry()
 
+GENERATED_ROBOT_XML_PATH = "genesis/assets/xml/agforge_demo.xml"
+
 # --------------------------------------------------------------------------
 # Base Parametric Relationships
 # --------------------------------------------------------------------------
@@ -16,9 +18,9 @@ CYLINDER_POS = np.array([0.0, 0.0, 6 * CYLINDER_RADIUS])
 CYLINDER_EULER = (0.0, 90.0, 0.0) # Orients the cylinder along the X-axis
 
 # --- MPM Boundary Calculation with Solver Padding ---
-BASE_GRID_DENSITY = int(12 / CYLINDER_DIAMETER)
+BASE_GRID_DENSITY = int(10 / CYLINDER_DIAMETER)
 DX = 1.0 / BASE_GRID_DENSITY  # Cell size
-MPM_SOLVER_PADDING = 3 * DX    # Internal padding used by the MPM solver
+MPM_SOLVER_PADDING = 3 * DX   # Internal padding used by the MPM solver
 
 # Asymmetrical user-defined padding
 MPM_X_PADDING_LOWER = CYLINDER_HEIGHT * 0.85
