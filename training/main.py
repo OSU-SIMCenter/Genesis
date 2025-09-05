@@ -1,16 +1,16 @@
 import argparse
 import genesis as gs
 
+# Import config dataclasses and parameters needed for the builder
 from config import SimConfig, EnvConfig, GeneralConfig, SacConfig, AdamConfig
-from environment import AgilityForgeEnv
-from trainers import SACTrainer, AdamTrainer, BaseTrainer
+from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS, GENERATED_ROBOT_XML_PATH
+
+# Import the builder class
+from agforge_builder import RobotXMLGenerator
 
 def main():
     """
     Main entry point for the AgilityForge training pipeline.
-
-    Initializes the simulation environment and runs the selected training
-    algorithm (SAC or Adam) based on command-line arguments.
     """
     parser = argparse.ArgumentParser(description="Train a robotic forging task with a selectable optimizer.")
     parser.add_argument(
@@ -22,14 +22,30 @@ def main():
     )
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu, logging_level="info")
-
+    # --- Step 1: Load configurations ---
     sim_cfg = SimConfig()
     env_cfg = EnvConfig()
     general_cfg = GeneralConfig()
 
+    # --- Step 2: Dynamically generate the robot XML ---
+    print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
+    generator = RobotXMLGenerator(
+        cylinder_radius=CYLINDER_RADIUS,
+        cylinder_height=CYLINDER_HEIGHT,
+        cylinder_pos=CYLINDER_POS,
+        sim_config=sim_cfg
+    )
+    generator.write_to_file()
+
+    # --- Step 3: Initialize Genesis and create environment ---
+    gs.init(backend=gs.gpu, logging_level="info")
+    
+    from environment import AgilityForgeEnv
+    from trainers import SACTrainer, AdamTrainer, BaseTrainer
+    
     env = AgilityForgeEnv(sim_cfg, env_cfg, general_cfg)
 
+    # --- Step 4: Select trainer ---
     trainer: BaseTrainer
     if args.optimizer == "sac":
         sac_cfg = SacConfig()
@@ -40,6 +56,7 @@ def main():
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
+    # --- Step 5: Run training ---
     print(f"Preparing to train with the '{args.optimizer}' optimizer.")
     env.start_recording()
     trainer.train()
