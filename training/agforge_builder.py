@@ -8,9 +8,9 @@ class RobotXMLGenerator:
     The robot's dimensions and joint ranges are parametrically derived from 
     the cylinder's properties in the provided configuration.
     """
-    def __init__(self, cylinder_radius, cylinder_height, cylinder_pos, sim_config):
-        self.kp = sim_config.kp
-        self.kv = sim_config.kv
+    def __init__(self, cylinder_radius, cylinder_height, cylinder_pos, robot_cfg):
+        self.kp = robot_cfg.kp
+        self.kv = robot_cfg.kv
         
         # Gripper geometry is sized to handle the cylinder
         self.gripper_size = np.array([
@@ -44,12 +44,10 @@ class RobotXMLGenerator:
         """Populates the XML template with the derived parameters."""
         return f"""
 <mujoco model="agforge_demo">
-  <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
-  <option timestep="0.01" iterations="4" gravity="0 0 0"/>
+  <compiler angle="degree" inertiafromgeom="true"/>
 
   <default>
-    <joint armature="0.1" damping="1" limited="true"/>
-    <geom contype="1" conaffinity="1" condim="3" density="1000" friction="1 0.5 0.5"/>
+    <joint armature="0.1" damping="1"/>
   </default>
 
   <asset>
@@ -63,7 +61,7 @@ class RobotXMLGenerator:
       <inertial pos="0 0 0" mass="1e-7" diaginertia="1e-7 1e-7 1e-7"/>
 
       <body name="hinge_cylinder" pos="0 0 {self.hinge_pos_z:.4f}">
-        <joint name="x_hinge" type="hinge" axis="1 0 0" limited="false"/>
+        <joint name="x_hinge" type="hinge" axis="1 0 0"/>
         <inertial pos="0 0 0" mass="1e-7" diaginertia="1e-7 1e-7 1e-7"/>
 
         <body name="clamp_bar" pos="0 0 0">
