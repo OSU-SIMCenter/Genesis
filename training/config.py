@@ -74,18 +74,17 @@ CAMERA_POS = tuple(CYLINDER_POS + CAMERA_POS_OFFSET)
 # --------------------------------------------------------------------------
 # Configuration Dataclasses
 # --------------------------------------------------------------------------
+SUBSTEPS = 64
 
 @dataclass
 class SimConfig:
     """Parameters related to the core physics simulation."""
-    dt: float = 0.005
-    substeps: int = 32
+    dt: float = 1.5e-6 * SUBSTEPS
+    substeps: int = SUBSTEPS
     gravity: Tuple[float, float, float] = (0, 0, 0)
     grid_density: int = BASE_GRID_DENSITY
     lower_bound: Tuple[float, float, float] = MPM_LOWER_BOUND
     upper_bound: Tuple[float, float, float] = MPM_UPPER_BOUND
-    kp: float = 4500.0
-    kv: float = 450.0
 
 @dataclass
 class EnvConfig:
@@ -131,3 +130,25 @@ class GeneralConfig:
     log_dir: str = "logs/agforge_parametric"
     camera_pos: Tuple[float, float, float] = CAMERA_POS
     camera_lookat: Tuple[float, float, float] = CAMERA_LOOKAT
+
+ureg.define("robot_time_unit = 3e2 * second = rtu")  # Define custom time unit with shorthand
+
+def convert_to_robot_time_units(quantity: ureg.Quantity) -> float:
+    """Convert a quantity to use robot_time_unit instead of second for time components."""
+    return quantity.to(str(quantity.to_base_units().units).replace('second', 'robot_time_unit')).magnitude
+
+@dataclass
+class RobotConfig:
+    """Parameters for the robot arm in the MuJoCo XML file."""
+    _kp: ureg.Quantity = 1000.0 * ureg.newton * ureg.meter  # Stiffness in SI units (N·m)
+    _kv: ureg.Quantity = 50.0 * ureg.newton * ureg.meter * ureg.second  # Damping in SI units (N·m·s)
+    
+    @property
+    def kp(self) -> float:
+        """Get stiffness in robot units (N·m)"""
+        return convert_to_robot_time_units(self._kp)
+        
+    @property
+    def kv(self) -> float:
+        """Get damping with time unit converted to robot_time_unit (N·m·rtu)"""
+        return convert_to_robot_time_units(self._kv)
