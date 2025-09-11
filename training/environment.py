@@ -70,9 +70,10 @@ class AgilityForgeEnv:
     def _setup_scene(self):
         """Configures and initializes the simulation scene from config objects."""
         viewer_options = gs.options.ViewerOptions(
-            camera_pos=self.general_cfg.camera_pos, 
-            camera_lookat=self.general_cfg.camera_lookat, 
-            max_FPS=60
+            camera_pos=self.general_cfg.camera_pos,
+            camera_lookat=self.general_cfg.camera_lookat,
+            max_FPS=60,
+            res=(1280, 720),
         ) if self.general_cfg.show_viewer else gs.options.ViewerOptions()
         
         self.scene = gs.Scene(
