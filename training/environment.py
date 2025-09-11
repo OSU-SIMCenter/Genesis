@@ -1,22 +1,23 @@
 import torch
 import genesis as gs
-from config import SimConfig, EnvConfig, GeneralConfig
+from config import SimConfig, EnvConfig, GeneralConfig, RobotConfig, GENERATED_ROBOT_XML_PATH
 from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS, CYLINDER_EULER
 from config import TARGET_GUIDE_BOX_SIZE, TARGET_GUIDE_BOX_POS
 
 class AgilityForgeManipulator:
     """Encapsulates the robot's properties and provides a clean action interface."""
-    def __init__(self, scene: gs.Scene):
+    def __init__(self, scene: gs.Scene, robot_cfg: RobotConfig):
         self.device = gs.device
-        morph = gs.morphs.MJCF(file="xml/agforge_demo.xml")
+        self.robot_cfg = robot_cfg
+        morph = gs.morphs.MJCF(file=GENERATED_ROBOT_XML_PATH)
         self.entity = scene.add_entity(morph=morph, material=gs.materials.Rigid(gravity_compensation=1.0))
         self.ee_link = self.entity.get_link("clamp_bar")
         self.default_joint_angles = torch.tensor([0.0, 0.0, 0.0, 0.0], device=self.device)
 
-    def set_pd_gains(self, kp: float, kv: float):
+    def set_pd_gains(self):
         """Sets the Proportional-Derivative controller gains for the robot's joints."""
-        self.entity.set_dofs_kp(torch.full((4,), kp, device=self.device))
-        self.entity.set_dofs_kv(torch.full((4,), kv, device=self.device))
+        self.entity.set_dofs_kp(torch.full((4,), self.robot_cfg.kp, device=self.device))
+        self.entity.set_dofs_kv(torch.full((4,), self.robot_cfg.kv, device=self.device))
 
     def reset(self, envs_idx: torch.Tensor):
         """Resets the robot's joint positions to default for specified environments."""
@@ -36,14 +37,15 @@ class AgilityForgeManipulator:
 
 class AgilityForgeEnv:
     """An RL environment for the robotic forging task, configured parametrically."""
-    def __init__(self, sim_cfg: SimConfig, env_cfg: EnvConfig, general_cfg: GeneralConfig):
+    def __init__(self, sim_cfg: SimConfig, env_cfg: EnvConfig, general_cfg: GeneralConfig, robot_cfg: RobotConfig):
         self.sim_cfg = sim_cfg
         self.env_cfg = env_cfg
         self.general_cfg = general_cfg
+        self.robot_cfg = robot_cfg
         self.device = gs.device
 
         self._setup_scene()
-        self.robot = AgilityForgeManipulator(scene=self.scene)
+        self.robot = AgilityForgeManipulator(scene=self.scene, robot_cfg=self.robot_cfg)
         self._setup_entities()
         self._add_visual_guides()
         
@@ -52,7 +54,7 @@ class AgilityForgeEnv:
         
         self.scene.build(n_envs=self.env_cfg.num_envs, env_spacing=(0.75, 0.5))
 
-        self.robot.set_pd_gains(self.sim_cfg.kp, self.sim_cfg.kv)
+        self.robot.set_pd_gains()
         self.initial_robot_qpos = self.robot.entity.get_qpos().clone()
         self.initial_mpm_pos = self.mpm_entity.get_state().pos.clone()
         self._set_fixed_particles()
