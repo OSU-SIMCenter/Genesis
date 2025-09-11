@@ -88,6 +88,7 @@ class RasterizerContext:
         self.segmentation_level = options.segmentation_level
         self.lights = options.lights
         self.visualize_mpm_boundary = options.visualize_mpm_boundary
+        self.visualize_mpm_grid = options.visualize_mpm_grid
         self.visualize_sph_boundary = options.visualize_sph_boundary
         self.visualize_pbd_boundary = options.visualize_pbd_boundary
         self.particle_size_scale = options.particle_size_scale
@@ -529,6 +530,26 @@ class RasterizerContext:
                                 color=(1.0, 1.0, 0.0, 1.0),
                             ),
                             smooth=True,
+                        )
+                    )
+            
+            # grid
+            if self.visualize_mpm_grid:
+                grid_res = self.sim.mpm_solver.grid_res
+                grid_offset = self.sim.mpm_solver.grid_offset.to_numpy()
+                dx = self.sim.mpm_solver.dx
+                
+                for i in self.rendered_envs_idx:
+                    grid_nodes = []
+                    for x in range(grid_res[0]):
+                        for y in range(grid_res[1]):
+                            for z in range(grid_res[2]):
+                                grid_nodes.append([(x + grid_offset[0]) * dx, (y + grid_offset[1]) * dx, (z + grid_offset[2]) * dx])
+                    
+                    self.add_node(
+                        pyrender.Mesh.from_points(
+                            np.array(grid_nodes) + self.scene.envs_offset[i],
+                            colors=np.array([1.0, 1.0, 0.0, 1.0]),
                         )
                     )
 
