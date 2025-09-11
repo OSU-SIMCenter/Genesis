@@ -2,7 +2,7 @@ import argparse
 import genesis as gs
 
 # Import config dataclasses and parameters needed for the builder
-from config import SimConfig, EnvConfig, GeneralConfig, SacConfig, AdamConfig
+from config import SimConfig, EnvConfig, GeneralConfig, RobotConfig, SacConfig, AdamConfig
 from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS, GENERATED_ROBOT_XML_PATH
 
 # Import the builder class
@@ -26,6 +26,7 @@ def main():
     sim_cfg = SimConfig()
     env_cfg = EnvConfig()
     general_cfg = GeneralConfig()
+    robot_cfg = RobotConfig()
 
     # --- Step 2: Dynamically generate the robot XML ---
     print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
@@ -33,7 +34,7 @@ def main():
         cylinder_radius=CYLINDER_RADIUS,
         cylinder_height=CYLINDER_HEIGHT,
         cylinder_pos=CYLINDER_POS,
-        sim_config=sim_cfg
+        robot_cfg=robot_cfg
     )
     generator.write_to_file()
 
@@ -43,7 +44,7 @@ def main():
     from environment import AgilityForgeEnv
     from trainers import SACTrainer, AdamTrainer, BaseTrainer
     
-    env = AgilityForgeEnv(sim_cfg, env_cfg, general_cfg)
+    env = AgilityForgeEnv(sim_cfg, env_cfg, general_cfg, robot_cfg)
 
     # --- Step 4: Select trainer ---
     trainer: BaseTrainer
