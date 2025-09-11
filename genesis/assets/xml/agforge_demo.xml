@@ -36,9 +36,9 @@
   </worldbody>
 
   <actuator>
-    <position joint="x_slider"           kp="4500.0" kv="450.0"/>
-    <position joint="x_hinge"            kp="4500.0" kv="450.0"/>
-    <position joint="left_gripper_slide"  kp="4500.0" kv="450.0"/>
-    <position joint="right_gripper_slide" kp="4500.0" kv="450.0"/>
+    <position joint="x_slider"           kp="10000000000000.0" kv="5000000.0"/>
+    <position joint="x_hinge"            kp="10000000000000.0" kv="5000000.0"/>
+    <position joint="left_gripper_slide"  kp="10000000000000.0" kv="5000000.0"/>
+    <position joint="right_gripper_slide" kp="10000000000000.0" kv="5000000.0"/>
   </actuator>
 </mujoco>
