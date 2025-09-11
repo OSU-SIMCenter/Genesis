@@ -75,6 +75,8 @@ class VisOptions(Options):
         The color of the scene's ambient light.
     visualize_mpm_boundary : bool
         Whether to visualize the boundary of the MPM Solver.
+    visualize_mpm_grid : bool
+        Whether to visualize the grid nodes of the MPM Solver.
     visualize_sph_boundary : bool
         Whether to visualize the boundary of the SPH Solver.
     visualize_pbd_boundary : bool
@@ -112,6 +114,7 @@ class VisOptions(Options):
     background_color: tuple = (0.04, 0.08, 0.12)
     ambient_light: tuple = (0.1, 0.1, 0.1)
     visualize_mpm_boundary: bool = False
+    visualize_mpm_grid: bool = False
     visualize_sph_boundary: bool = False
     visualize_pbd_boundary: bool = False
     segmentation_level: str = "link"  # ['entity', 'link', 'geom']
