@@ -84,7 +84,7 @@ class AgilityForgeEnv:
                 lower_bound=self.sim_cfg.lower_bound, upper_bound=self.sim_cfg.upper_bound,
                 gravity=self.sim_cfg.gravity, grid_density=self.sim_cfg.grid_density
             ),
-            vis_options=gs.options.VisOptions(show_world_frame=False, visualize_mpm_boundary=True),
+            vis_options=gs.options.VisOptions(show_world_frame=False, visualize_mpm_boundary=True, visualize_mpm_grid=True),
             show_viewer=self.general_cfg.show_viewer,
         )
         self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", pos=(0, 0, 0.01), fixed=True))
