@@ -77,7 +77,12 @@ CAMERA_POS = tuple(CYLINDER_POS + CAMERA_POS_OFFSET)
 SUBSTEPS = 64
 
 @dataclass
-class SimConfig:
+class BaseConfig:
+    """Base class for configurations."""
+    pass
+
+@dataclass
+class SimConfig(BaseConfig):
     """Parameters related to the core physics simulation."""
     dt: float = 1.5e-6 * SUBSTEPS
     substeps: int = SUBSTEPS
@@ -87,7 +92,7 @@ class SimConfig:
     upper_bound: Tuple[float, float, float] = MPM_UPPER_BOUND
 
 @dataclass
-class EnvConfig:
+class EnvConfig(BaseConfig):
     """Parameters related to the RL environment and task."""
     num_envs: int = 1
     max_episode_length: int = int(100. / SimConfig.dt)
@@ -100,7 +105,7 @@ class EnvConfig:
     target_shape_bounds: torch.Tensor = TARGET_SHAPE_BOUNDS
 
 @dataclass
-class SacConfig:
+class SacConfig(BaseConfig):
     """Hyperparameters for the SAC (PPO) reinforcement learning algorithm."""
     class_name: str = "PPO"
     gamma: float = 0.99
@@ -117,13 +122,13 @@ class SacConfig:
     empirical_normalization: bool = False
 
 @dataclass
-class AdamConfig:
+class AdamConfig(BaseConfig):
     """Hyperparameters for the Adam gradient-based optimizer."""
     learning_rate: float = 1e-3
     max_iterations: int = 1000
 
 @dataclass
-class GeneralConfig:
+class GeneralConfig(BaseConfig):
     """General settings for visualization, logging, and recording."""
     show_viewer: bool = True
     record: bool = False
@@ -131,24 +136,55 @@ class GeneralConfig:
     camera_pos: Tuple[float, float, float] = CAMERA_POS
     camera_lookat: Tuple[float, float, float] = CAMERA_LOOKAT
 
-ureg.define("robot_time_unit = 3e2 * second = rtu")  # Define custom time unit with shorthand
-
-def convert_to_robot_time_units(quantity: ureg.Quantity) -> float:
-    """Convert a quantity to use robot_time_unit instead of second for time components."""
-    return quantity.to(str(quantity.to_base_units().units).replace('second', 'robot_time_unit')).magnitude
+def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> float:
+    """Convert a quantity to use a specified time unit instead of seconds."""
+    return quantity.to(str(quantity.to_base_units().units).replace('second', time_unit_str)).magnitude
 
 @dataclass
-class RobotConfig:
+class RobotConfig(BaseConfig):
     """Parameters for the robot arm in the MuJoCo XML file."""
     _kp: ureg.Quantity = 1000.0 * ureg.newton * ureg.meter  # Stiffness in SI units (N·m)
     _kv: ureg.Quantity = 50.0 * ureg.newton * ureg.meter * ureg.second  # Damping in SI units (N·m·s)
-    
+    time_unit_str: str = "robot_time_unit"
+
+    def __post_init__(self):
+        ureg.define(f"{self.time_unit_str} = 3e2 * second = rtu")
+
     @property
     def kp(self) -> float:
         """Get stiffness in robot units (N·m)"""
-        return convert_to_robot_time_units(self._kp)
+        return convert_to_robot_time_units(self._kp, self.time_unit_str)
         
     @property
     def kv(self) -> float:
-        """Get damping with time unit converted to robot_time_unit (N·m·rtu)"""
-        return convert_to_robot_time_units(self._kv)
+        """Get damping with time unit converted to the specified time unit (N·m·rtu)"""
+        return convert_to_robot_time_units(self._kv, self.time_unit_str)
+
+@dataclass
+class TrainingConfig(BaseConfig):
+    """Aggregated configuration for training."""
+    sim: SimConfig = field(default_factory=SimConfig)
+    env: EnvConfig = field(default_factory=EnvConfig)
+    general: GeneralConfig = field(default_factory=GeneralConfig)
+    robot: RobotConfig = field(default_factory=RobotConfig)
+    sac: SacConfig = field(default_factory=SacConfig)
+    adam: AdamConfig = field(default_factory=AdamConfig)
+
+@dataclass
+class TeleopSimConfig(SimConfig):
+    dt: float = 0.016  # Target 60 FPS for smoother teleop
+    substeps: int = 32
+
+@dataclass
+class TeleopRobotConfig(RobotConfig):
+    def __post_init__(self):
+        ureg.define("robot_time_unit = 1.0 * second = rtu")
+
+@dataclass
+class TeleopConfig(BaseConfig):
+    """Aggregated configuration for teleoperation."""
+    sim: SimConfig = field(default_factory=TeleopSimConfig)
+    env: EnvConfig = field(default_factory=lambda: EnvConfig(num_envs=1))
+    general: GeneralConfig = field(default_factory=lambda: GeneralConfig(show_viewer=True, record=False))
+    robot: RobotConfig = field(default_factory=TeleopRobotConfig)
+    performance_mode: bool = True
