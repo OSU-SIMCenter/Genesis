@@ -2,7 +2,7 @@ import argparse
 import genesis as gs
 
 # Import config dataclasses and parameters needed for the builder
-from config import SimConfig, EnvConfig, GeneralConfig, RobotConfig, SacConfig, AdamConfig
+from config import TrainingConfig
 from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS, GENERATED_ROBOT_XML_PATH
 
 # Import the builder class
@@ -23,10 +23,7 @@ def main():
     args = parser.parse_args()
 
     # --- Step 1: Load configurations ---
-    sim_cfg = SimConfig()
-    env_cfg = EnvConfig()
-    general_cfg = GeneralConfig()
-    robot_cfg = RobotConfig()
+    cfg = TrainingConfig()
 
     # --- Step 2: Dynamically generate the robot XML ---
     print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
@@ -34,7 +31,7 @@ def main():
         cylinder_radius=CYLINDER_RADIUS,
         cylinder_height=CYLINDER_HEIGHT,
         cylinder_pos=CYLINDER_POS,
-        robot_cfg=robot_cfg
+        robot_cfg=cfg.robot
     )
     generator.write_to_file()
 
@@ -44,16 +41,14 @@ def main():
     from environment import AgilityForgeEnv
     from trainers import SACTrainer, AdamTrainer, BaseTrainer
     
-    env = AgilityForgeEnv(sim_cfg, env_cfg, general_cfg, robot_cfg)
+    env = AgilityForgeEnv(cfg.sim, cfg.env, cfg.general, cfg.robot)
 
     # --- Step 4: Select trainer ---
     trainer: BaseTrainer
     if args.optimizer == "sac":
-        sac_cfg = SacConfig()
-        trainer = SACTrainer(env, sac_cfg, general_cfg)
+        trainer = SACTrainer(env, cfg.sac, cfg.general)
     elif args.optimizer == "adam":
-        adam_cfg = AdamConfig()
-        trainer = AdamTrainer(env, adam_cfg, general_cfg)
+        trainer = AdamTrainer(env, cfg.adam, cfg.general)
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
