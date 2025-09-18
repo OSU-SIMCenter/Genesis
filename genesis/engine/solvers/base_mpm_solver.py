@@ -88,20 +88,31 @@ class BaseMPMSolver(Solver):
             upper=self._upper_bound - self.boundary_padding,
         )
 
+    def _make_particle_state_template(self):
+        return {
+            "pos": gs.ti_vec3,  # position
+            "vel": gs.ti_vec3,  # velocity
+            "C": gs.ti_mat3,  # affine velocity field
+            "F": gs.ti_mat3,  # deformation gradient
+            "F_tmp": gs.ti_mat3,  # temp deformation gradient
+            "U": gs.ti_mat3,  # SVD
+            "V": gs.ti_mat3,  # SVD
+            "S": gs.ti_mat3,  # SVD
+            "actu": gs.ti_float,  # actuation
+            "Jp": gs.ti_float,  # volume ratio
+        }
+
+    def _make_particle_state_render_template(self):
+        return {
+            "pos": gs.ti_vec3,
+            "vel": gs.ti_vec3,
+            "active": gs.ti_bool,
+        }
+
     def init_particle_fields(self):
         # dynamic particle state
-        struct_particle_state = ti.types.struct(
-            pos=gs.ti_vec3,  # position
-            vel=gs.ti_vec3,  # velocity
-            C=gs.ti_mat3,  # affine velocity field
-            F=gs.ti_mat3,  # deformation gradient
-            F_tmp=gs.ti_mat3,  # temp deformation gradient
-            U=gs.ti_mat3,  # SVD
-            V=gs.ti_mat3,  # SVD
-            S=gs.ti_mat3,  # SVD
-            actu=gs.ti_float,  # actuation
-            Jp=gs.ti_float,  # volume ratio
-        )
+        struct_particle_state = ti.types.struct(**self._make_particle_state_template())
+        self._zero_particle_state = struct_particle_state.filled_with_scalar(gs.ti_float(0.0))
 
         # dynamic particle state without gradient
         struct_particle_state_ng = ti.types.struct(
@@ -120,11 +131,7 @@ class BaseMPMSolver(Solver):
         )
 
         # single frame particle state for rendering
-        struct_particle_state_render = ti.types.struct(
-            pos=gs.ti_vec3,
-            vel=gs.ti_vec3,
-            active=gs.ti_bool,
-        )
+        struct_particle_state_render = ti.types.struct(**self._make_particle_state_render_template())
 
         # construct fields
         self.particles = struct_particle_state.field(
@@ -144,12 +151,16 @@ class BaseMPMSolver(Solver):
             shape=self._batch_shape(self._n_particles), needs_grad=False, layout=ti.Layout.SOA
         )
 
+    def _make_grid_cell_state_template(self):
+        return {
+            "vel_in": gs.ti_vec3,  # input momentum/velocity
+            "mass": gs.ti_float,  # mass
+            "vel_out": gs.ti_vec3,  # output momentum/velocity
+        }
+
     def init_grid_fields(self):
-        grid_cell_state = ti.types.struct(
-            vel_in=gs.ti_vec3,  # input momentum/velocity
-            mass=gs.ti_float,  # mass
-            vel_out=gs.ti_vec3,  # output momentum/velocity
-        )
+        grid_cell_state = ti.types.struct(**self._make_grid_cell_state_template())
+        self._zero_grid_cell_state = grid_cell_state.filled_with_scalar(gs.ti_float(0.0))
 
         if self._use_sparse_grid:
             self.grid_block_0 = ti.root.dense(ti.axes(0), self._sim.substeps_local + 1)
@@ -512,52 +523,76 @@ class BaseMPMSolver(Solver):
     def substep_post_coupling_grad(self, f):
         self.g2p.grad(f)
 
+    # @ti.func
+    # def copy_frame_helper(self, source: ti.i32, target: ti.i32, i_p: ti.i32, i_b: ti.i32):
+    #     self.particles[target, i_p, i_b].pos = self.particles[source, i_p, i_b].pos
+    #     self.particles[target, i_p, i_b].vel = self.particles[source, i_p, i_b].vel
+    #     self.particles[target, i_p, i_b].F = self.particles[source, i_p, i_b].F
+    #     self.particles[target, i_p, i_b].C = self.particles[source, i_p, i_b].C
+    #     self.particles[target, i_p, i_b].Jp = self.particles[source, i_p, i_b].Jp
+    #     self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
+
     @ti.kernel
     def copy_frame(self, source: ti.i32, target: ti.i32):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            self.particles[target, i_p, i_b].pos = self.particles[source, i_p, i_b].pos
-            self.particles[target, i_p, i_b].vel = self.particles[source, i_p, i_b].vel
-            self.particles[target, i_p, i_b].F = self.particles[source, i_p, i_b].F
-            self.particles[target, i_p, i_b].C = self.particles[source, i_p, i_b].C
-            self.particles[target, i_p, i_b].Jp = self.particles[source, i_p, i_b].Jp
+            # self.copy_frame_helper(source, target, i_p, i_b)
+            self.particles[target, i_p, i_b] = self.particles[source, i_p, i_b]
 
-            self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
+    # @ti.func
+    # def copy_grad_helper(self, source: ti.i32, target: ti.i32, i_p: ti.i32, i_b: ti.i32):
+    #     self.particles.grad[target, i_p, i_b].pos = self.particles.grad[source, i_p, i_b].pos
+    #     self.particles.grad[target, i_p, i_b].vel = self.particles.grad[source, i_p, i_b].vel
+    #     self.particles.grad[target, i_p, i_b].F = self.particles.grad[source, i_p, i_b].F
+    #     self.particles.grad[target, i_p, i_b].C = self.particles.grad[source, i_p, i_b].C
+    #     self.particles.grad[target, i_p, i_b].Jp = self.particles.grad[source, i_p, i_b].Jp
+    #     self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
 
     @ti.kernel
     def copy_grad(self, source: ti.i32, target: ti.i32):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            self.particles.grad[target, i_p, i_b].pos = self.particles.grad[source, i_p, i_b].pos
-            self.particles.grad[target, i_p, i_b].vel = self.particles.grad[source, i_p, i_b].vel
-            self.particles.grad[target, i_p, i_b].F = self.particles.grad[source, i_p, i_b].F
-            self.particles.grad[target, i_p, i_b].C = self.particles.grad[source, i_p, i_b].C
-            self.particles.grad[target, i_p, i_b].Jp = self.particles.grad[source, i_p, i_b].Jp
+            # self.copy_grad_helper(source, target, i_p, i_b)
+            self.particles.grad[target, i_p, i_b] = self.particles.grad[source, i_p, i_b]
             self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
+
+    # @ti.func
+    # def reset_grid_helper(self, f: ti.i32, i: ti.i32, j: ti.i32, k: ti.i32, i_b: ti.i32):
+    #     self.grid[f, i, j, k, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
+    #     self.grid[f, i, j, k, i_b].mass = gs.ti_float(0.0)
+    #     self.grid[f, i, j, k, i_b].vel_out = ti.Vector.zero(gs.ti_float, 3)
+    
+    # @ti.func
+    # def reset_grid_grad_helper(self, f: ti.i32, i: ti.i32, j: ti.i32, k: ti.i32, i_b: ti.i32):
+    #     self.grid.grad[f, i, j, k, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
+    #     self.grid.grad[f, i, j, k, i_b].mass = gs.ti_float(0.0)
+    #     self.grid.grad[f, i, j, k, i_b].vel_out = ti.Vector.zero(gs.ti_float, 3)
 
     @ti.kernel
     def reset_grid_and_grad(self, f: ti.i32):
         # Zero out the grid at frame f for *all* grid cells and *all* batch indices
         for i, j, k, i_b in ti.ndrange(*self._grid_res, self._B):
-            self.grid[f, i, j, k, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
-            self.grid[f, i, j, k, i_b].mass = gs.ti_float(0.0)
-            self.grid[f, i, j, k, i_b].vel_out = ti.Vector.zero(gs.ti_float, 3)
+            # self.reset_grid_helper(f, i, j, k, i_b)
+            # self.reset_grid_grad_helper(f, i, j, k, i_b)
+            self.grid[f, i, j, k, i_b] = self._zero_grid_cell_state
+            self.grid.grad[f, i, j, k, i_b] = self._zero_grid_cell_state
 
-            self.grid.grad[f, i, j, k, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
-            self.grid.grad[f, i, j, k, i_b].mass = gs.ti_float(0.0)
-            self.grid.grad[f, i, j, k, i_b].vel_out = ti.Vector.zero(gs.ti_float, 3)
+    # @ti.func
+    # def reset_grad_till_frame_helper(self, i_f : ti.i32, i_p: ti.i32, i_b: ti.i32):
+    #     self.particles.grad[i_f, i_p, i_b].pos = ti.Vector.zero(gs.ti_float, 3)
+    #     self.particles.grad[i_f, i_p, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+    #     self.particles.grad[i_f, i_p, i_b].C = ti.Matrix.zero(gs.ti_float, 3, 3)
+    #     self.particles.grad[i_f, i_p, i_b].F = ti.Matrix.zero(gs.ti_float, 3, 3)
+    #     self.particles.grad[i_f, i_p, i_b].F_tmp = ti.Matrix.zero(gs.ti_float, 3, 3)
+    #     self.particles.grad[i_f, i_p, i_b].Jp = gs.ti_float(0.0)
+    #     self.particles.grad[i_f, i_p, i_b].U = ti.Matrix.zero(gs.ti_float, 3, 3)
+    #     self.particles.grad[i_f, i_p, i_b].V = ti.Matrix.zero(gs.ti_float, 3, 3)
+    #     self.particles.grad[i_f, i_p, i_b].S = ti.Matrix.zero(gs.ti_float, 3, 3)
 
     @ti.kernel
     def reset_grad_till_frame(self, f: ti.i32):
         # Zero out particle grads in frames [0, f-1], for all particles, all batch indices
         for i_f, i_p, i_b in ti.ndrange(f, self._n_particles, self._B):
-            self.particles.grad[i_f, i_p, i_b].pos = ti.Vector.zero(gs.ti_float, 3)
-            self.particles.grad[i_f, i_p, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
-            self.particles.grad[i_f, i_p, i_b].C = ti.Matrix.zero(gs.ti_float, 3, 3)
-            self.particles.grad[i_f, i_p, i_b].F = ti.Matrix.zero(gs.ti_float, 3, 3)
-            self.particles.grad[i_f, i_p, i_b].F_tmp = ti.Matrix.zero(gs.ti_float, 3, 3)
-            self.particles.grad[i_f, i_p, i_b].Jp = gs.ti_float(0.0)
-            self.particles.grad[i_f, i_p, i_b].U = ti.Matrix.zero(gs.ti_float, 3, 3)
-            self.particles.grad[i_f, i_p, i_b].V = ti.Matrix.zero(gs.ti_float, 3, 3)
-            self.particles.grad[i_f, i_p, i_b].S = ti.Matrix.zero(gs.ti_float, 3, 3)
+            # self.reset_grad_till_frame_helper(i_f, i_p, i_b)
+            self.particles.grad[i_f, i_p, i_b] = self._zero_particle_state
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ gradient --------------------------------------
@@ -570,27 +605,30 @@ class BaseMPMSolver(Solver):
         for entity in self._entities:
             entity.collect_output_grads()
 
+    def add_grad_from_state_helper(self, state):
+        if state.pos.grad is not None:
+            state.pos.assert_contiguous()
+            self.add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
+        
+        if state.vel.grad is not None:
+            state.vel.assert_contiguous()
+            self.add_grad_from_vel(self._sim.cur_substep_local, state.vel.grad)
+        
+        if state.C.grad is not None:
+            state.C.assert_contiguous()
+            self.add_grad_from_C(self._sim.cur_substep_local, state.C.grad)
+        
+        if state.F.grad is not None:
+            state.F.assert_contiguous()
+            self.add_grad_from_F(self._sim.cur_substep_local, state.F.grad)
+        
+        if state.Jp.grad is not None:
+            state.Jp.assert_contiguous()
+            self.add_grad_from_Jp(self._sim.cur_substep_local, state.Jp.grad)
+
     def add_grad_from_state(self, state):
         if self.is_active():
-            if state.pos.grad is not None:
-                state.pos.assert_contiguous()
-                self.add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
-
-            if state.vel.grad is not None:
-                state.vel.assert_contiguous()
-                self.add_grad_from_vel(self._sim.cur_substep_local, state.vel.grad)
-
-            if state.C.grad is not None:
-                state.C.assert_contiguous()
-                self.add_grad_from_C(self._sim.cur_substep_local, state.C.grad)
-
-            if state.F.grad is not None:
-                state.F.assert_contiguous()
-                self.add_grad_from_F(self._sim.cur_substep_local, state.F.grad)
-
-            if state.Jp.grad is not None:
-                state.Jp.assert_contiguous()
-                self.add_grad_from_Jp(self._sim.cur_substep_local, state.Jp.grad)
+            self.add_grad_from_state_helper(state)
 
     @ti.kernel
     def add_grad_from_pos(self, f: ti.i32, pos_grad: ti.types.ndarray()):
@@ -628,26 +666,24 @@ class BaseMPMSolver(Solver):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             self.particles.grad[f, i_p, i_b].Jp += Jp_grad[i_b, i_p]
 
+    def init_ckpt(self, ckpt_name):
+        self._ckpt[ckpt_name] = dict()
+        self._ckpt[ckpt_name]["pos"] = torch.zeros((self._B, self._n_particles, 3), dtype=gs.tc_float)
+        self._ckpt[ckpt_name]["vel"] = torch.zeros((self._B, self._n_particles, 3), dtype=gs.tc_float)
+        self._ckpt[ckpt_name]["C"] = torch.zeros((self._B, self._n_particles, 3, 3), dtype=gs.tc_float)
+        self._ckpt[ckpt_name]["F"] = torch.zeros((self._B, self._n_particles, 3, 3), dtype=gs.tc_float)
+        self._ckpt[ckpt_name]["Jp"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
+        self._ckpt[ckpt_name]["active"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_bool)
+
+    def get_ckpt_state(self, ckpt_name):
+        return tuple(self._ckpt[ckpt_name][p] for p in ("pos", "vel", "C", "F", "Jp", "active"))
+
     def save_ckpt(self, ckpt_name):
         if self._sim.requires_grad:
             if ckpt_name not in self._ckpt:
-                self._ckpt[ckpt_name] = dict()
-                self._ckpt[ckpt_name]["pos"] = torch.zeros((self._B, self._n_particles, 3), dtype=gs.tc_float)
-                self._ckpt[ckpt_name]["vel"] = torch.zeros((self._B, self._n_particles, 3), dtype=gs.tc_float)
-                self._ckpt[ckpt_name]["C"] = torch.zeros((self._B, self._n_particles, 3, 3), dtype=gs.tc_float)
-                self._ckpt[ckpt_name]["F"] = torch.zeros((self._B, self._n_particles, 3, 3), dtype=gs.tc_float)
-                self._ckpt[ckpt_name]["Jp"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
-                self._ckpt[ckpt_name]["active"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_bool)
+                self.init_ckpt(ckpt_name)
 
-            self._kernel_get_state(
-                0,
-                self._ckpt[ckpt_name]["pos"],
-                self._ckpt[ckpt_name]["vel"],
-                self._ckpt[ckpt_name]["C"],
-                self._ckpt[ckpt_name]["F"],
-                self._ckpt[ckpt_name]["Jp"],
-                self._ckpt[ckpt_name]["active"],
-            )
+            self._kernel_get_state(0, *self.get_ckpt_state(ckpt_name))
 
             for entity in self._entities:
                 entity.save_ckpt(ckpt_name)
@@ -666,15 +702,7 @@ class BaseMPMSolver(Solver):
         if self._sim.requires_grad:
             self.reset_grad_till_frame(self._sim.substeps_local)
 
-            self._kernel_set_state(
-                0,
-                self._ckpt[ckpt_name]["pos"],
-                self._ckpt[ckpt_name]["vel"],
-                self._ckpt[ckpt_name]["C"],
-                self._ckpt[ckpt_name]["F"],
-                self._ckpt[ckpt_name]["Jp"],
-                self._ckpt[ckpt_name]["active"],
-            )
+            self._kernel_set_state(0, *self.get_ckpt_state(ckpt_name))
 
             for entity in self._entities:
                 entity.load_ckpt(ckpt_name=ckpt_name)
