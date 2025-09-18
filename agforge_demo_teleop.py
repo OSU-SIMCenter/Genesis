@@ -80,6 +80,8 @@ def build_scene():
     extent = (x1 - x0, y1 - y0, z1 - z0)
     draw_box(extent, center, (0, 0, 1, 0.3))
 
+    scene.to_units(None)
+
     scene.build()
 
     robot.set_dofs_kp([1000] * 4)

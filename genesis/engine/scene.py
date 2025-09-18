@@ -42,13 +42,14 @@ from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+from genesis.units.dimensional import Dimensional
 
 if TYPE_CHECKING:
     from genesis.sensors.base_sensor import SensorOptions
 
 
 @gs.assert_initialized
-class Scene(RBC):
+class Scene(Dimensional):
     """
     A ``genesis.Scene`` object wraps all components in a simulation environment, including a simulator (containing multiple physics solvers), entities, and a visualizer (controlling both the viewer and all the cameras).
     Basically, everything happens inside a scene.
@@ -203,6 +204,9 @@ class Scene(RBC):
         self._uid = gs.UID()
         self._t = 0
         self._is_built = False
+
+        dimensionless_vars = set()
+        Dimensional.__init__(self, dimensionless_vars)
 
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 

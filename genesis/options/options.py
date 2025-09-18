@@ -4,9 +4,9 @@ import genesis as gs
 import genesis.utils.repr as ru
 from genesis.repr_base import RBC
 from genesis.styles import colors, formats
+from genesis.units.dimensional import Dimensional
 
-
-class Options(BaseModel, RBC):
+class Options(BaseModel, Dimensional):
     """
     This is the base class for all `gs.options.*` classes. An `Options` object is a group of parameters for setting a specific component in the scene.
 
@@ -32,6 +32,9 @@ class Options(BaseModel, RBC):
         except ValidationError as e:
             errors = e.errors()[0]
             gs.raise_exception(f"Invalid '{errors['loc'][0]}': {errors['msg'].lower()}.")
+        
+        dimensionless_vars = set()
+        Dimensional.__init__(self, dimensionless_vars)
 
     def copy_attributes_from(self, options, override=False):
         for field in options.model_fields:
