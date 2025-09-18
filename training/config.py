@@ -77,7 +77,12 @@ CAMERA_POS = tuple(CYLINDER_POS + CAMERA_POS_OFFSET)
 SUBSTEPS = 64
 
 @dataclass
-class SimConfig:
+class BaseConfig:
+    """Base class for configurations."""
+    pass
+
+@dataclass
+class SimConfig(BaseConfig):
     """Parameters related to the core physics simulation."""
     dt: float = 1.5e-6 * SUBSTEPS
     substeps: int = SUBSTEPS
@@ -87,7 +92,7 @@ class SimConfig:
     upper_bound: Tuple[float, float, float] = MPM_UPPER_BOUND
 
 @dataclass
-class EnvConfig:
+class EnvConfig(BaseConfig):
     """Parameters related to the RL environment and task."""
     num_envs: int = 1
     max_episode_length: int = int(100. / SimConfig.dt)
@@ -100,7 +105,7 @@ class EnvConfig:
     target_shape_bounds: torch.Tensor = TARGET_SHAPE_BOUNDS
 
 @dataclass
-class SacConfig:
+class SacConfig(BaseConfig):
     """Hyperparameters for the SAC (PPO) reinforcement learning algorithm."""
     class_name: str = "PPO"
     gamma: float = 0.99
@@ -117,13 +122,13 @@ class SacConfig:
     empirical_normalization: bool = False
 
 @dataclass
-class AdamConfig:
+class AdamConfig(BaseConfig):
     """Hyperparameters for the Adam gradient-based optimizer."""
     learning_rate: float = 1e-3
     max_iterations: int = 1000
 
 @dataclass
-class GeneralConfig:
+class GeneralConfig(BaseConfig):
     """General settings for visualization, logging, and recording."""
     show_viewer: bool = True
     record: bool = False
@@ -138,7 +143,7 @@ def convert_to_robot_time_units(quantity: ureg.Quantity) -> float:
     return quantity.to(str(quantity.to_base_units().units).replace('second', 'robot_time_unit')).magnitude
 
 @dataclass
-class RobotConfig:
+class RobotConfig(BaseConfig):
     """Parameters for the robot arm in the MuJoCo XML file."""
     _kp: ureg.Quantity = 1000.0 * ureg.newton * ureg.meter  # Stiffness in SI units (N·m)
     _kv: ureg.Quantity = 50.0 * ureg.newton * ureg.meter * ureg.second  # Damping in SI units (N·m·s)
@@ -152,3 +157,22 @@ class RobotConfig:
     def kv(self) -> float:
         """Get damping with time unit converted to robot_time_unit (N·m·rtu)"""
         return convert_to_robot_time_units(self._kv)
+
+@dataclass
+class TrainingConfig(BaseConfig):
+    """Aggregated configuration for training."""
+    sim: SimConfig = field(default_factory=SimConfig)
+    env: EnvConfig = field(default_factory=EnvConfig)
+    general: GeneralConfig = field(default_factory=GeneralConfig)
+    robot: RobotConfig = field(default_factory=RobotConfig)
+    sac: SacConfig = field(default_factory=SacConfig)
+    adam: AdamConfig = field(default_factory=AdamConfig)
+
+@dataclass
+class TeleopConfig(BaseConfig):
+    """Aggregated configuration for teleoperation."""
+    sim: SimConfig = field(default_factory=SimConfig)
+    env: EnvConfig = field(default_factory=lambda: EnvConfig(num_envs=1))
+    general: GeneralConfig = field(default_factory=lambda: GeneralConfig(show_viewer=True, record=False))
+    robot: RobotConfig = field(default_factory=RobotConfig)
+    performance_mode: bool = False

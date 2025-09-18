@@ -5,7 +5,7 @@ import torch
 from pynput import keyboard
 
 # Import configs and environment from the training folder
-from config import SimConfig, EnvConfig, GeneralConfig, RobotConfig, GENERATED_ROBOT_XML_PATH
+from config import TeleopConfig, GENERATED_ROBOT_XML_PATH
 from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS
 from environment import AgilityForgeEnv
 from agforge_builder import RobotXMLGenerator
@@ -37,11 +37,7 @@ def build_scene_from_training_env():
     Builds the simulation scene using the configuration from the training environment.
     """
     # --- Step 1: Load configurations ---
-    sim_cfg = SimConfig()
-    env_cfg = EnvConfig()
-    # Ensure the viewer is enabled for teleop
-    general_cfg = GeneralConfig(show_viewer=True) 
-    robot_cfg = RobotConfig()
+    cfg = TeleopConfig()
 
     # --- Step 2: Dynamically generate the robot XML ---
     print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
@@ -49,14 +45,14 @@ def build_scene_from_training_env():
         cylinder_radius=CYLINDER_RADIUS,
         cylinder_height=CYLINDER_HEIGHT,
         cylinder_pos=CYLINDER_POS,
-        robot_cfg=robot_cfg
+        robot_cfg=cfg.robot
     )
     generator.write_to_file()
 
     # --- Step 3: Initialize Genesis and create environment ---
-    gs.init(backend=gs.gpu, logging_level="info")
+    gs.init(backend=gs.gpu, logging_level="info", performance_mode=cfg.performance_mode)
     
-    env = AgilityForgeEnv(sim_cfg, env_cfg, general_cfg, robot_cfg)
+    env = AgilityForgeEnv(cfg.sim, cfg.env, cfg.general, cfg.robot)
     
     return env
 
