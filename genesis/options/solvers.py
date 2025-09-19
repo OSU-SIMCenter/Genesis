@@ -555,6 +555,8 @@ class MPMOptions(Options):
         This option is deprecated.
     leaf_block_size : int, optional
         This option is deprecated.
+    use_legacy_solver : bool, optional
+        Whether to use the legacy MPM solver. Defaults to True.
     """
 
     dt: PositiveFloat | None = None
@@ -566,6 +568,8 @@ class MPMOptions(Options):
     # These will later be converted to discrete grid bound. The actual grid boundary could be slightly tighter.
     lower_bound: Vec3FType = (-1.0, -1.0, 0.0)
     upper_bound: Vec3FType = (1.0, 1.0, 1.0)
+
+    use_legacy_solver: bool = True
 
     def __init__(self, *, use_sparse_grid: bool = False, leaf_block_size: int = 8, **data):
         super().__init__(**data)
