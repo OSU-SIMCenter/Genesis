@@ -181,6 +181,21 @@ class TeleopSimConfig(SimConfig):
 @dataclass
 class TeleopRobotConfig(RobotConfig):
     robot_time_to_seconds: float = 1.0
+    _slider_speed: float = 0.0005
+    _hinge_speed: float = 0.005
+    _gripper_speed: float = 0.001
+
+    @property
+    def slider_speed(self) -> float:
+        return self._slider_speed * self.robot_time_to_seconds
+
+    @property
+    def hinge_speed(self) -> float:
+        return self._hinge_speed * self.robot_time_to_seconds
+
+    @property
+    def gripper_speed(self) -> float:
+        return self._gripper_speed * self.robot_time_to_seconds
 
 @dataclass
 class TeleopConfig(BaseConfig):
