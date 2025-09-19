@@ -140,13 +140,15 @@ def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> 
     """Convert a quantity to use a specified time unit instead of seconds."""
     return quantity.to(str(quantity.to_base_units().units).replace('second', time_unit_str)).magnitude
 
+KP = 0.2
+KV = 1. * (KP ** 0.5)
 @dataclass
 class RobotConfig(BaseConfig):
     """Parameters for the robot arm in the MuJoCo XML file."""
     time_unit_str: str = "rtu"
-    robot_time_to_seconds: float = 3e2
-    _kp: ureg.Quantity = 1000.0 * ureg.newton * ureg.meter  # Stiffness in SI units (N·m)
-    _kv: ureg.Quantity = 50.0 * ureg.newton * ureg.meter * ureg.second  # Damping in SI units (N·m·s)
+    robot_time_to_seconds: float = 1.
+    _kp: ureg.Quantity = KP * ureg.newton * ureg.meter  # Stiffness in SI units (N·m)
+    _kv: ureg.Quantity = KV * ureg.newton * ureg.meter * ureg.second  # Damping in SI units (N·m·s)
 
     def __post_init__(self):
         ureg.define(f"{self.time_unit_str} = {self.robot_time_to_seconds} * second")
@@ -172,7 +174,7 @@ class TrainingConfig(BaseConfig):
     adam: AdamConfig = field(default_factory=AdamConfig)
     performance_mode: bool = True
 
-SUBSTEPS_TELEOP = 64
+SUBSTEPS_TELEOP = 1
 @dataclass
 class TeleopSimConfig(SimConfig):
     dt: float = 1. * SUBSTEPS_TELEOP
@@ -180,10 +182,10 @@ class TeleopSimConfig(SimConfig):
 
 @dataclass
 class TeleopRobotConfig(RobotConfig):
-    robot_time_to_seconds: float = 1.0
-    _slider_speed: float = 0.0005
-    _hinge_speed: float = 0.005
-    _gripper_speed: float = 0.001
+    robot_time_to_seconds: float = 1.
+    _slider_speed: float = 0.0034
+    _hinge_speed: float = 0.08
+    _gripper_speed: float = 0.002
 
     @property
     def slider_speed(self) -> float:
