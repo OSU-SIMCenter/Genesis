@@ -435,6 +435,8 @@ class MPMOptions(Options):
         This option is deprecated.
     leaf_block_size : int, optional
         This option is deprecated.
+    use_legacy_solver : bool, optional
+        Whether to use the legacy MPM solver. Defaults to True.
     """
 
     dt: Optional[float] = None
@@ -450,6 +452,8 @@ class MPMOptions(Options):
     # Deprecated sparse computation parameter.
     use_sparse_grid: bool = False
     leaf_block_size: int = 8
+
+    use_legacy_solver: bool = True
 
     def __init__(self, **data):
         super().__init__(**data)
