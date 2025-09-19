@@ -74,18 +74,18 @@ CAMERA_POS = tuple(CYLINDER_POS + CAMERA_POS_OFFSET)
 # --------------------------------------------------------------------------
 # Configuration Dataclasses
 # --------------------------------------------------------------------------
-SUBSTEPS = 64
 
 @dataclass
 class BaseConfig:
     """Base class for configurations."""
     pass
 
+SUBSTEPS_TRAIN = 64
 @dataclass
 class SimConfig(BaseConfig):
     """Parameters related to the core physics simulation."""
-    dt: float = 1.5e-6 * SUBSTEPS
-    substeps: int = SUBSTEPS
+    dt: float = 1.5e-6 * SUBSTEPS_TRAIN
+    substeps: int = SUBSTEPS_TRAIN
     gravity: Tuple[float, float, float] = (0, 0, 0)
     grid_density: int = BASE_GRID_DENSITY
     lower_bound: Tuple[float, float, float] = MPM_LOWER_BOUND
@@ -143,12 +143,13 @@ def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> 
 @dataclass
 class RobotConfig(BaseConfig):
     """Parameters for the robot arm in the MuJoCo XML file."""
+    time_unit_str: str = "rtu"
+    robot_time_to_seconds: float = 3e2
     _kp: ureg.Quantity = 1000.0 * ureg.newton * ureg.meter  # Stiffness in SI units (N·m)
     _kv: ureg.Quantity = 50.0 * ureg.newton * ureg.meter * ureg.second  # Damping in SI units (N·m·s)
-    time_unit_str: str = "robot_time_unit"
 
     def __post_init__(self):
-        ureg.define(f"{self.time_unit_str} = 3e2 * second = rtu")
+        ureg.define(f"{self.time_unit_str} = {self.robot_time_to_seconds} * second")
 
     @property
     def kp(self) -> float:
@@ -171,15 +172,15 @@ class TrainingConfig(BaseConfig):
     adam: AdamConfig = field(default_factory=AdamConfig)
     performance_mode: bool = True
 
+SUBSTEPS_TELEOP = 64
 @dataclass
 class TeleopSimConfig(SimConfig):
-    dt: float = 0.016  # Target 60 FPS for smoother teleop
-    substeps: int = 32
+    dt: float = 1. * SUBSTEPS_TELEOP
+    substeps: int = SUBSTEPS_TELEOP
 
 @dataclass
 class TeleopRobotConfig(RobotConfig):
-    def __post_init__(self):
-        ureg.define("robot_time_unit = 1.0 * second = rtu")
+    robot_time_to_seconds: float = 1.0
 
 @dataclass
 class TeleopConfig(BaseConfig):
