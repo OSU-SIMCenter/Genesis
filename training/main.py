@@ -36,7 +36,7 @@ def main():
     generator.write_to_file()
 
     # --- Step 3: Initialize Genesis and create environment ---
-    gs.init(backend=gs.gpu, logging_level="info")
+    gs.init(backend=gs.gpu, logging_level="info", performance_mode=cfg.performance_mode)
     
     from environment import AgilityForgeEnv
     from trainers import SACTrainer, AdamTrainer, BaseTrainer
