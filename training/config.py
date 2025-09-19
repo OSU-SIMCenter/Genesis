@@ -169,6 +169,7 @@ class TrainingConfig(BaseConfig):
     robot: RobotConfig = field(default_factory=RobotConfig)
     sac: SacConfig = field(default_factory=SacConfig)
     adam: AdamConfig = field(default_factory=AdamConfig)
+    performance_mode: bool = True
 
 @dataclass
 class TeleopSimConfig(SimConfig):
