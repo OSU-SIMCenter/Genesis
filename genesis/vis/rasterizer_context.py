@@ -554,6 +554,8 @@ class RasterizerContext:
                             smooth=True,
                         )
                     )
+            
+            # grid
             if self.visualize_mpm_grid:
                 grid_res = self.sim.mpm_solver.grid_res
                 grid_offset = self.sim.mpm_solver.grid_offset.to_numpy()
