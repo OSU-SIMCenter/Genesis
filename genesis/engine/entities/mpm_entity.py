@@ -557,7 +557,7 @@ class MPMEntity(ParticleEntity):
         """
         particles_idx_local = self._sanitize_particles_idx_local(None)
         free = self._sanitize_particles_tensor((), gs.tc_bool, free, batched=False)
-        assert torch.isin(free, torch.Tensor([False, True], dtype=gs.tc_bool, device=gs.device)).all()
+        assert torch.isin(free.to(gs.tc_int), torch.tensor([0, 1], dtype=gs.tc_int, device=gs.device)).all()
         self.solver._kernel_set_particles_free(particles_idx_local + self._particle_start, free)
 
     @assert_active

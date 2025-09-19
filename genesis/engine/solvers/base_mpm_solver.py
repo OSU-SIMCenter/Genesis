@@ -940,7 +940,7 @@ class BaseMPMSolver(Solver):
     @ti.kernel
     def _kernel_set_particles_free(self, particles_idx: ti.types.ndarray(), free: ti.types.ndarray()):
         for i_p_ in range(particles_idx.shape[0]):
-            i_p = particles_idx[i_b_, i_p_]
+            i_p = particles_idx[i_p_]
             self.particles_info[i_p].free = free[i_p_]
 
     @ti.kernel
