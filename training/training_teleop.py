@@ -85,6 +85,8 @@ def run():
     )
     
     obs, _ = env.reset()
+    qpos = robot.entity.get_dofs_position()
+    lower, upper = robot.entity.get_dofs_limit()
 
     while True:
         keys = kb.pressed.copy()
@@ -94,13 +96,11 @@ def run():
 
         if keyboard.KeyCode.from_char("u") in keys:
             obs, _ = env.reset()
+            qpos = robot.entity.get_dofs_position()
             continue
         
         # Set speed modifier
         speed_modifier = 0.25 if keyboard.KeyCode.from_char("b") in keys else 1.0
-
-        # Get current joint positions
-        qpos = robot.entity.get_dofs_position()
 
         # Update joint positions based on key presses
         for key, (index, direction) in controls.items():
@@ -115,6 +115,8 @@ def run():
                     # Both grippers move together
                     qpos[0, index] += direction * gripper_speed * speed_modifier
                     qpos[0, index + 1] += direction * gripper_speed * speed_modifier
+        
+        qpos = torch.clamp(qpos, lower, upper)
 
         # Apply the target joint positions
         robot.apply_action(qpos)
