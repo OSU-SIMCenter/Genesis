@@ -100,21 +100,21 @@ def run():
             continue
         
         # Set speed modifier
-        speed_modifier = 0.25 if keyboard.KeyCode.from_char("b") in keys else 1.0
+        speed_modifiers = [0.25, 0.35, 0.5] if keyboard.KeyCode.from_char("b") in keys else [1., 1., 1.]
 
         # Update joint positions based on key presses
         for key, (index, direction) in controls.items():
             if key in keys:
                 if index == 0: # Slider
-                    qpos[0, index] += direction * env.robot_cfg.slider_speed * speed_modifier
+                    qpos[0, index] += direction * env.robot_cfg.slider_speed * speed_modifiers[0]
                 elif index == 1: # Hinge
-                    qpos[0, index] += direction * env.robot_cfg.hinge_speed * speed_modifier
+                    qpos[0, index] += direction * env.robot_cfg.hinge_speed * speed_modifiers[1]
                 elif index == 2: # Gripper
                     # Asymmetrical speed for opening/closing
                     gripper_speed = env.robot_cfg.gripper_speed * 2 if direction < 0 else env.robot_cfg.gripper_speed
                     # Both grippers move together
-                    qpos[0, index] += direction * gripper_speed * speed_modifier
-                    qpos[0, index + 1] += direction * gripper_speed * speed_modifier
+                    qpos[0, index] += direction * gripper_speed * speed_modifiers[2]
+                    qpos[0, index + 1] += direction * gripper_speed * speed_modifiers[2]
         
         qpos = torch.clamp(qpos, lower, upper)
 
