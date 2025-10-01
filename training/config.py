@@ -92,6 +92,14 @@ class SimConfig(BaseConfig):
     upper_bound: Tuple[float, float, float] = MPM_UPPER_BOUND
 
 @dataclass
+class MaterialConfig(BaseConfig):
+    """Parameters for the elasto-plastic material."""
+    E: float = 5.e5
+    nu: float = 0.3
+    rho: float = 100.
+    von_mises_yield_stress: float = 480.
+
+@dataclass
 class EnvConfig(BaseConfig):
     """Parameters related to the RL environment and task."""
     num_envs: int = 1
@@ -170,6 +178,7 @@ class TrainingConfig(BaseConfig):
     env: EnvConfig = field(default_factory=EnvConfig)
     general: GeneralConfig = field(default_factory=GeneralConfig)
     robot: RobotConfig = field(default_factory=RobotConfig)
+    mat: MaterialConfig = field(default_factory=MaterialConfig)
     sac: SacConfig = field(default_factory=SacConfig)
     adam: AdamConfig = field(default_factory=AdamConfig)
     performance_mode: bool = True
@@ -206,4 +215,5 @@ class TeleopConfig(BaseConfig):
     env: EnvConfig = field(default_factory=lambda: EnvConfig(num_envs=1))
     general: GeneralConfig = field(default_factory=lambda: GeneralConfig(show_viewer=True, record=False))
     robot: RobotConfig = field(default_factory=TeleopRobotConfig)
+    mat: MaterialConfig = field(default_factory=MaterialConfig)
     performance_mode: bool = True
