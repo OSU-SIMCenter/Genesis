@@ -53,7 +53,7 @@ TARGET_SHAPE_BOUNDS = torch.tensor(np.array([
 ACTION_X_CENTER = CYLINDER_POS[0] - CYLINDER_HEIGHT * 0.75
 ACTION_X_WIDTH = 0.06
 ACTION_HINGE_ANGLE_LIMIT_DEG = 40.0
-ACTION_GRIPPER_OPEN_VAL = 19 * CYLINDER_RADIUS   # Gripper open position
+ACTION_GRIPPER_OPEN_VAL = 20 * CYLINDER_RADIUS   # Gripper open position
 ACTION_GRIPPER_CLOSED_VAL = 2 * CYLINDER_RADIUS  # Gripper closed position
 ACTION_LOWER_BOUNDS = torch.tensor([
     ACTION_X_CENTER - ACTION_X_WIDTH / 2,
@@ -94,10 +94,10 @@ class SimConfig(BaseConfig):
 @dataclass
 class MaterialConfig(BaseConfig):
     """Parameters for the elasto-plastic material."""
-    E: float = 5.e5
-    nu: float = 0.3
-    rho: float = 100.
-    von_mises_yield_stress: float = 480.
+    E: float = 200.e9 * 0.25
+    nu: float = 0.28
+    rho: float = 8000.
+    von_mises_yield_stress: float = 190.e6 * 0.1
 
 @dataclass
 class EnvConfig(BaseConfig):
@@ -149,7 +149,7 @@ def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> 
     return quantity.to(str(quantity.to_base_units().units).replace('second', time_unit_str)).magnitude
 
 KP = 0.2
-KV = 1. * (KP ** 0.5)
+KV = 2. * ((KP * 10.) ** 0.5)
 @dataclass
 class RobotConfig(BaseConfig):
     """Parameters for the robot arm in the MuJoCo XML file."""
@@ -183,30 +183,31 @@ class TrainingConfig(BaseConfig):
     adam: AdamConfig = field(default_factory=AdamConfig)
     performance_mode: bool = True
 
-SUBSTEPS_TELEOP = 1
+SUBSTEP_DT_TELEOP = 0.8e-6
+SUBSTEPS_TELEOP = 32
 @dataclass
 class TeleopSimConfig(SimConfig):
-    dt: float = 1. * SUBSTEPS_TELEOP
+    dt: float = SUBSTEP_DT_TELEOP * SUBSTEPS_TELEOP
     substeps: int = SUBSTEPS_TELEOP
 
 @dataclass
 class TeleopRobotConfig(RobotConfig):
-    robot_time_to_seconds: float = 1.
+    robot_time_to_seconds: float = 0.05 / SUBSTEP_DT_TELEOP
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002
 
     @property
     def slider_speed(self) -> float:
-        return self._slider_speed * self.robot_time_to_seconds
+        return self._slider_speed #* self.robot_time_to_seconds
 
     @property
     def hinge_speed(self) -> float:
-        return self._hinge_speed * self.robot_time_to_seconds
+        return self._hinge_speed #* self.robot_time_to_seconds
 
     @property
     def gripper_speed(self) -> float:
-        return self._gripper_speed * self.robot_time_to_seconds
+        return self._gripper_speed #* self.robot_time_to_seconds
 
 @dataclass
 class TeleopConfig(BaseConfig):
