@@ -60,7 +60,7 @@ def build_scene_from_training_env():
     # --- Step 3: Initialize Genesis and create environment ---
     gs.init(backend=gs.gpu, logging_level="info", performance_mode=cfg.performance_mode)
     
-    env = AgilityForgeEnv(cfg.sim, cfg.env, cfg.general, cfg.robot)
+    env = AgilityForgeEnv(cfg.sim, cfg.env, cfg.general, cfg.robot, cfg.mat)
     
     return env
 
