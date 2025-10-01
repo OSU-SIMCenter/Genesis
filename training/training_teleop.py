@@ -13,6 +13,7 @@ from agforge_builder import RobotXMLGenerator
 class KeyboardDevice:
     def __init__(self):
         self.pressed = set()
+        self.prev_pressed = set()
         self.lock = threading.Lock()
         self.listener = keyboard.Listener(on_press=self._down, on_release=self._up)
         self.action = np.zeros(3)
@@ -31,6 +32,13 @@ class KeyboardDevice:
     def _up(self, key):
         with self.lock:
             self.pressed.discard(key)
+    
+    def get_newly_pressed(self):
+        """Returns keys that are pressed now but weren't in the previous frame"""
+        with self.lock:
+            newly_pressed = self.pressed - self.prev_pressed
+            self.prev_pressed = self.pressed.copy()
+            return newly_pressed
 
 def build_scene_from_training_env():
     """
@@ -74,14 +82,20 @@ def run():
         keyboard.KeyCode.from_char("k"): (2, -1.0), # Open gripper
     }
 
+    # Control mode: "continuous" or "incremental"
+    control_mode = "continuous"
+    incremental_multiplier = 20.0
+
     print(
         "Teleop Controls:\n"
         "  ←/→: Hinge\n"
         "  ↑/↓: Slider\n"
         "  j/k: Grippers\n"
         "  b: Slow mode\n"
+        "  m: Toggle control mode (Continuous/Incremental)\n"
         "  u: Reset environment\n"
-        "  esc: Quit"
+        "  esc: Quit\n"
+        f"\nCurrent mode: {control_mode.upper()}"
     )
     
     obs, _ = env.reset()
@@ -90,9 +104,15 @@ def run():
 
     while True:
         keys = kb.pressed.copy()
+        newly_pressed = kb.get_newly_pressed()
 
         if keyboard.Key.esc in keys:
             break
+
+        # Toggle control mode
+        if keyboard.KeyCode.from_char("m") in newly_pressed:
+            control_mode = "incremental" if control_mode == "continuous" else "continuous"
+            print(f"Control mode switched to: {control_mode.upper()}")
 
         if keyboard.KeyCode.from_char("u") in keys:
             obs, _ = env.reset()
@@ -102,19 +122,25 @@ def run():
         # Set speed modifier
         speed_modifiers = [0.25, 0.35, 0.5] if keyboard.KeyCode.from_char("b") in keys else [1., 1., 1.]
 
+        # Determine which keys to process based on control mode
+        active_keys = newly_pressed if control_mode == "incremental" else keys
+
         # Update joint positions based on key presses
         for key, (index, direction) in controls.items():
-            if key in keys:
+            if key in active_keys:
+                # Calculate movement multiplier
+                move_mult = incremental_multiplier if control_mode == "incremental" else 1.0
+                
                 if index == 0: # Slider
-                    qpos[0, index] += direction * env.robot_cfg.slider_speed * speed_modifiers[0]
+                    qpos[0, index] += direction * env.robot_cfg.slider_speed * speed_modifiers[0] * move_mult
                 elif index == 1: # Hinge
-                    qpos[0, index] += direction * env.robot_cfg.hinge_speed * speed_modifiers[1]
+                    qpos[0, index] += direction * env.robot_cfg.hinge_speed * speed_modifiers[1] * move_mult
                 elif index == 2: # Gripper
                     # Asymmetrical speed for opening/closing
                     gripper_speed = env.robot_cfg.gripper_speed * 2 if direction < 0 else env.robot_cfg.gripper_speed
                     # Both grippers move together
-                    qpos[0, index] += direction * gripper_speed * speed_modifiers[2]
-                    qpos[0, index + 1] += direction * gripper_speed * speed_modifiers[2]
+                    qpos[0, index] += direction * gripper_speed * speed_modifiers[2] * move_mult
+                    qpos[0, index + 1] += direction * gripper_speed * speed_modifiers[2] * move_mult
         
         qpos = torch.clamp(qpos, lower, upper)
 
