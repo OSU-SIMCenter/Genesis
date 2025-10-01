@@ -1,6 +1,6 @@
 import torch
 import genesis as gs
-from config import SimConfig, EnvConfig, GeneralConfig, RobotConfig, GENERATED_ROBOT_XML_PATH
+from config import SimConfig, EnvConfig, GeneralConfig, RobotConfig, MaterialConfig, GENERATED_ROBOT_XML_PATH
 from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS, CYLINDER_EULER
 from config import TARGET_GUIDE_BOX_SIZE, TARGET_GUIDE_BOX_POS
 
@@ -37,11 +37,12 @@ class AgilityForgeManipulator:
 
 class AgilityForgeEnv:
     """An RL environment for the robotic forging task, configured parametrically."""
-    def __init__(self, sim_cfg: SimConfig, env_cfg: EnvConfig, general_cfg: GeneralConfig, robot_cfg: RobotConfig):
+    def __init__(self, sim_cfg: SimConfig, env_cfg: EnvConfig, general_cfg: GeneralConfig, robot_cfg: RobotConfig, mat_cfg: MaterialConfig):
         self.sim_cfg = sim_cfg
         self.env_cfg = env_cfg
         self.general_cfg = general_cfg
         self.robot_cfg = robot_cfg
+        self.mat_cfg = mat_cfg
         self.device = gs.device
 
         self._setup_scene()
@@ -94,7 +95,10 @@ class AgilityForgeEnv:
     def _setup_entities(self):
         """Creates the MPM object and the target shape visual guide."""
         self.mpm_entity = self.scene.add_entity(
-            material=gs.materials.MPM.ElastoPlastic(E=5.e5, nu=0.3, rho=100., von_mises_yield_stress=480.),
+            material=gs.materials.MPM.ElastoPlastic(
+                E=self.mat_cfg.E, nu=self.mat_cfg.nu, rho=self.mat_cfg.rho,
+                von_mises_yield_stress=self.mat_cfg.von_mises_yield_stress
+            ),
             morph=gs.morphs.Cylinder(
                 radius=CYLINDER_RADIUS, height=CYLINDER_HEIGHT, pos=CYLINDER_POS, euler=CYLINDER_EULER
             ),
