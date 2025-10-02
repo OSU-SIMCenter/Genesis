@@ -10,6 +10,10 @@ from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS
 from environment import AgilityForgeEnv
 from agforge_builder import RobotXMLGenerator
 
+# Profiling
+import contextlib
+from genesis.profiling.profiler import Profiler
+
 class KeyboardDevice:
     def __init__(self):
         self.pressed = set()
@@ -60,7 +64,7 @@ def build_scene_from_training_env():
     # --- Step 3: Initialize Genesis and create environment ---
     gs.init(backend=gs.gpu, logging_level="info", performance_mode=cfg.performance_mode)
     
-    env = AgilityForgeEnv(cfg.sim, cfg.env, cfg.general, cfg.robot, cfg.mat)
+    env = AgilityForgeEnv(cfg)
     
     return env
 
@@ -70,6 +74,7 @@ def run():
 
     env = build_scene_from_training_env()
     robot = env.robot
+    profiling_cfg = env.profiling_cfg
 
     # Key → (action_index, direction)
     # Note: Action space is [slider, hinge, gripper]
@@ -102,54 +107,59 @@ def run():
     qpos = robot.entity.get_dofs_position()
     lower, upper = robot.entity.get_dofs_limit()
 
+    profiler = Profiler(enabled=profiling_cfg.enabled)
     while True:
-        keys = kb.pressed.copy()
-        newly_pressed = kb.get_newly_pressed()
+        with profiler.time("input_handling") if profiling_cfg.input_handling else contextlib.suppress():
+            keys = kb.pressed.copy()
+            newly_pressed = kb.get_newly_pressed()
 
-        if keyboard.Key.esc in keys:
-            break
+            if keyboard.Key.esc in keys:
+                break
 
-        # Toggle control mode
-        if keyboard.KeyCode.from_char("m") in newly_pressed:
-            control_mode = "incremental" if control_mode == "continuous" else "continuous"
-            print(f"Control mode switched to: {control_mode.upper()}")
+            # Toggle control mode
+            if keyboard.KeyCode.from_char("m") in newly_pressed:
+                control_mode = "incremental" if control_mode == "continuous" else "continuous"
+                print(f"Control mode switched to: {control_mode.upper()}")
 
-        if keyboard.KeyCode.from_char("u") in keys:
-            obs, _ = env.reset()
-            qpos = robot.entity.get_dofs_position()
-            continue
+            if keyboard.KeyCode.from_char("u") in keys:
+                obs, _ = env.reset()
+                qpos = robot.entity.get_dofs_position()
+                continue
+            
+            # Set speed modifier
+            speed_modifiers = [0.25, 0.35, 0.5] if keyboard.KeyCode.from_char("b") in keys else [1., 1., 1.]
+
+            # Determine which keys to process based on control mode
+            active_keys = newly_pressed if control_mode == "incremental" else keys
+
+            # Update joint positions based on key presses
+            for key, (index, direction) in controls.items():
+                if key in active_keys:
+                    # Calculate movement multiplier
+                    move_mult = incremental_multiplier if control_mode == "incremental" else 1.0
+                    
+                    if index == 0: # Slider
+                        qpos[0, index] += direction * env.robot_cfg.slider_speed * speed_modifiers[0] * move_mult
+                    elif index == 1: # Hinge
+                        qpos[0, index] += direction * env.robot_cfg.hinge_speed * speed_modifiers[1] * move_mult
+                    elif index == 2: # Gripper
+                        # Asymmetrical speed for opening/closing
+                        gripper_speed = env.robot_cfg.gripper_speed * 2 if direction < 0 else env.robot_cfg.gripper_speed
+                        # Both grippers move together
+                        qpos[0, index] += direction * gripper_speed * speed_modifiers[2] * move_mult
+                        qpos[0, index + 1] += direction * gripper_speed * speed_modifiers[2] * move_mult
+            
+            qpos = torch.clamp(qpos, lower, upper)
+
+        with profiler.time("action_application") if profiling_cfg.action_application else contextlib.suppress():
+            # Apply the target joint positions
+            robot.apply_action(qpos)
         
-        # Set speed modifier
-        speed_modifiers = [0.25, 0.35, 0.5] if keyboard.KeyCode.from_char("b") in keys else [1., 1., 1.]
+        with profiler.time("simulation_step") if profiling_cfg.simulation_step else contextlib.suppress():
+            # Manually step the simulation
+            env.scene.step()
 
-        # Determine which keys to process based on control mode
-        active_keys = newly_pressed if control_mode == "incremental" else keys
-
-        # Update joint positions based on key presses
-        for key, (index, direction) in controls.items():
-            if key in active_keys:
-                # Calculate movement multiplier
-                move_mult = incremental_multiplier if control_mode == "incremental" else 1.0
-                
-                if index == 0: # Slider
-                    qpos[0, index] += direction * env.robot_cfg.slider_speed * speed_modifiers[0] * move_mult
-                elif index == 1: # Hinge
-                    qpos[0, index] += direction * env.robot_cfg.hinge_speed * speed_modifiers[1] * move_mult
-                elif index == 2: # Gripper
-                    # Asymmetrical speed for opening/closing
-                    gripper_speed = env.robot_cfg.gripper_speed * 2 if direction < 0 else env.robot_cfg.gripper_speed
-                    # Both grippers move together
-                    qpos[0, index] += direction * gripper_speed * speed_modifiers[2] * move_mult
-                    qpos[0, index + 1] += direction * gripper_speed * speed_modifiers[2] * move_mult
-        
-        qpos = torch.clamp(qpos, lower, upper)
-
-        # Apply the target joint positions
-        robot.apply_action(qpos)
-        
-        # Manually step the simulation
-        env.scene.step()
-
+    profiler.print()
     kb.stop()
 
 if __name__ == "__main__":
