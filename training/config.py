@@ -172,6 +172,11 @@ class RobotConfig(BaseConfig):
         return convert_to_robot_time_units(self._kv, self.time_unit_str)
 
 @dataclass
+class ProfilingConfig(BaseConfig):
+    """Base settings for profiling."""
+    enabled: bool = False
+
+@dataclass
 class TrainingConfig(BaseConfig):
     """Aggregated configuration for training."""
     sim: SimConfig = field(default_factory=SimConfig)
@@ -181,6 +186,7 @@ class TrainingConfig(BaseConfig):
     mat: MaterialConfig = field(default_factory=MaterialConfig)
     sac: SacConfig = field(default_factory=SacConfig)
     adam: AdamConfig = field(default_factory=AdamConfig)
+    profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
     performance_mode: bool = True
 
 SUBSTEP_DT_TELEOP = 0.8e-6
@@ -210,6 +216,14 @@ class TeleopRobotConfig(RobotConfig):
         return self._gripper_speed #* self.robot_time_to_seconds
 
 @dataclass
+class TeleopProfilingConfig(ProfilingConfig):
+    """Settings specific to teleop profiling, enabled by default."""
+    enabled: bool = True
+    input_handling: bool = True
+    action_application: bool = True
+    simulation_step: bool = True
+
+@dataclass
 class TeleopConfig(BaseConfig):
     """Aggregated configuration for teleoperation."""
     sim: SimConfig = field(default_factory=TeleopSimConfig)
@@ -217,4 +231,5 @@ class TeleopConfig(BaseConfig):
     general: GeneralConfig = field(default_factory=lambda: GeneralConfig(show_viewer=True, record=False))
     robot: RobotConfig = field(default_factory=TeleopRobotConfig)
     mat: MaterialConfig = field(default_factory=MaterialConfig)
+    profiling: ProfilingConfig = field(default_factory=TeleopProfilingConfig)
     performance_mode: bool = True

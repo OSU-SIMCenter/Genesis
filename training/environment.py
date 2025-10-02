@@ -37,12 +37,14 @@ class AgilityForgeManipulator:
 
 class AgilityForgeEnv:
     """An RL environment for the robotic forging task, configured parametrically."""
-    def __init__(self, sim_cfg: SimConfig, env_cfg: EnvConfig, general_cfg: GeneralConfig, robot_cfg: RobotConfig, mat_cfg: MaterialConfig):
-        self.sim_cfg = sim_cfg
-        self.env_cfg = env_cfg
-        self.general_cfg = general_cfg
-        self.robot_cfg = robot_cfg
-        self.mat_cfg = mat_cfg
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.sim_cfg = cfg.sim
+        self.env_cfg = cfg.env
+        self.general_cfg = cfg.general
+        self.robot_cfg = cfg.robot
+        self.mat_cfg = cfg.mat
+        self.profiling_cfg = cfg.profiling
         self.device = gs.device
 
         self._setup_scene()
