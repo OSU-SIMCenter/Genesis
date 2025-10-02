@@ -1,0 +1,1 @@
+from agforge.utils.profiling.profiler import Profiler
