@@ -54,6 +54,7 @@ class BaseMPMSolver(Solver):
         self._lower_bound_cell = np.round(self._grid_density * self._lower_bound).astype(gs.np_int)
         self._upper_bound_cell = np.round(self._grid_density * self._upper_bound).astype(gs.np_int)
         self._grid_res = self._upper_bound_cell - self._lower_bound_cell + 1  # +1 to include both corner
+        gs.logger.info(f"Grid resolution: {self._grid_res} {self._grid_res.prod()}")
         self._grid_offset = qd.Vector(self._lower_bound_cell)
         if np.prod(self._grid_res) > 1e9:
             gs.raise_exception(
