@@ -5,6 +5,7 @@ import sys
 import time
 import trimesh
 import weakref
+import contextlib
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
 import numpy as np
