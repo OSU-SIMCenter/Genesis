@@ -225,7 +225,7 @@ class TeleopProfilingConfig(ProfilingConfig):
     input_handling: bool = True
     action_application: bool = True
     simulation_step: bool = True
-    profiling_options: ProfilingOptions = field(default_factory=lambda: ProfilingOptions(enabled=True))
+    profiling_options: ProfilingOptions = field(default_factory=lambda: ProfilingOptions(enabled=True, show_FPS=False))
 
 @dataclass
 class TeleopConfig(BaseConfig):
