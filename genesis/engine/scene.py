@@ -1027,17 +1027,23 @@ class Scene(RBC):
         if not self._forward_ready:
             gs.raise_exception("Forward simulation not allowed after backward pass. Please reset scene state.")
 
-        self._sim.step()
+        profiler = self.profiling_options.profiler
+        config = self.profiling_options.configs.scene.step
+        with profiler.time("sim_step") if config.sim else contextlib.suppress():
+            self._sim.step()
 
         self._t += 1
 
         if update_visualizer:
-            self._visualizer.update(force=False, auto=refresh_visualizer)
+            with profiler.time("visualizer_update") if config.visualizer else contextlib.suppress():
+                self._visualizer.update(force=False, auto=refresh_visualizer)
 
         if self.profiling_options.show_FPS:
-            self.FPS_tracker.step()
+            with profiler.time("fps_tracker_step") if config.fps_tracker else contextlib.suppress():
+                self.FPS_tracker.step()
 
-        self._recorder_manager.step(self._sim.cur_step_global)
+        with profiler.time("recorder_manager_step") if config.recorder_manager else contextlib.suppress():
+            self._recorder_manager.step(self._sim.cur_step_global)
 
     def stop_recording(self):
         self._recorder_manager.stop()
