@@ -4,6 +4,8 @@ from pint import UnitRegistry
 from dataclasses import dataclass, field
 from typing import Tuple, List
 
+from genesis.options.profiling import ProfilingOptions
+
 ureg = UnitRegistry()
 
 GENERATED_ROBOT_XML_PATH = "genesis/assets/xml/agforge_demo.xml"
@@ -175,6 +177,7 @@ class RobotConfig(BaseConfig):
 class ProfilingConfig(BaseConfig):
     """Base settings for profiling."""
     enabled: bool = False
+    profiling_options: ProfilingOptions = ProfilingOptions()
 
 @dataclass
 class TrainingConfig(BaseConfig):
@@ -222,6 +225,7 @@ class TeleopProfilingConfig(ProfilingConfig):
     input_handling: bool = True
     action_application: bool = True
     simulation_step: bool = True
+    profiling_options: ProfilingOptions = ProfilingOptions(enabled=True)
 
 @dataclass
 class TeleopConfig(BaseConfig):

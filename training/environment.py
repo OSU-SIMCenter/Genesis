@@ -90,6 +90,7 @@ class AgilityForgeEnv:
                 gravity=self.sim_cfg.gravity, grid_density=self.sim_cfg.grid_density
             ),
             vis_options=gs.options.VisOptions(show_world_frame=False, visualize_mpm_boundary=True, visualize_mpm_grid=True),
+            profiling_options=self.profiling_cfg.profiling_options,
             show_viewer=self.general_cfg.show_viewer,
         )
         self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", pos=(0, 0, 0.01), fixed=True))
