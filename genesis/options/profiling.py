@@ -36,4 +36,4 @@ class ProfilingOptions(Options):
 
     def __init__(self, **data):
         super().__init__(**data)
-        self.profiler = Profiler(enabled=self.enabled)
+        object.__setattr__(self, 'profiler', Profiler(enabled=self.enabled))
