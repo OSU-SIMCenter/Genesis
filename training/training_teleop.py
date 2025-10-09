@@ -160,6 +160,7 @@ def run():
             env.scene.step()
 
     profiler.print()
+    env.scene.profiling_options.profiler.print()
     kb.stop()
 
 if __name__ == "__main__":
