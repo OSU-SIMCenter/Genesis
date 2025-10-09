@@ -109,10 +109,10 @@ class EnvConfig(BaseConfig):
     action_duration_steps: int = 40
     reset_duration_steps: int = 23
     num_actions: int = 3
-    action_lower_bounds: torch.Tensor = ACTION_LOWER_BOUNDS
-    action_upper_bounds: torch.Tensor = ACTION_UPPER_BOUNDS
-    fixed_region_bounds: torch.Tensor = FIXED_REGION_BOUNDS
-    target_shape_bounds: torch.Tensor = TARGET_SHAPE_BOUNDS
+    action_lower_bounds: torch.Tensor = field(default_factory=lambda: ACTION_LOWER_BOUNDS)
+    action_upper_bounds: torch.Tensor = field(default_factory=lambda: ACTION_UPPER_BOUNDS)
+    fixed_region_bounds: torch.Tensor = field(default_factory=lambda: FIXED_REGION_BOUNDS)
+    target_shape_bounds: torch.Tensor = field(default_factory=lambda: TARGET_SHAPE_BOUNDS)
 
 @dataclass
 class SacConfig(BaseConfig):
@@ -157,8 +157,8 @@ class RobotConfig(BaseConfig):
     """Parameters for the robot arm in the MuJoCo XML file."""
     time_unit_str: str = "rtu"
     robot_time_to_seconds: float = 1.
-    _kp: ureg.Quantity = KP * ureg.newton * ureg.meter  # Stiffness in SI units (N·m)
-    _kv: ureg.Quantity = KV * ureg.newton * ureg.meter * ureg.second  # Damping in SI units (N·m·s)
+    _kp: ureg.Quantity = field(default_factory=lambda: KP * ureg.newton * ureg.meter)
+    _kv: ureg.Quantity = field(default_factory=lambda: KV * ureg.newton * ureg.meter * ureg.second)
 
     def __post_init__(self):
         ureg.define(f"{self.time_unit_str} = {self.robot_time_to_seconds} * second")
@@ -177,7 +177,7 @@ class RobotConfig(BaseConfig):
 class ProfilingConfig(BaseConfig):
     """Base settings for profiling."""
     enabled: bool = False
-    profiling_options: ProfilingOptions = ProfilingOptions()
+    profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
 
 @dataclass
 class TrainingConfig(BaseConfig):
@@ -208,15 +208,15 @@ class TeleopRobotConfig(RobotConfig):
 
     @property
     def slider_speed(self) -> float:
-        return self._slider_speed #* self.robot_time_to_seconds
+        return self._slider_speed
 
     @property
     def hinge_speed(self) -> float:
-        return self._hinge_speed #* self.robot_time_to_seconds
+        return self._hinge_speed
 
     @property
     def gripper_speed(self) -> float:
-        return self._gripper_speed #* self.robot_time_to_seconds
+        return self._gripper_speed
 
 @dataclass
 class TeleopProfilingConfig(ProfilingConfig):
@@ -225,7 +225,7 @@ class TeleopProfilingConfig(ProfilingConfig):
     input_handling: bool = True
     action_application: bool = True
     simulation_step: bool = True
-    profiling_options: ProfilingOptions = ProfilingOptions(enabled=True)
+    profiling_options: ProfilingOptions = field(default_factory=lambda: ProfilingOptions(enabled=True))
 
 @dataclass
 class TeleopConfig(BaseConfig):
