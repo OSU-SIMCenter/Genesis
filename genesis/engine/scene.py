@@ -3,6 +3,7 @@ import pickle
 import sys
 import time
 import weakref
+import contextlib
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
