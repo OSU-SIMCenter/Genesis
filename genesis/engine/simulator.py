@@ -206,6 +206,7 @@ class Simulator(RBC):
                 if not isinstance(solver, RigidSolver):
                     self._rigid_only = False
         self._coupler.build()
+        gs.logger.info(f"Active solvers: {[type(s) for s in self._active_solvers]}")
 
         if self.n_envs > 0 and self.sf_solver.is_active:
             gs.raise_exception("Batching is not supported for SF solver as of now.")
