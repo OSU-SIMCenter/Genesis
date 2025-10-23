@@ -26,7 +26,7 @@ class ProfilingOptions(Options):
             """Scene profiling configurations."""
             class Step(Options):
                 """Settings for the scene step."""
-                sim: bool = True
+                sim: bool = False
                 visualizer: bool = True
                 fps_tracker: bool = True
                 recorder_manager: bool = True

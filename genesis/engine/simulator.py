@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+import contextlib
 import numpy as np
 import gstaichi as ti
 
@@ -260,6 +261,7 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
 
     def step(self, in_backward=False):
+        profiler = self.scene.profiling_options.profiler
         # Check errno at the very beginning of the step.
         # This will trigger GPU sync, but it is not a big deal at the point, since we are going to enqueue very large
         # kernel right away. Moreover, if computations are still not done at this point, then the queue will just
@@ -269,21 +271,27 @@ class Simulator(RBC):
 
         if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
             for _ in range(self._substeps):
-                self.rigid_solver.substep(self.cur_substep_local)
+                with profiler.time("rigid_solver_substep") if True else contextlib.suppress():
+                    self.rigid_solver.substep(self.cur_substep_local)
                 self._cur_substep_global += 1
         else:
-            self.process_input(in_backward=in_backward)
+            with profiler.time("process_input") if True else contextlib.suppress():
+                self.process_input(in_backward=in_backward)
             for _ in range(self._substeps):
-                self.substep(self.cur_substep_local)
+                with profiler.time("substep") if True else contextlib.suppress():
+                    self.substep(self.cur_substep_local)
 
                 self._cur_substep_global += 1
                 if self.cur_substep_local == 0 and not in_backward:
-                    self.save_ckpt()
+                    with profiler.time("save_ckpt") if True else contextlib.suppress():
+                        self.save_ckpt()
 
         if self.rigid_solver.is_active:
-            self.rigid_solver.clear_external_force()
+            with profiler.time("clear_external_force") if True else contextlib.suppress():
+                self.rigid_solver.clear_external_force()
 
-        self._sensor_manager.step()
+        with profiler.time("sensor_manager_step") if True else contextlib.suppress():
+            self._sensor_manager.step()
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):
