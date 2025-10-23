@@ -90,6 +90,7 @@ class SimConfig(BaseConfig):
     substeps: int = SUBSTEPS_TRAIN
     gravity: Tuple[float, float, float] = (0, 0, 0)
     grid_density: int = BASE_GRID_DENSITY
+    particle_size: float = 0.01 * 64.0 / BASE_GRID_DENSITY
     lower_bound: Tuple[float, float, float] = MPM_LOWER_BOUND
     upper_bound: Tuple[float, float, float] = MPM_UPPER_BOUND
 
