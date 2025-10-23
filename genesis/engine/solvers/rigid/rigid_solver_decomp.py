@@ -1292,8 +1292,10 @@ class RigidSolver(Solver):
         )
 
     def substep_pre_coupling(self, f):
+        profiler = self.sim.scene.profiling_options.profiler
         if self.is_active():
-            self.substep()
+            with profiler.time("rigid_substep") if True else contextlib.suppress():
+                self.substep()
 
     def substep_pre_coupling_grad(self, f):
         pass

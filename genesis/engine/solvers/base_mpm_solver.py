@@ -450,10 +450,15 @@ class BaseMPMSolver(Solver):
             entity.process_input_grad()
 
     def substep_pre_coupling(self, f):
-        self.reset_grid_and_grad(f)
-        self.compute_F_tmp(f)
-        self.svd(f)
-        self.p2g(f)
+        profiler = self.sim.scene.profiling_options.profiler
+        with profiler.time("mpm_reset_grid_grad") if True else contextlib.suppress():
+            self.reset_grid_and_grad(f)
+        with profiler.time("mpm_compute_F_tmp") if True else contextlib.suppress():
+            self.compute_F_tmp(f)
+        with profiler.time("mpm_svd") if True else contextlib.suppress():
+            self.svd(f)
+        with profiler.time("mpm_p2g") if True else contextlib.suppress():
+            self.p2g(f)
 
     def substep_pre_coupling_grad(self, f):
         self.p2g.grad(f)
