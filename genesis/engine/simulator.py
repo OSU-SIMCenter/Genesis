@@ -317,7 +317,7 @@ class Simulator(RBC):
         profiler = self.scene.profiling_options.profiler
         with profiler.time("preprocess") if True else contextlib.suppress():
             self._coupler.preprocess(f)
-        with profiler.time("substep_pre_couple") if True else contextlib.suppress():
+        with profiler.time("substep_pre_couple") if False else contextlib.suppress():
             self.substep_pre_coupling(f)
         with profiler.time("couple") if True else contextlib.suppress():
             self._coupler.couple(f)
