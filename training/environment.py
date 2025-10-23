@@ -87,7 +87,7 @@ class AgilityForgeEnv:
             rigid_options=gs.options.RigidOptions(dt=self.sim_cfg.dt),
             mpm_options=gs.options.MPMOptions(
                 lower_bound=self.sim_cfg.lower_bound, upper_bound=self.sim_cfg.upper_bound,
-                gravity=self.sim_cfg.gravity, grid_density=self.sim_cfg.grid_density
+                gravity=self.sim_cfg.gravity, grid_density=self.sim_cfg.grid_density, particle_size=self.sim_cfg.particle_size
             ),
             vis_options=gs.options.VisOptions(show_world_frame=False, visualize_mpm_boundary=True, visualize_mpm_grid=True),
             profiling_options=self.profiling_cfg.profiling_options,
