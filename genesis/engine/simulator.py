@@ -275,7 +275,7 @@ class Simulator(RBC):
             with profiler.time("process_input") if True else contextlib.suppress():
                 self.process_input(in_backward=in_backward)
             for _ in range(self._substeps):
-                with profiler.time("substep") if True else contextlib.suppress():
+                with profiler.time("substep") if False else contextlib.suppress():
                     self.substep(self.cur_substep_local)
 
                 self._cur_substep_global += 1
@@ -314,10 +314,15 @@ class Simulator(RBC):
             solver.process_input_grad()
 
     def substep(self, f):
-        self._coupler.preprocess(f)
-        self.substep_pre_coupling(f)
-        self._coupler.couple(f)
-        self.substep_post_coupling(f)
+        profiler = self.scene.profiling_options.profiler
+        with profiler.time("preprocess") if True else contextlib.suppress():
+            self._coupler.preprocess(f)
+        with profiler.time("substep_pre_couple") if True else contextlib.suppress():
+            self.substep_pre_coupling(f)
+        with profiler.time("couple") if True else contextlib.suppress():
+            self._coupler.couple(f)
+        with profiler.time("substep_post_couple") if True else contextlib.suppress():
+            self.substep_post_coupling(f)
 
     def sub_step_grad(self, f):
         self.substep_post_coupling_grad(f)
