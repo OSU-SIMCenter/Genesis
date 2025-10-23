@@ -470,18 +470,23 @@ class BaseMPMSolver(Solver):
             entity.process_input_grad()
 
     def substep_pre_coupling(self, f):
-        self.reset_grid_and_grad(f)
-        self.compute_F_tmp(f)
-        self.svd(f)
-        self.p2g(
-            f,
-            self.sim.coupler.rigid_solver.geoms_state,
-            self.sim.coupler.rigid_solver.geoms_info,
-            self.sim.coupler.rigid_solver.links_state,
-            self.sim.coupler.rigid_solver._rigid_global_info,
-            self.sim.coupler.rigid_solver.sdf._sdf_info,
-            self.sim.coupler.rigid_solver.collider._collider_static_config,
-        )
+        profiler = self.sim.scene.profiling_options.profiler
+        with profiler.time("mpm_reset_grid_grad") if True else contextlib.suppress():
+            self.reset_grid_and_grad(f)
+        with profiler.time("mpm_compute_F_tmp") if True else contextlib.suppress():
+            self.compute_F_tmp(f)
+        with profiler.time("mpm_svd") if True else contextlib.suppress():
+            self.svd(f)
+        with profiler.time("mpm_p2g") if True else contextlib.suppress():
+            self.p2g(
+                f,
+                self.sim.coupler.rigid_solver.geoms_state,
+                self.sim.coupler.rigid_solver.geoms_info,
+                self.sim.coupler.rigid_solver.links_state,
+                self.sim.coupler.rigid_solver._rigid_global_info,
+                self.sim.coupler.rigid_solver.sdf._sdf_info,
+                self.sim.coupler.rigid_solver.collider._collider_static_config,
+            )
 
     def substep_pre_coupling_grad(self, f):
         self.p2g.grad(

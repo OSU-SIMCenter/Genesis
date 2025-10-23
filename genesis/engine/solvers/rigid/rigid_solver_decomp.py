@@ -1154,6 +1154,7 @@ class RigidSolver(Solver):
         )
 
     def substep_pre_coupling(self, f):
+        profiler = self.sim.scene.profiling_options.profiler
         if self.is_active:
             # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
             from genesis.engine.couplers import IPCCoupler
@@ -1162,7 +1163,8 @@ class RigidSolver(Solver):
                 return
 
             # Run Genesis rigid simulation step
-            self.substep(f)
+            with profiler.time("rigid_substep") if True else contextlib.suppress():
+                self.substep(f)
 
     def substep_pre_coupling_grad(self, f):
         # Change to backward mode
