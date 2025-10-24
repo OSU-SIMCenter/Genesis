@@ -48,6 +48,7 @@ class AgilityForgeEnv:
         self.general_cfg = cfg.general
         self.robot_cfg = cfg.robot
         self.mat_cfg = cfg.mat
+        self.vis_cfg = cfg.vis
         self.profiling_cfg = cfg.profiling
         self.device = gs.device
 
@@ -82,7 +83,7 @@ class AgilityForgeEnv:
             camera_pos=self.general_cfg.camera_pos,
             camera_lookat=self.general_cfg.camera_lookat,
             max_FPS=60,
-            res=(1280, 720),
+            res=self.vis_cfg.camera_res,
         ) if self.general_cfg.show_viewer else gs.options.ViewerOptions()
         
         self.scene = gs.Scene(
@@ -93,7 +94,14 @@ class AgilityForgeEnv:
                 lower_bound=self.sim_cfg.lower_bound, upper_bound=self.sim_cfg.upper_bound,
                 gravity=self.sim_cfg.gravity, grid_density=self.sim_cfg.grid_density, particle_size=self.sim_cfg.particle_size
             ),
-            vis_options=gs.options.VisOptions(show_world_frame=False, visualize_mpm_boundary=True, visualize_mpm_grid=True),
+            vis_options=gs.options.VisOptions(
+                show_world_frame=self.vis_cfg.show_world_frame,
+                visualize_mpm_boundary=self.vis_cfg.visualize_mpm_boundary,
+                visualize_mpm_grid=self.vis_cfg.visualize_mpm_grid,
+                render_particle_as=self.vis_cfg.render_particle_as,
+                shadow=self.vis_cfg.shadow,
+                plane_reflection=self.vis_cfg.plane_reflection,
+            ),
             profiling_options=self.profiling_cfg.profiling_options,
             show_viewer=self.general_cfg.show_viewer,
         )
@@ -136,7 +144,7 @@ class AgilityForgeEnv:
     def _setup_recording_camera(self):
         """Initializes the camera used for video recording."""
         self.recording_camera = self.scene.add_camera(
-            res=(1280, 720), pos=self.general_cfg.camera_pos,
+            res=self.vis_cfg.camera_res, pos=self.general_cfg.camera_pos,
             lookat=self.general_cfg.camera_lookat, fov=45, GUI=False
         )
         self.scene.add_camera(GUI=True)
