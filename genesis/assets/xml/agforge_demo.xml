@@ -12,7 +12,7 @@
   <worldbody>
     <light cutoff="100" diffuse="1 1 1" dir="0 0 -1" directional="true" pos="0 0 3"/>
     <body name="base_plate" pos="0 0 0">
-      <joint name="x_slider" type="slide" axis="1 0 0" range="-0.0762 0.0762"/>
+      <joint name="x_slider" type="slide" axis="1 0 0" range="-0.0571 0.0571"/>
       <inertial pos="0 0 0" mass="1e-7" diaginertia="1e-7 1e-7 1e-7"/>
 
       <body name="hinge_cylinder" pos="0 0 0.0762">
@@ -34,9 +34,9 @@
   </worldbody>
 
   <actuator>
-    <position joint="x_slider"           kp="781250000.0000002" kv="176776.69529663693"/>
-    <position joint="x_hinge"            kp="781250000.0000002" kv="176776.69529663693"/>
-    <position joint="left_gripper_slide"  kp="781250000.0000002" kv="176776.69529663693"/>
-    <position joint="right_gripper_slide" kp="781250000.0000002" kv="176776.69529663693"/>
+    <position joint="x_slider"           kp="91836734.69387755" kv="60609.152673132645"/>
+    <position joint="x_hinge"            kp="91836734.69387755" kv="60609.152673132645"/>
+    <position joint="left_gripper_slide"  kp="91836734.69387755" kv="60609.152673132645"/>
+    <position joint="right_gripper_slide" kp="91836734.69387755" kv="60609.152673132645"/>
   </actuator>
 </mujoco>

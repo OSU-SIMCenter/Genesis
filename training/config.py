@@ -15,18 +15,18 @@ GENERATED_ROBOT_XML_PATH = "genesis/assets/xml/agforge_demo.xml"
 # --------------------------------------------------------------------------
 CYLINDER_DIAMETER = (1.0 * ureg.inch).to(ureg.meter).magnitude
 CYLINDER_RADIUS = CYLINDER_DIAMETER / 2
-CYLINDER_HEIGHT = 8 * CYLINDER_RADIUS
+CYLINDER_HEIGHT = 6 * CYLINDER_RADIUS
 CYLINDER_POS = np.array([0.0, 0.0, 6 * CYLINDER_RADIUS])
 CYLINDER_EULER = (0.0, 90.0, 0.0) # Orients the cylinder along the X-axis
 
 # --- MPM Boundary Calculation with Solver Padding ---
-BASE_GRID_DENSITY = int(10 / CYLINDER_DIAMETER)
+BASE_GRID_DENSITY = int(7 / CYLINDER_DIAMETER)
 DX = 1.0 / BASE_GRID_DENSITY  # Cell size
 MPM_SOLVER_PADDING = 3 * DX   # Internal padding used by the MPM solver
 
 # Asymmetrical user-defined padding
 MPM_X_PADDING_LOWER = CYLINDER_HEIGHT * 0.85
-MPM_X_PADDING_UPPER = CYLINDER_HEIGHT * 0.6
+MPM_X_PADDING_UPPER = CYLINDER_HEIGHT * 0.52
 MPM_YZ_PADDING = CYLINDER_RADIUS * 1.6
 
 # Combine user padding with solver padding
@@ -90,7 +90,7 @@ class SimConfig(BaseConfig):
     substeps: int = SUBSTEPS_TRAIN
     gravity: Tuple[float, float, float] = (0, 0, 0)
     grid_density: int = BASE_GRID_DENSITY
-    particle_size: float = 0.01 * 64.0 / BASE_GRID_DENSITY
+    particle_size: float = 0.8 * 0.01 * 64.0 / BASE_GRID_DENSITY
     lower_bound: Tuple[float, float, float] = MPM_LOWER_BOUND
     upper_bound: Tuple[float, float, float] = MPM_UPPER_BOUND
 
@@ -193,8 +193,8 @@ class TrainingConfig(BaseConfig):
     profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
     performance_mode: bool = True
 
-SUBSTEP_DT_TELEOP = 0.8e-6
-SUBSTEPS_TELEOP = 32
+SUBSTEP_DT_TELEOP = 1.4e-6
+SUBSTEPS_TELEOP = 16
 @dataclass
 class TeleopSimConfig(SimConfig):
     dt: float = SUBSTEP_DT_TELEOP * SUBSTEPS_TELEOP
@@ -202,7 +202,7 @@ class TeleopSimConfig(SimConfig):
 
 @dataclass
 class TeleopRobotConfig(RobotConfig):
-    robot_time_to_seconds: float = 0.05 / SUBSTEP_DT_TELEOP
+    robot_time_to_seconds: float = 0.03 / SUBSTEP_DT_TELEOP
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002
