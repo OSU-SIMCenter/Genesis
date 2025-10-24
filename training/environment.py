@@ -101,6 +101,7 @@ class AgilityForgeEnv:
                 render_particle_as=self.vis_cfg.render_particle_as,
                 shadow=self.vis_cfg.shadow,
                 plane_reflection=self.vis_cfg.plane_reflection,
+                particle_render_fraction=self.vis_cfg.particle_render_fraction,
             ),
             profiling_options=self.profiling_cfg.profiling_options,
             show_viewer=self.general_cfg.show_viewer,
