@@ -151,6 +151,7 @@ class GeneralConfig(BaseConfig):
 class VisConfig(BaseConfig):
     """Parameters for visualization and rendering."""
     performance_mode: bool = True
+    particle_render_fraction: float = 0.5
     camera_res: Tuple[int, int] = (1280, 720)
     show_world_frame: bool = False
     visualize_mpm_boundary: bool = False
@@ -166,6 +167,7 @@ class VisConfig(BaseConfig):
             self.visualize_mpm_grid = True
             self.shadow = True
             self.plane_reflection = True
+            self.particle_render_fraction = 1.0
             self.camera_res = (1280, 720)
 
 def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> float:

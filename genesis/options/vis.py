@@ -91,6 +91,8 @@ class VisOptions(Options):
     contact_force_scale : float = 0.02
         Scale for contact arrow visualization, m/N. E.g. the force arrow representing 10N will be 0.2m long if scale is
         0.02. Defaults to 0.02.
+    particle_render_fraction : float
+        The fraction of particles to render. Defaults to 1.0.
     n_support_neighbors : int
         Number of supporting neighbor particles used to compute vertex position of the visual mesh. Used for rendering
         deformable bodies. Defaults to 12.
@@ -123,6 +125,7 @@ class VisOptions(Options):
     contact_force_scale: float = (
         0.01  # scale of force visualization, m/N. E.g. the force arrow representing 10N wille be 0.1m long if scale is 0.01.
     )
+    particle_render_fraction: float = 1.0
     n_support_neighbors: int = (
         12  # number of neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies.
     )
