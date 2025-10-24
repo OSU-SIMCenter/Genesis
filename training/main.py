@@ -41,7 +41,7 @@ def main():
     from environment import AgilityForgeEnv
     from trainers import SACTrainer, AdamTrainer, BaseTrainer
     
-    env = AgilityForgeEnv(cfg.sim, cfg.env, cfg.general, cfg.robot, cfg.mat)
+    env = AgilityForgeEnv(cfg)
 
     # --- Step 4: Select trainer ---
     trainer: BaseTrainer
