@@ -156,7 +156,7 @@ class VisConfig(BaseConfig):
     show_world_frame: bool = False
     visualize_mpm_boundary: bool = False
     visualize_mpm_grid: bool = False
-    render_particle_as: str = "particle"
+    render_particle_as: str = "sphere"
     shadow: bool = False
     plane_reflection: bool = False
 
