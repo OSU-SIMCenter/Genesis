@@ -127,6 +127,8 @@ class VisOptions(Options):
     contact_force_scale : float = 0.02
         Scale in m.N^{-1} for contact arrow visualization, e.g. the force arrow representing 10N will be 0.2m long if
         scale is 0.02. Defaults to 0.01.
+    particle_render_fraction : float
+        The fraction of particles to render. Defaults to 1.0.
     n_support_neighbors : int
         Number of supporting neighbor particles used to compute vertex position of the visual mesh. Used for rendering
         deformable bodies. Defaults to 12.
@@ -155,6 +157,7 @@ class VisOptions(Options):
     visualize_pbd_boundary: StrictBool = False
     segmentation_level: Literal["entity", "link", "geom"] = "link"
     render_particle_as: Literal["sphere", "tet"] = "sphere"
+    particle_render_fraction: float = 1.0
     particle_size_scale: PositiveFloat = 1.0
     contact_force_scale: PositiveFloat = 0.01
     n_support_neighbors: StrictInt = 12
