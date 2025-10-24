@@ -601,11 +601,21 @@ class RasterizerContext:
                         self.add_dynamic_node(mpm_entity, pyrender.Mesh.from_trimesh(mesh, smooth=True))
 
                     elif mpm_entity.surface.vis_mode == "particle":
-                        tfs = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
-                        tfs[:, :3, 3] = particles_all[mpm_entity.particle_start : mpm_entity.particle_end, idx]
+                        positions = particles_all[mpm_entity.particle_start : mpm_entity.particle_end, idx]
+                        if self.particle_render_fraction < 1.0:
+                            num_particles = int(len(positions) * self.particle_render_fraction)
+                            indices = np.random.choice(len(positions), num_particles, replace=False)
+                            positions = positions[indices]
+                            tfs = np.tile(np.eye(4), (num_particles, 1, 1))
+                        else:
+                            tfs = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
 
-                        node = self._scene.get_buffer_id(self.static_nodes[(idx, mpm_entity.uid)], "model")
-                        buffer_updates[node] = tfs.transpose((0, 2, 1))
+                        tfs[:, :3, 3] = positions
+
+                        node = self.static_nodes[(idx, mpm_entity.uid)]
+                        for primitive in node.mesh.primitives:
+                            primitive.poses = tfs
+                        buffer_updates[self._scene.get_buffer_id(node, "model")] = tfs.transpose((0, 2, 1))
 
                     elif mpm_entity.surface.vis_mode == "visual":
                         mpm_entity._vmesh.verts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end, idx]
