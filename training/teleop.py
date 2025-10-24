@@ -88,8 +88,8 @@ def run():
     }
 
     # Control mode: "continuous" or "incremental"
-    control_mode = "continuous"
-    incremental_multiplier = 20.0
+    control_mode = "incremental"
+    incremental_multiplier = 15.0
 
     print(
         "Teleop Controls:\n"
