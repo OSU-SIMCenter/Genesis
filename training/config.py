@@ -147,6 +147,27 @@ class GeneralConfig(BaseConfig):
     camera_pos: Tuple[float, float, float] = CAMERA_POS
     camera_lookat: Tuple[float, float, float] = CAMERA_LOOKAT
 
+@dataclass
+class VisConfig(BaseConfig):
+    """Parameters for visualization and rendering."""
+    performance_mode: bool = True
+    camera_res: Tuple[int, int] = (1280, 720)
+    show_world_frame: bool = False
+    visualize_mpm_boundary: bool = False
+    visualize_mpm_grid: bool = False
+    render_particle_as: str = "particle"
+    shadow: bool = False
+    plane_reflection: bool = False
+
+    def __post_init__(self):
+        if not self.performance_mode:
+            self.show_world_frame = True
+            self.visualize_mpm_boundary = True
+            self.visualize_mpm_grid = True
+            self.shadow = True
+            self.plane_reflection = True
+            self.camera_res = (1280, 720)
+
 def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> float:
     """Convert a quantity to use a specified time unit instead of seconds."""
     return quantity.to(str(quantity.to_base_units().units).replace('second', time_unit_str)).magnitude
@@ -186,6 +207,7 @@ class TrainingConfig(BaseConfig):
     sim: SimConfig = field(default_factory=SimConfig)
     env: EnvConfig = field(default_factory=EnvConfig)
     general: GeneralConfig = field(default_factory=GeneralConfig)
+    vis: VisConfig = field(default_factory=VisConfig)
     robot: RobotConfig = field(default_factory=RobotConfig)
     mat: MaterialConfig = field(default_factory=MaterialConfig)
     sac: SacConfig = field(default_factory=SacConfig)
@@ -234,6 +256,7 @@ class TeleopConfig(BaseConfig):
     sim: SimConfig = field(default_factory=TeleopSimConfig)
     env: EnvConfig = field(default_factory=lambda: EnvConfig(num_envs=1))
     general: GeneralConfig = field(default_factory=lambda: GeneralConfig(show_viewer=True, record=False))
+    vis: VisConfig = field(default_factory=VisConfig)
     robot: RobotConfig = field(default_factory=TeleopRobotConfig)
     mat: MaterialConfig = field(default_factory=MaterialConfig)
     profiling: ProfilingConfig = field(default_factory=TeleopProfilingConfig)
