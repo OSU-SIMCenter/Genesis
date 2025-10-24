@@ -92,6 +92,7 @@ class RasterizerContext:
         self.visualize_sph_boundary = options.visualize_sph_boundary
         self.visualize_pbd_boundary = options.visualize_pbd_boundary
         self.particle_size_scale = options.particle_size_scale
+        self.particle_render_fraction = options.particle_render_fraction
         self.contact_force_scale = options.contact_force_scale
         self.render_particle_as = options.render_particle_as
         self.rendered_envs_idx = options.rendered_envs_idx
@@ -533,10 +534,15 @@ class RasterizerContext:
             for mpm_entity in self.sim.mpm_solver.entities:
                 for idx in self.rendered_envs_idx:
                     if mpm_entity.surface.vis_mode == "recon":
+                        positions = particles_all[mpm_entity.particle_start : mpm_entity.particle_end, idx][
+                            active_all[mpm_entity.particle_start : mpm_entity.particle_end, idx]
+                        ]
+                        if self.particle_render_fraction < 1.0:
+                            num_particles = int(len(positions) * self.particle_render_fraction)
+                            indices = np.random.choice(len(positions), num_particles, replace=False)
+                            positions = positions[indices]
                         mesh = pu.particles_to_mesh(
-                            positions=particles_all[mpm_entity.particle_start : mpm_entity.particle_end, idx][
-                                active_all[mpm_entity.particle_start : mpm_entity.particle_end, idx]
-                            ],
+                            positions=positions,
                             radius=self.sim.mpm_solver.particle_radius,
                             backend=mpm_entity.surface.recon_backend,
                         )
@@ -601,10 +607,15 @@ class RasterizerContext:
             for sph_entity in self.sim.sph_solver.entities:
                 for idx in self.rendered_envs_idx:
                     if sph_entity.surface.vis_mode == "recon":
+                        positions = particles_all[sph_entity.particle_start : sph_entity.particle_end, idx][
+                            active_all[sph_entity.particle_start : sph_entity.particle_end, idx]
+                        ]
+                        if self.particle_render_fraction < 1.0:
+                            num_particles = int(len(positions) * self.particle_render_fraction)
+                            indices = np.random.choice(len(positions), num_particles, replace=False)
+                            positions = positions[indices]
                         mesh = pu.particles_to_mesh(
-                            positions=particles_all[sph_entity.particle_start : sph_entity.particle_end, idx][
-                                active_all[sph_entity.particle_start : sph_entity.particle_end, idx]
-                            ],
+                            positions=positions,
                             radius=self.sim.sph_solver.particle_radius,
                             backend=sph_entity.surface.recon_backend,
                         )
@@ -693,6 +704,10 @@ class RasterizerContext:
                         positions = particles_env[pbd_entity.particle_start : pbd_entity.particle_end][
                             active_env[pbd_entity.particle_start : pbd_entity.particle_end]
                         ]
+                        if self.particle_render_fraction < 1.0:
+                            num_particles = int(len(positions) * self.particle_render_fraction)
+                            indices = np.random.choice(len(positions), num_particles, replace=False)
+                            positions = positions[indices]
                         mesh = pu.particles_to_mesh(
                             positions=positions,
                             radius=self.sim.mpm_solver.particle_radius,
