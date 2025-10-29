@@ -115,6 +115,12 @@ usd = [
     # Used for parsing `.usd` mesh files
     "usd-core<25.11",
 ]
+agforge = [
+    "pynput",
+    "pint",
+    "tensorboard",
+    "rsl-rl-lib==2.2.4",
+]
 
 [project.scripts]
 gs = "genesis._main:main"
