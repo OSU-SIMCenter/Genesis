@@ -136,6 +136,12 @@ usd = [
     # Used to serialize concurrent omni-kit bake operations (concurrent bootstrapping causes segfaults)
     "filelock",
 ]
+agforge = [
+    "pynput",
+    "pint",
+    "tensorboard",
+    "rsl-rl-lib==2.2.4",
+]
 
 [project.scripts]
 gs = "genesis._main:main"
