@@ -154,3 +154,6 @@ uv.lock
 
 # alarm.yml outputs
 outputs/
+
+# agforge
+agforge_demo.xml
