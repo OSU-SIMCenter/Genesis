@@ -1,10 +1,10 @@
 import torch
 import numpy as np
 from pint import UnitRegistry
-from dataclasses import dataclass, field
 from typing import Tuple, List
 
-from genesis.options.profiling import ProfilingOptions
+import genesis as gs
+from genesis.options import Options, ProfilingOptions, SimOptions, MPMOptions, VisOptions, ViewerOptions
 
 ureg = UnitRegistry()
 
@@ -74,57 +74,40 @@ CAMERA_POS_OFFSET = np.array([-2.75 * CYLINDER_HEIGHT, -8.0 * CYLINDER_RADIUS, 3
 CAMERA_POS = tuple(CYLINDER_POS + CAMERA_POS_OFFSET)
 
 # --------------------------------------------------------------------------
-# Configuration Dataclasses
+# Configuration Options
 # --------------------------------------------------------------------------
 
-@dataclass
-class BaseConfig:
-    """Base class for configurations."""
-    pass
-
-SUBSTEPS_TRAIN = 64
-@dataclass
-class SimConfig(BaseConfig):
-    """Parameters related to the core physics simulation."""
-    dt: float = 1.5e-6 * SUBSTEPS_TRAIN
-    substeps: int = SUBSTEPS_TRAIN
-    gravity: Tuple[float, float, float] = (0, 0, 0)
-    grid_density: int = BASE_GRID_DENSITY
-    particle_size: float = 0.8 * 0.01 * 64.0 / BASE_GRID_DENSITY
-    lower_bound: Tuple[float, float, float] = MPM_LOWER_BOUND
-    upper_bound: Tuple[float, float, float] = MPM_UPPER_BOUND
-
-@dataclass
-class MaterialConfig(BaseConfig):
+class MaterialOptions(Options):
     """Parameters for the elasto-plastic material."""
     E: float = 200.e9 * 0.25
     nu: float = 0.28
     rho: float = 8000.
     von_mises_yield_stress: float = 190.e6 * 0.1
 
-@dataclass
-class EnvConfig(BaseConfig):
+class EnvOptions(Options):
     """Parameters related to the RL environment and task."""
     num_envs: int = 1
-    max_episode_length: int = int(100. / SimConfig.dt)
+    max_episode_length: int = int(100. / (1.5e-6 * 64)) # SimConfig.dt
     action_duration_steps: int = 40
     reset_duration_steps: int = 23
     num_actions: int = 3
-    action_lower_bounds: torch.Tensor = field(default_factory=lambda: ACTION_LOWER_BOUNDS)
-    action_upper_bounds: torch.Tensor = field(default_factory=lambda: ACTION_UPPER_BOUNDS)
-    fixed_region_bounds: torch.Tensor = field(default_factory=lambda: FIXED_REGION_BOUNDS)
-    target_shape_bounds: torch.Tensor = field(default_factory=lambda: TARGET_SHAPE_BOUNDS)
+    action_lower_bounds: torch.Tensor = ACTION_LOWER_BOUNDS
+    action_upper_bounds: torch.Tensor = ACTION_UPPER_BOUNDS
+    fixed_region_bounds: torch.Tensor = FIXED_REGION_BOUNDS
+    target_shape_bounds: torch.Tensor = TARGET_SHAPE_BOUNDS
+    class Config:
+        arbitrary_types_allowed = True
 
-@dataclass
-class SacConfig(BaseConfig):
+
+class SacOptions(Options):
     """Hyperparameters for the SAC (PPO) reinforcement learning algorithm."""
     class_name: str = "PPO"
     gamma: float = 0.99
     lam: float = 0.95
     learning_rate: float = 5e-4
     entropy_coef: float = 0.1
-    actor_hidden_dims: List[int] = field(default_factory=lambda: [256, 128])
-    critic_hidden_dims: List[int] = field(default_factory=lambda: [256, 128])
+    actor_hidden_dims: List[int] = [256, 128]
+    critic_hidden_dims: List[int] = [256, 128]
     max_iterations: int = 1000
     run_name: str = "agforge_parametric"
     runner_class_name: str = "OnPolicyRunner"
@@ -132,14 +115,12 @@ class SacConfig(BaseConfig):
     save_interval: int = 50
     empirical_normalization: bool = False
 
-@dataclass
-class AdamConfig(BaseConfig):
+class AdamOptions(Options):
     """Hyperparameters for the Adam gradient-based optimizer."""
     learning_rate: float = 1e-3
     max_iterations: int = 1000
 
-@dataclass
-class GeneralConfig(BaseConfig):
+class GeneralOptions(Options):
     """General settings for visualization, logging, and recording."""
     show_viewer: bool = True
     record: bool = False
@@ -147,44 +128,22 @@ class GeneralConfig(BaseConfig):
     camera_pos: Tuple[float, float, float] = CAMERA_POS
     camera_lookat: Tuple[float, float, float] = CAMERA_LOOKAT
 
-@dataclass
-class VisConfig(BaseConfig):
-    """Parameters for visualization and rendering."""
-    performance_mode: bool = True
-    particle_render_fraction: float = 0.5
-    camera_res: Tuple[int, int] = (1280, 720)
-    show_world_frame: bool = False
-    visualize_mpm_boundary: bool = False
-    visualize_mpm_grid: bool = False
-    render_particle_as: str = "sphere"
-    shadow: bool = False
-    plane_reflection: bool = False
-
-    def __post_init__(self):
-        if not self.performance_mode:
-            self.show_world_frame = True
-            self.visualize_mpm_boundary = True
-            self.visualize_mpm_grid = True
-            self.shadow = True
-            self.plane_reflection = True
-            self.particle_render_fraction = 1.0
-            self.camera_res = (1280, 720)
-
 def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> float:
     """Convert a quantity to use a specified time unit instead of seconds."""
     return quantity.to(str(quantity.to_base_units().units).replace('second', time_unit_str)).magnitude
 
 KP = 0.2
 KV = 2. * ((KP * 10.) ** 0.5)
-@dataclass
-class RobotConfig(BaseConfig):
+
+class RobotOptions(Options):
     """Parameters for the robot arm in the MuJoCo XML file."""
     time_unit_str: str = "rtu"
     robot_time_to_seconds: float = 1.
-    _kp: ureg.Quantity = field(default_factory=lambda: KP * ureg.newton * ureg.meter)
-    _kv: ureg.Quantity = field(default_factory=lambda: KV * ureg.newton * ureg.meter * ureg.second)
+    _kp: ureg.Quantity = KP * ureg.newton * ureg.meter
+    _kv: ureg.Quantity = KV * ureg.newton * ureg.meter * ureg.second
 
-    def __post_init__(self):
+    def __init__(self, **data):
+        super().__init__(**data)
         ureg.define(f"{self.time_unit_str} = {self.robot_time_to_seconds} * second")
 
     @property
@@ -197,36 +156,81 @@ class RobotConfig(BaseConfig):
         """Get damping with time unit converted to the specified time unit (N·m·rtu)"""
         return convert_to_robot_time_units(self._kv, self.time_unit_str)
 
-@dataclass
-class ProfilingConfig(BaseConfig):
-    """Base settings for profiling."""
-    enabled: bool = False
-    profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
+    class Config:
+        arbitrary_types_allowed = True
 
-@dataclass
-class TrainingConfig(BaseConfig):
-    """Aggregated configuration for training."""
-    sim: SimConfig = field(default_factory=SimConfig)
-    env: EnvConfig = field(default_factory=EnvConfig)
-    general: GeneralConfig = field(default_factory=GeneralConfig)
-    vis: VisConfig = field(default_factory=VisConfig)
-    robot: RobotConfig = field(default_factory=RobotConfig)
-    mat: MaterialConfig = field(default_factory=MaterialConfig)
-    sac: SacConfig = field(default_factory=SacConfig)
-    adam: AdamConfig = field(default_factory=AdamConfig)
-    profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
+
+class AgilityForgeOptions(Options):
+    """Aggregated configuration for the AgilityForge environment."""
+    sim: SimOptions = SimOptions(
+        dt=1.5e-6 * 64,
+        substeps=64,
+        gravity=(0, 0, 0),
+    )
+    mpm: MPMOptions = MPMOptions(
+        grid_density=BASE_GRID_DENSITY,
+        particle_size=0.8 * 0.01 * 64.0 / BASE_GRID_DENSITY,
+        lower_bound=MPM_LOWER_BOUND,
+        upper_bound=MPM_UPPER_BOUND,
+    )
+    env: EnvOptions = EnvOptions()
+    general: GeneralOptions = GeneralOptions()
+    vis: VisOptions = VisOptions(
+        performance_mode=True,
+        particle_render_fraction=0.5,
+        camera_res=(1280, 720),
+        show_world_frame=False,
+        visualize_mpm_boundary=False,
+        visualize_mpm_grid=False,
+        render_particle_as="sphere",
+        shadow=False,
+        plane_reflection=False,
+    )
+    viewer: ViewerOptions = ViewerOptions(
+        camera_pos=CAMERA_POS,
+        camera_lookat=CAMERA_LOOKAT,
+    )
+    robot: RobotOptions = RobotOptions()
+    mat: MaterialOptions = MaterialOptions()
+    sac: SacOptions = SacOptions()
+    adam: AdamOptions = AdamOptions()
+    profiling: ProfilingOptions = ProfilingOptions()
     performance_mode: bool = True
 
-SUBSTEP_DT_TELEOP = 1.4e-6
-SUBSTEPS_TELEOP = 16
-@dataclass
-class TeleopSimConfig(SimConfig):
-    dt: float = SUBSTEP_DT_TELEOP * SUBSTEPS_TELEOP
-    substeps: int = SUBSTEPS_TELEOP
+    def __init__(self, **data):
+        super().__init__(**data)
+        if not self.performance_mode:
+            self.vis.show_world_frame = True
+            self.vis.visualize_mpm_boundary = True
+            self.vis.visualize_mpm_grid = True
+            self.vis.shadow = True
+            self.vis.plane_reflection = True
+            self.vis.particle_render_fraction = 1.0
+            self.vis.camera_res = (1280, 720)
 
-@dataclass
-class TeleopRobotConfig(RobotConfig):
-    robot_time_to_seconds: float = 0.03 / SUBSTEP_DT_TELEOP
+
+class TrainingOptions(AgilityForgeOptions):
+    """Aggregated configuration for training."""
+    pass
+
+
+class TeleopOptions(AgilityForgeOptions):
+    """Aggregated configuration for teleoperation."""
+    sim: SimOptions = SimOptions(
+        dt=1.4e-6 * 16,
+        substeps=16,
+        gravity=(0, 0, 0),
+    )
+    env: EnvOptions = EnvOptions(num_envs=1)
+    general: GeneralOptions = GeneralOptions(show_viewer=True, record=False)
+    robot: RobotOptions = RobotOptions(
+        robot_time_to_seconds=0.03 / 1.4e-6
+    )
+    profiling: ProfilingOptions = ProfilingOptions(
+        enabled=True,
+        profiling_options=ProfilingOptions(enabled=True, show_FPS=False)
+    )
+
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002
@@ -242,24 +246,3 @@ class TeleopRobotConfig(RobotConfig):
     @property
     def gripper_speed(self) -> float:
         return self._gripper_speed
-
-@dataclass
-class TeleopProfilingConfig(ProfilingConfig):
-    """Settings specific to teleop profiling, enabled by default."""
-    enabled: bool = True
-    input_handling: bool = True
-    action_application: bool = True
-    simulation_step: bool = True
-    profiling_options: ProfilingOptions = field(default_factory=lambda: ProfilingOptions(enabled=True, show_FPS=False))
-
-@dataclass
-class TeleopConfig(BaseConfig):
-    """Aggregated configuration for teleoperation."""
-    sim: SimConfig = field(default_factory=TeleopSimConfig)
-    env: EnvConfig = field(default_factory=lambda: EnvConfig(num_envs=1))
-    general: GeneralConfig = field(default_factory=lambda: GeneralConfig(show_viewer=True, record=False))
-    vis: VisConfig = field(default_factory=VisConfig)
-    robot: RobotConfig = field(default_factory=TeleopRobotConfig)
-    mat: MaterialConfig = field(default_factory=MaterialConfig)
-    profiling: ProfilingConfig = field(default_factory=TeleopProfilingConfig)
-    performance_mode: bool = True

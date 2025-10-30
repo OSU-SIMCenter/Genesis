@@ -5,7 +5,7 @@ import torch
 from pynput import keyboard
 
 # Import configs and environment from the training folder
-from config import TeleopConfig, GENERATED_ROBOT_XML_PATH
+from config import TeleopOptions, GENERATED_ROBOT_XML_PATH
 from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS
 from environment import AgilityForgeEnv
 from agforge_builder import RobotXMLGenerator
@@ -49,7 +49,7 @@ def build_scene_from_training_env():
     Builds the simulation scene using the configuration from the training environment.
     """
     # --- Step 1: Load configurations ---
-    cfg = TeleopConfig()
+    cfg = TeleopOptions()
 
     # --- Step 2: Dynamically generate the robot XML ---
     print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
@@ -74,7 +74,7 @@ def run():
 
     env = build_scene_from_training_env()
     robot = env.robot
-    profiling_cfg = env.profiling_cfg
+    profiling_cfg = env.profiling_options
 
     # Key → (action_index, direction)
     # Note: Action space is [slider, hinge, gripper]
@@ -109,7 +109,7 @@ def run():
 
     profiler = Profiler(enabled=profiling_cfg.enabled)
     while True:
-        with profiler.time("input_handling") if profiling_cfg.input_handling else contextlib.suppress():
+        with profiler.time("input_handling") if profiling_cfg.enabled else contextlib.suppress():
             keys = kb.pressed.copy()
             newly_pressed = kb.get_newly_pressed()
 
@@ -139,23 +139,23 @@ def run():
                     move_mult = incremental_multiplier if control_mode == "incremental" else 1.0
                     
                     if index == 0: # Slider
-                        qpos[0, index] += direction * env.robot_cfg.slider_speed * speed_modifiers[0] * move_mult
+                        qpos[0, index] += direction * env.cfg.slider_speed * speed_modifiers[0] * move_mult
                     elif index == 1: # Hinge
-                        qpos[0, index] += direction * env.robot_cfg.hinge_speed * speed_modifiers[1] * move_mult
+                        qpos[0, index] += direction * env.cfg.hinge_speed * speed_modifiers[1] * move_mult
                     elif index == 2: # Gripper
                         # Asymmetrical speed for opening/closing
-                        gripper_speed = env.robot_cfg.gripper_speed * 2 if direction < 0 else env.robot_cfg.gripper_speed
+                        gripper_speed = env.cfg.gripper_speed * 2 if direction < 0 else env.cfg.gripper_speed
                         # Both grippers move together
                         qpos[0, index] += direction * gripper_speed * speed_modifiers[2] * move_mult
                         qpos[0, index + 1] += direction * gripper_speed * speed_modifiers[2] * move_mult
             
             qpos = torch.clamp(qpos, lower, upper)
 
-        with profiler.time("action_application") if profiling_cfg.action_application else contextlib.suppress():
+        with profiler.time("action_application") if profiling_cfg.enabled else contextlib.suppress():
             # Apply the target joint positions
             robot.apply_action(qpos)
         
-        with profiler.time("simulation_step") if profiling_cfg.simulation_step else contextlib.suppress():
+        with profiler.time("simulation_step") if profiling_cfg.enabled else contextlib.suppress():
             # Manually step the simulation
             env.scene.step()
 
