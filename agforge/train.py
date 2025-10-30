@@ -2,7 +2,7 @@ import argparse
 import genesis as gs
 
 # Import config dataclasses and parameters needed for the builder
-from config import TrainingConfig
+from config import TrainingOptions
 from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS, GENERATED_ROBOT_XML_PATH
 
 # Import the builder class
@@ -23,7 +23,7 @@ def main():
     args = parser.parse_args()
 
     # --- Step 1: Load configurations ---
-    cfg = TrainingConfig()
+    cfg = TrainingOptions()
 
     # --- Step 2: Dynamically generate the robot XML ---
     print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
@@ -46,9 +46,9 @@ def main():
     # --- Step 4: Select trainer ---
     trainer: BaseTrainer
     if args.optimizer == "sac":
-        trainer = SACTrainer(env, cfg.sac, cfg.general)
+        trainer = SACTrainer(env, cfg)
     elif args.optimizer == "adam":
-        trainer = AdamTrainer(env, cfg.adam, cfg.general)
+        trainer = AdamTrainer(env, cfg)
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
