@@ -1,5 +1,9 @@
 import numpy as np
-from config import GENERATED_ROBOT_XML_PATH
+import genesis as gs
+
+from options import AgilityForgeOptions, RobotOptions, GENERATED_ROBOT_XML_PATH
+from environment import AgilityForgeEnv
+
 
 class RobotXMLGenerator:
     """
@@ -8,20 +12,20 @@ class RobotXMLGenerator:
     The robot's dimensions and joint ranges are parametrically derived from 
     the cylinder's properties in the provided configuration.
     """
-    def __init__(self, cylinder_radius, cylinder_height, cylinder_pos, robot_cfg):
+    def __init__(self, robot_cfg: RobotOptions):
         self.kp = robot_cfg.kp
         self.kv = robot_cfg.kv
         
         # Gripper geometry is sized to handle the cylinder
         self.gripper_size = np.array([
-            cylinder_radius * 0.5,  # X-dimension (height)
-            cylinder_radius * 0.4,  # Y-dimension (width/thickness)
-            cylinder_radius * 1.2,  # Z-dimension (depth)
+            robot_cfg.cylinder_radius * 0.5,  # X-dimension (height)
+            robot_cfg.cylinder_radius * 0.4,  # Y-dimension (width/thickness)
+            robot_cfg.cylinder_radius * 1.2,  # Z-dimension (depth)
         ])
         
         # Gripper movement is defined to open and close around the cylinder
-        gripper_closed_y = cylinder_radius - (self.gripper_size[1] * 0.5)
-        gripper_open_y = cylinder_radius * 2.5
+        gripper_closed_y = robot_cfg.cylinder_radius - (self.gripper_size[1] * 0.5)
+        gripper_open_y = robot_cfg.cylinder_radius * 2.5
         slide_distance = gripper_open_y - gripper_closed_y
         
         self.gripper_start_pos_y = gripper_open_y
@@ -29,12 +33,12 @@ class RobotXMLGenerator:
         
         # The main slider's range covers the length of the cylinder with padding
         self.slider_range = np.array([
-            cylinder_pos[0] - cylinder_height * 0.75,
-            cylinder_pos[0] + cylinder_height * 0.75
+            robot_cfg.cylinder_pos[0] - robot_cfg.cylinder_height * 0.75,
+            robot_cfg.cylinder_pos[0] + robot_cfg.cylinder_height * 0.75
         ])
         
         # The hinge is positioned vertically centered with the cylinder
-        self.hinge_pos_z = cylinder_pos[2]
+        self.hinge_pos_z = robot_cfg.cylinder_pos[2]
 
     def _to_str(self, arr, precision=4):
         """Formats a numpy array into an XML-compatible string."""
@@ -93,3 +97,20 @@ class RobotXMLGenerator:
         with open(GENERATED_ROBOT_XML_PATH, "w") as f:
             f.write(content)
         print(f"✅ Dynamically generated robot XML file: {GENERATED_ROBOT_XML_PATH}")
+
+
+def build_env(cfg: AgilityForgeOptions) -> AgilityForgeEnv:
+    """
+    Builds the simulation scene using the provided configuration.
+    """
+    # --- Step 1: Dynamically generate the robot XML ---
+    print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
+    generator = RobotXMLGenerator(robot_cfg=cfg.robot)
+    generator.write_to_file()
+
+    # --- Step 2: Initialize Genesis and create environment ---
+    gs.init(backend=gs.gpu, logging_level="info", performance_mode=cfg.performance_mode)
+    
+    env = AgilityForgeEnv(cfg)
+    
+    return env
