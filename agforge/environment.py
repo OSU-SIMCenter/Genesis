@@ -1,12 +1,10 @@
 import torch
 import genesis as gs
-from config import (
+from options import (
     AgilityForgeOptions,
     RobotOptions,
     GENERATED_ROBOT_XML_PATH,
 )
-from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS, CYLINDER_EULER
-from config import TARGET_GUIDE_BOX_SIZE, TARGET_GUIDE_BOX_POS
 
 class AgilityForgeManipulator:
     """Encapsulates the robot's properties and provides a clean action interface."""
@@ -47,25 +45,17 @@ class AgilityForgeEnv:
     """An RL environment for the robotic forging task, configured parametrically."""
     def __init__(self, cfg: AgilityForgeOptions):
         self.cfg = cfg
-        self.sim_options = cfg.sim
-        self.mpm_options = cfg.mpm
-        self.env_options = cfg.env
-        self.general_options = cfg.general
-        self.robot_options = cfg.robot
-        self.mat_options = cfg.mat
-        self.vis_options = cfg.vis
-        self.profiling_options = cfg.profiling
         self.device = gs.device
 
         self._setup_scene()
-        self.robot = AgilityForgeManipulator(scene=self.scene, robot_cfg=self.robot_options)
+        self.robot = AgilityForgeManipulator(scene=self.scene, robot_cfg=self.cfg.robot)
         self._setup_entities()
         self._add_visual_guides()
         
-        if self.general_options.record:
+        if self.cfg.general.record:
             self._setup_recording_camera()
         
-        self.scene.build(n_envs=self.env_options.num_envs, env_spacing=(0.75, 0.5))
+        self.scene.build(n_envs=self.cfg.env.num_envs, env_spacing=(0.75, 0.5))
 
         self.robot.set_pd_gains()
         self.initial_robot_qpos = self.robot.entity.get_qpos().clone()
@@ -74,9 +64,9 @@ class AgilityForgeEnv:
         
         num_particles = self.initial_mpm_pos.shape[1]
         self.num_obs = 3 + num_particles * 9
-        self.num_actions = self.env_options.num_actions
-        self.num_envs = self.env_options.num_envs
-        self.max_episode_length = self.env_options.max_episode_length
+        self.num_actions = self.cfg.env.num_actions
+        self.num_envs = self.cfg.env.num_envs
+        self.max_episode_length = self.cfg.env.max_episode_length
         self.target_mpm_pos = torch.empty_like(self.initial_mpm_pos)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
@@ -84,21 +74,16 @@ class AgilityForgeEnv:
 
     def _setup_scene(self):
         """Configures and initializes the simulation scene from config objects."""
-        viewer_options = gs.options.ViewerOptions(
-            camera_pos=self.general_options.camera_pos,
-            camera_lookat=self.general_options.camera_lookat,
-            max_FPS=60,
-            res=self.vis_options.camera_res,
-        ) if self.general_options.show_viewer else gs.options.ViewerOptions()
+        viewer_options = self.cfg.viewer if self.cfg.general.show_viewer else gs.options.ViewerOptions()
         
         self.scene = gs.Scene(
-            sim_options=self.sim_options,
+            sim_options=self.cfg.sim,
             viewer_options=viewer_options,
-            rigid_options=gs.options.RigidOptions(dt=self.sim_options.dt),
-            mpm_options=self.mpm_options,
-            vis_options=self.vis_options,
-            profiling_options=self.profiling_options,
-            show_viewer=self.general_options.show_viewer,
+            rigid_options=gs.options.RigidOptions(dt=self.cfg.sim.dt),
+            mpm_options=self.cfg.mpm,
+            vis_options=self.cfg.vis,
+            profiling_options=self.cfg.profiling,
+            show_viewer=self.cfg.general.show_viewer,
         )
         self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", pos=(0, 0, 0.01), fixed=True))
 
@@ -106,22 +91,22 @@ class AgilityForgeEnv:
         """Creates the MPM object and the target shape visual guide."""
         self.mpm_entity = self.scene.add_entity(
             material=gs.materials.MPM.ElastoPlastic(
-                E=self.mat_options.E, nu=self.mat_options.nu, rho=self.mat_options.rho,
-                von_mises_yield_stress=self.mat_options.von_mises_yield_stress
+                E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
+                von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress
             ),
             morph=gs.morphs.Cylinder(
-                radius=CYLINDER_RADIUS, height=CYLINDER_HEIGHT, pos=CYLINDER_POS, euler=CYLINDER_EULER
+                radius=self.cfg.robot.cylinder_radius, height=self.cfg.robot.cylinder_height, pos=self.cfg.robot.cylinder_pos, euler=self.cfg.robot.cylinder_euler
             ),
             surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
         )
         self.scene.add_entity(
-            morph=gs.morphs.Box(size=TARGET_GUIDE_BOX_SIZE, pos=TARGET_GUIDE_BOX_POS, fixed=True, collision=False),
+            morph=gs.morphs.Box(size=self.cfg.robot.target_shape_bounds[1] - self.cfg.robot.target_shape_bounds[0], pos=(self.cfg.robot.target_shape_bounds[0] + self.cfg.robot.target_shape_bounds[1]) / 2, fixed=True, collision=False),
             surface=gs.surfaces.Default(color=(1.0, 0.0, 0.0, 0.4)),
         )
 
     def _add_visual_guides(self):
         """Adds a non-physical box to visualize the fixed particle region."""
-        bounds = self.env_options.fixed_region_bounds
+        bounds = self.cfg.env.fixed_region_bounds
         box_size = (bounds[:, 1] - bounds[:, 0]).cpu()
         box_pos = bounds.mean(dim=1).cpu()
         self.scene.add_entity(
@@ -131,7 +116,7 @@ class AgilityForgeEnv:
 
     def _set_fixed_particles(self):
         """Identifies and sets the fixed MPM particles based on the defined region."""
-        bounds = self.env_options.fixed_region_bounds.to(self.device)
+        bounds = self.cfg.env.fixed_region_bounds.to(self.device)
         mpm_pos_env0 = self.initial_mpm_pos[0]
         is_in_box = ((mpm_pos_env0 >= bounds[:, 0]) & (mpm_pos_env0 <= bounds[:, 1])).all(dim=1)
         self.mpm_entity.set_free(~is_in_box)
@@ -139,17 +124,20 @@ class AgilityForgeEnv:
     def _setup_recording_camera(self):
         """Initializes the camera used for video recording."""
         self.recording_camera = self.scene.add_camera(
-            res=self.vis_options.camera_res, pos=self.general_options.camera_pos,
-            lookat=self.general_options.camera_lookat, fov=45, GUI=False
+            res=self.cfg.viewer.res,
+            pos=self.cfg.viewer.camera_pos,
+            lookat=self.cfg.viewer.camera_lookat,
+            fov=45,
+            GUI=False
         )
         self.scene.add_camera(GUI=True)
 
     def start_recording(self):
-        if self.general_options.record:
+        if self.cfg.general.record:
             self.recording_camera.start_recording()
 
     def stop_recording(self, filename="agforge_demo.mp4", fps=30):
-        if self.general_options.record:
+        if self.cfg.general.record:
             self.recording_camera.stop_recording(save_to_filename=filename, fps=fps)
 
     def reset_idx(self, envs_idx: torch.Tensor):
@@ -161,7 +149,7 @@ class AgilityForgeEnv:
         self.scene.reset(envs_idx=envs_idx)
 
         init_bounds = torch.stack([self.initial_mpm_pos[0].min(dim=0).values, self.initial_mpm_pos[0].max(dim=0).values])
-        target_bounds = self.env_options.target_shape_bounds.to(self.device)
+        target_bounds = self.cfg.env.target_shape_bounds.to(self.device)
         
         eps = 1e-8
         scale = (target_bounds[1] - target_bounds[0]) / (init_bounds[1] - init_bounds[0] + eps)
@@ -178,7 +166,7 @@ class AgilityForgeEnv:
 
     def _step_sim(self, num_steps: int):
         """Steps the simulation for a given number of steps, with optional recording."""
-        if self.general_options.record:
+        if self.cfg.general.record:
             for _ in range(num_steps):
                 self.scene.step()
                 self.recording_camera.render(rgb=True)
@@ -190,24 +178,24 @@ class AgilityForgeEnv:
         """Applies an action and steps the simulation forward."""
         self.episode_length_buf += 1
         actions = torch.clamp(
-            actions, self.env_options.action_lower_bounds.to(self.device), self.env_options.action_upper_bounds.to(self.device)
+            actions, self.cfg.env.action_lower_bounds.to(self.device), self.cfg.env.action_upper_bounds.to(self.device)
         )
 
         qpos = self.robot.entity.get_qpos()
         
         qpos[:, 0:2] = actions[:, 0:2]
         self.robot.apply_action(qpos)
-        self._step_sim(self.env_options.action_duration_steps)
+        self._step_sim(self.cfg.env.action_duration_steps)
 
         qpos[:, 2:4] = actions[:, 2].unsqueeze(-1)
         self.robot.apply_action(qpos)
-        self._step_sim(self.env_options.action_duration_steps)
+        self._step_sim(self.cfg.env.action_duration_steps)
 
         qpos_prev = self.robot.entity.get_qpos()
         reset_qpos = self.initial_robot_qpos.clone()
         reset_qpos[:, 0:2] = qpos_prev[:, 0:2]
         self.robot.apply_action(reset_qpos)
-        self._step_sim(self.env_options.reset_duration_steps)
+        self._step_sim(self.cfg.env.reset_duration_steps)
 
         self.reset_buf = (self.episode_length_buf >= self.max_episode_length)
         if self.reset_buf.any():
