@@ -4,7 +4,7 @@ import abc
 from rsl_rl.runners import OnPolicyRunner
 
 from environment import AgilityForgeEnv
-from config import TrainingOptions
+from options import TrainingOptions
 
 class BaseTrainer(abc.ABC):
     """Abstract base class for all training algorithms."""

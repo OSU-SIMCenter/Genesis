@@ -2,11 +2,9 @@ import argparse
 import genesis as gs
 
 # Import config dataclasses and parameters needed for the builder
-from config import TrainingOptions
-from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS, GENERATED_ROBOT_XML_PATH
-
-# Import the builder class
-from agforge_builder import RobotXMLGenerator
+from options import TrainingOptions
+from agforge_builder import build_env
+from trainers import SACTrainer, AdamTrainer, BaseTrainer
 
 def main():
     """
@@ -25,25 +23,10 @@ def main():
     # --- Step 1: Load configurations ---
     cfg = TrainingOptions()
 
-    # --- Step 2: Dynamically generate the robot XML ---
-    print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
-    generator = RobotXMLGenerator(
-        cylinder_radius=CYLINDER_RADIUS,
-        cylinder_height=CYLINDER_HEIGHT,
-        cylinder_pos=CYLINDER_POS,
-        robot_cfg=cfg.robot
-    )
-    generator.write_to_file()
+    # --- Step 2: Create environment ---
+    env = build_env(cfg)
 
-    # --- Step 3: Initialize Genesis and create environment ---
-    gs.init(backend=gs.gpu, logging_level="info", performance_mode=cfg.performance_mode)
-    
-    from environment import AgilityForgeEnv
-    from trainers import SACTrainer, AdamTrainer, BaseTrainer
-    
-    env = AgilityForgeEnv(cfg)
-
-    # --- Step 4: Select trainer ---
+    # --- Step 3: Select trainer ---
     trainer: BaseTrainer
     if args.optimizer == "sac":
         trainer = SACTrainer(env, cfg)
@@ -52,7 +35,7 @@ def main():
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
-    # --- Step 5: Run training ---
+    # --- Step 4: Run training ---
     print(f"Preparing to train with the '{args.optimizer}' optimizer.")
     env.start_recording()
     trainer.train()

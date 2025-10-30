@@ -5,10 +5,8 @@ import torch
 from pynput import keyboard
 
 # Import configs and environment from the training folder
-from config import TeleopOptions, GENERATED_ROBOT_XML_PATH
-from config import CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_POS
-from environment import AgilityForgeEnv
-from agforge_builder import RobotXMLGenerator
+from options import TeleopOptions
+from agforge_builder import build_env
 
 # Profiling
 import contextlib
@@ -44,37 +42,15 @@ class KeyboardDevice:
             self.prev_pressed = self.pressed.copy()
             return newly_pressed
 
-def build_scene_from_training_env():
-    """
-    Builds the simulation scene using the configuration from the training environment.
-    """
-    # --- Step 1: Load configurations ---
-    cfg = TeleopOptions()
-
-    # --- Step 2: Dynamically generate the robot XML ---
-    print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
-    generator = RobotXMLGenerator(
-        cylinder_radius=CYLINDER_RADIUS,
-        cylinder_height=CYLINDER_HEIGHT,
-        cylinder_pos=CYLINDER_POS,
-        robot_cfg=cfg.robot
-    )
-    generator.write_to_file()
-
-    # --- Step 3: Initialize Genesis and create environment ---
-    gs.init(backend=gs.gpu, logging_level="info", performance_mode=cfg.performance_mode)
-    
-    env = AgilityForgeEnv(cfg)
-    
-    return env
-
 def run():
     kb = KeyboardDevice()
     kb.start()
 
-    env = build_scene_from_training_env()
+    cfg = TeleopOptions()
+    env = build_env(cfg)
+    
     robot = env.robot
-    profiling_cfg = env.profiling_options
+    profiling_cfg = env.cfg.profiling
 
     # Key → (action_index, direction)
     # Note: Action space is [slider, hinge, gripper]
