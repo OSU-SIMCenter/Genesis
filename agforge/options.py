@@ -4,78 +4,16 @@ from pint import UnitRegistry
 from typing import Tuple, List
 
 import genesis as gs
-from genesis.options import Options, ProfilingOptions, SimOptions, MPMOptions, VisOptions, ViewerOptions
+from genesis.options.options import Options
+from genesis.options import ProfilingOptions, SimOptions, MPMOptions, VisOptions, ViewerOptions
 
 ureg = UnitRegistry()
 
 GENERATED_ROBOT_XML_PATH = "genesis/assets/xml/agforge_demo.xml"
 
-# --------------------------------------------------------------------------
-# Base Parametric Relationships
-# --------------------------------------------------------------------------
-CYLINDER_DIAMETER = (1.0 * ureg.inch).to(ureg.meter).magnitude
-CYLINDER_RADIUS = CYLINDER_DIAMETER / 2
-CYLINDER_HEIGHT = 6 * CYLINDER_RADIUS
-CYLINDER_POS = np.array([0.0, 0.0, 6 * CYLINDER_RADIUS])
-CYLINDER_EULER = (0.0, 90.0, 0.0) # Orients the cylinder along the X-axis
-
-# --- MPM Boundary Calculation with Solver Padding ---
-BASE_GRID_DENSITY = int(7 / CYLINDER_DIAMETER)
-DX = 1.0 / BASE_GRID_DENSITY  # Cell size
-MPM_SOLVER_PADDING = 3 * DX   # Internal padding used by the MPM solver
-
-# Asymmetrical user-defined padding
-MPM_X_PADDING_LOWER = CYLINDER_HEIGHT * 0.85
-MPM_X_PADDING_UPPER = CYLINDER_HEIGHT * 0.52
-MPM_YZ_PADDING = CYLINDER_RADIUS * 1.6
-
-# Combine user padding with solver padding
-MPM_LOWER_OFFSET = np.array([MPM_X_PADDING_LOWER, MPM_YZ_PADDING, MPM_YZ_PADDING]) + MPM_SOLVER_PADDING
-MPM_UPPER_OFFSET = np.array([MPM_X_PADDING_UPPER, MPM_YZ_PADDING, MPM_YZ_PADDING]) + MPM_SOLVER_PADDING
-MPM_LOWER_BOUND = tuple(CYLINDER_POS - MPM_LOWER_OFFSET)
-MPM_UPPER_BOUND = tuple(CYLINDER_POS + MPM_UPPER_OFFSET)
-
-# Defines the region where particles are held stationary
-FIXED_REGION_SIZE = np.array([0.25 * CYLINDER_HEIGHT, 4 * CYLINDER_RADIUS, 4 * CYLINDER_RADIUS])
-FIXED_REGION_CENTER = CYLINDER_POS + np.array([0.5 * CYLINDER_HEIGHT, 0, 0])
-FIXED_REGION_BOUNDS = torch.tensor(np.array([
-    FIXED_REGION_CENTER - FIXED_REGION_SIZE / 2,
-    FIXED_REGION_CENTER + FIXED_REGION_SIZE / 2,
-])).T # Transpose is necessary to get the shape [dim, min/max]
-
-# Defines the target shape for the reward function and visualization
-TARGET_GUIDE_BOX_SIZE = np.array([0.75 * CYLINDER_HEIGHT, 1.2 * CYLINDER_RADIUS, 1.2 * CYLINDER_RADIUS])
-TARGET_GUIDE_BOX_POS = CYLINDER_POS + np.array([-0.375 * CYLINDER_HEIGHT, 0, 0])
-TARGET_SHAPE_BOUNDS = torch.tensor(np.array([
-    TARGET_GUIDE_BOX_POS - TARGET_GUIDE_BOX_SIZE / 2,
-    TARGET_GUIDE_BOX_POS + TARGET_GUIDE_BOX_SIZE / 2,
-]))
-
-# Defines the robot's action space limits
-ACTION_X_CENTER = CYLINDER_POS[0] - CYLINDER_HEIGHT * 0.75
-ACTION_X_WIDTH = 0.06
-ACTION_HINGE_ANGLE_LIMIT_DEG = 40.0
-ACTION_GRIPPER_OPEN_VAL = 20 * CYLINDER_RADIUS   # Gripper open position
-ACTION_GRIPPER_CLOSED_VAL = 2 * CYLINDER_RADIUS  # Gripper closed position
-ACTION_LOWER_BOUNDS = torch.tensor([
-    ACTION_X_CENTER - ACTION_X_WIDTH / 2,
-    -ACTION_HINGE_ANGLE_LIMIT_DEG,
-    ACTION_GRIPPER_OPEN_VAL,
-])
-ACTION_UPPER_BOUNDS = torch.tensor([
-    ACTION_X_CENTER + ACTION_X_WIDTH / 2,
-    ACTION_HINGE_ANGLE_LIMIT_DEG,
-    ACTION_GRIPPER_CLOSED_VAL,
-])
-
-# Defines the camera's viewpoint relative to the main object
-CAMERA_LOOKAT = tuple(CYLINDER_POS)
-CAMERA_POS_OFFSET = np.array([-2.75 * CYLINDER_HEIGHT, -8.0 * CYLINDER_RADIUS, 3.0 * CYLINDER_HEIGHT])
-CAMERA_POS = tuple(CYLINDER_POS + CAMERA_POS_OFFSET)
-
-# --------------------------------------------------------------------------
-# Configuration Options
-# --------------------------------------------------------------------------
+def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> float:
+    """Convert a quantity to use a specified time unit instead of seconds."""
+    return quantity.to(str(quantity.to_base_units().units).replace('second', time_unit_str)).magnitude
 
 class MaterialOptions(Options):
     """Parameters for the elasto-plastic material."""
@@ -87,14 +25,14 @@ class MaterialOptions(Options):
 class EnvOptions(Options):
     """Parameters related to the RL environment and task."""
     num_envs: int = 1
-    max_episode_length: int = int(100. / (1.5e-6 * 64)) # SimConfig.dt
-    action_duration_steps: int = 40
-    reset_duration_steps: int = 23
-    num_actions: int = 3
-    action_lower_bounds: torch.Tensor = ACTION_LOWER_BOUNDS
-    action_upper_bounds: torch.Tensor = ACTION_UPPER_BOUNDS
-    fixed_region_bounds: torch.Tensor = FIXED_REGION_BOUNDS
-    target_shape_bounds: torch.Tensor = TARGET_SHAPE_BOUNDS
+    max_episode_length: int
+    action_duration_steps: int
+    reset_duration_steps: int
+    num_actions: int = 1
+    action_lower_bounds: torch.Tensor
+    action_upper_bounds: torch.Tensor
+    fixed_region_bounds: torch.Tensor
+    target_shape_bounds: torch.Tensor
     class Config:
         arbitrary_types_allowed = True
 
@@ -125,26 +63,88 @@ class GeneralOptions(Options):
     show_viewer: bool = True
     record: bool = False
     log_dir: str = "logs/agforge_parametric"
-    camera_pos: Tuple[float, float, float] = CAMERA_POS
-    camera_lookat: Tuple[float, float, float] = CAMERA_LOOKAT
-
-def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> float:
-    """Convert a quantity to use a specified time unit instead of seconds."""
-    return quantity.to(str(quantity.to_base_units().units).replace('second', time_unit_str)).magnitude
-
-KP = 0.2
-KV = 2. * ((KP * 10.) ** 0.5)
 
 class RobotOptions(Options):
     """Parameters for the robot arm in the MuJoCo XML file."""
     time_unit_str: str = "rtu"
     robot_time_to_seconds: float = 1.
-    _kp: ureg.Quantity = KP * ureg.newton * ureg.meter
-    _kv: ureg.Quantity = KV * ureg.newton * ureg.meter * ureg.second
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    # Declare fields for pydantic
+    cylinder_diameter: float = None
+    cylinder_radius: float = None
+    cylinder_height: float = None
+    cylinder_pos: object = None
+    cylinder_euler: tuple = None
+    base_grid_density: int = None
+    mpm_lower_bound: tuple = None
+    mpm_upper_bound: tuple = None
+    fixed_region_bounds: object = None
+    target_shape_bounds: object = None
+    action_lower_bounds: object = None
+    action_upper_bounds: object = None
+    _kp: object = None
+    _kv: object = None
+
+    class Config:
+        arbitrary_types_allowed = True
+    
+    def model_post_init(self, __context: any) -> None:
+        # Temporarily get values needed for calculations
         ureg.define(f"{self.time_unit_str} = {self.robot_time_to_seconds} * second")
+
+        # --- Perform all calculations first ---
+        self.cylinder_diameter = (1.0 * ureg.inch).to(ureg.meter).magnitude
+        self.cylinder_radius = self.cylinder_diameter / 2
+        self.cylinder_height = 6 * self.cylinder_radius
+        self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
+        self.cylinder_euler = (0.0, 90.0, 0.0)
+
+        self.base_grid_density = int(7 / self.cylinder_diameter)
+        dx = 1.0 / self.base_grid_density
+        mpm_solver_padding = 3 * dx
+        mpm_x_padding_lower = self.cylinder_height * 0.85
+        mpm_x_padding_upper = self.cylinder_height * 0.52
+        mpm_yz_padding = self.cylinder_radius * 1.6
+        mpm_lower_offset = np.array([mpm_x_padding_lower, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
+        mpm_upper_offset = np.array([mpm_x_padding_upper, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
+        self.mpm_lower_bound = tuple(self.cylinder_pos - mpm_lower_offset)
+        self.mpm_upper_bound = tuple(self.cylinder_pos + mpm_upper_offset)
+
+        fixed_region_size = np.array([0.25 * self.cylinder_height, 4 * self.cylinder_radius, 4 * self.cylinder_radius])
+        fixed_region_center = self.cylinder_pos + np.array([0.5 * self.cylinder_height, 0, 0])
+        self.fixed_region_bounds = torch.tensor(np.array([
+            fixed_region_center - fixed_region_size / 2,
+            fixed_region_center + fixed_region_size / 2,
+        ])).T
+
+        target_guide_box_size = np.array([0.75 * self.cylinder_height, 1.2 * self.cylinder_radius, 1.2 * self.cylinder_radius])
+        target_guide_box_pos = self.cylinder_pos + np.array([-0.375 * self.cylinder_height, 0, 0])
+        self.target_shape_bounds = torch.tensor(np.array([
+            target_guide_box_pos - target_guide_box_size / 2,
+            target_guide_box_pos + target_guide_box_size / 2,
+        ]))
+
+        action_x_center = self.cylinder_pos[0] - self.cylinder_height * 0.75
+        action_x_width = 0.06
+        action_hinge_angle_limit_deg = 40.0
+        action_gripper_open_val = 20 * self.cylinder_radius
+        action_gripper_closed_val = 2 * self.cylinder_radius
+        self.action_lower_bounds = torch.tensor([
+            action_x_center - action_x_width / 2,
+            -action_hinge_angle_limit_deg,
+            action_gripper_open_val,
+        ])
+        self.action_upper_bounds = torch.tensor([
+            action_x_center + action_x_width / 2,
+            action_hinge_angle_limit_deg,
+            action_gripper_closed_val,
+        ])
+
+        
+        kp_val = 0.2
+        kv_val = 2. * ((kp_val * 10.) ** 0.5)
+        self._kp = kp_val * ureg.newton * ureg.meter
+        self._kv = kv_val * ureg.newton * ureg.meter * ureg.second
 
     @property
     def kp(self) -> float:
@@ -156,49 +156,78 @@ class RobotOptions(Options):
         """Get damping with time unit converted to the specified time unit (N·m·rtu)"""
         return convert_to_robot_time_units(self._kv, self.time_unit_str)
 
-    class Config:
-        arbitrary_types_allowed = True
-
 
 class AgilityForgeOptions(Options):
     """Aggregated configuration for the AgilityForge environment."""
-    sim: SimOptions = SimOptions(
-        dt=1.5e-6 * 64,
-        substeps=64,
-        gravity=(0, 0, 0),
-    )
-    mpm: MPMOptions = MPMOptions(
-        grid_density=BASE_GRID_DENSITY,
-        particle_size=0.8 * 0.01 * 64.0 / BASE_GRID_DENSITY,
-        lower_bound=MPM_LOWER_BOUND,
-        upper_bound=MPM_UPPER_BOUND,
-    )
-    env: EnvOptions = EnvOptions()
-    general: GeneralOptions = GeneralOptions()
-    vis: VisOptions = VisOptions(
-        performance_mode=True,
-        particle_render_fraction=0.5,
-        camera_res=(1280, 720),
-        show_world_frame=False,
-        visualize_mpm_boundary=False,
-        visualize_mpm_grid=False,
-        render_particle_as="sphere",
-        shadow=False,
-        plane_reflection=False,
-    )
-    viewer: ViewerOptions = ViewerOptions(
-        camera_pos=CAMERA_POS,
-        camera_lookat=CAMERA_LOOKAT,
-    )
-    robot: RobotOptions = RobotOptions()
     mat: MaterialOptions = MaterialOptions()
     sac: SacOptions = SacOptions()
     adam: AdamOptions = AdamOptions()
-    profiling: ProfilingOptions = ProfilingOptions()
     performance_mode: bool = True
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    # Declare fields for pydantic
+    sim: object = None
+    robot: object = None
+    mpm: object = None
+    env: object = None
+    general: object = None
+    profiling: object = None
+    vis: object = None
+    viewer: object = None
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def model_post_init(self, __context: any) -> None:
+        # --- Perform all calculations first ---
+        self.sim = SimOptions(
+            dt=1.4e-6 * 16,
+            substeps=16,
+            gravity=(0, 0, 0),
+        )
+        self.robot = RobotOptions(robot_time_to_seconds=0.03 * self.sim.substeps / self.sim.dt)
+        self.mpm = MPMOptions(
+            grid_density=self.robot.base_grid_density,
+            particle_size=0.8 * 0.01 * 64.0 / self.robot.base_grid_density,
+            lower_bound=self.robot.mpm_lower_bound,
+            upper_bound=self.robot.mpm_upper_bound,
+        )
+        self.env = EnvOptions(
+            num_envs=1,
+            max_episode_length=int(100. / self.sim.dt),
+            action_duration_steps=40,
+            reset_duration_steps=20,
+            num_actions=3,
+            action_lower_bounds=self.robot.action_lower_bounds,
+            action_upper_bounds=self.robot.action_upper_bounds,
+            fixed_region_bounds=self.robot.fixed_region_bounds,
+            target_shape_bounds=self.robot.target_shape_bounds,
+        )
+        self.general = GeneralOptions(
+            show_viewer=True,
+            record=False,
+        )
+        self.profiling = ProfilingOptions(enabled=True, show_FPS=False)
+
+        camera_lookat = tuple(self.robot.cylinder_pos)
+        camera_pos_offset = np.array([-2.75 * self.robot.cylinder_height, -8.0 * self.robot.cylinder_radius, 3.0 * self.robot.cylinder_height])
+        camera_pos = tuple(self.robot.cylinder_pos + camera_pos_offset)
+
+        self.viewer = ViewerOptions(
+            camera_pos=camera_pos,
+            camera_lookat=camera_lookat,
+            res=(1280, 720),
+        )
+
+        self.vis = VisOptions(
+            particle_render_fraction=0.5,
+            show_world_frame=False,
+            visualize_mpm_boundary=False,
+            visualize_mpm_grid=False,
+            render_particle_as="sphere",
+            shadow=False,
+            plane_reflection=False,
+        )
+
         if not self.performance_mode:
             self.vis.show_world_frame = True
             self.vis.visualize_mpm_boundary = True
@@ -206,31 +235,13 @@ class AgilityForgeOptions(Options):
             self.vis.shadow = True
             self.vis.plane_reflection = True
             self.vis.particle_render_fraction = 1.0
-            self.vis.camera_res = (1280, 720)
 
 
 class TrainingOptions(AgilityForgeOptions):
     """Aggregated configuration for training."""
-    pass
-
 
 class TeleopOptions(AgilityForgeOptions):
     """Aggregated configuration for teleoperation."""
-    sim: SimOptions = SimOptions(
-        dt=1.4e-6 * 16,
-        substeps=16,
-        gravity=(0, 0, 0),
-    )
-    env: EnvOptions = EnvOptions(num_envs=1)
-    general: GeneralOptions = GeneralOptions(show_viewer=True, record=False)
-    robot: RobotOptions = RobotOptions(
-        robot_time_to_seconds=0.03 / 1.4e-6
-    )
-    profiling: ProfilingOptions = ProfilingOptions(
-        enabled=True,
-        profiling_options=ProfilingOptions(enabled=True, show_FPS=False)
-    )
-
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002
