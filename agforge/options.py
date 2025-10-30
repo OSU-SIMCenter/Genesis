@@ -84,6 +84,7 @@ class RobotOptions(Options):
     action_upper_bounds: object = None
     _kp: object = None
     _kv: object = None
+    clamp_force: float = 196200.0
 
     class Config:
         arbitrary_types_allowed = True
