@@ -19,11 +19,18 @@ class AgilityForgeManipulator:
         self.entity = scene.add_entity(morph=morph, material=material)
         self.ee_link = self.entity.get_link("clamp_bar")
         self.default_joint_angles = torch.tensor([0.0, 0.0, 0.0, 0.0], device=self.device)
+        self.control_mode = "PD_CONTROL"  # Initial control mode
 
     def set_pd_gains(self):
         """Sets the Proportional-Derivative controller gains for the robot's joints."""
         self.entity.set_dofs_kp(torch.full((4,), self.robot_cfg.kp, device=self.device))
         self.entity.set_dofs_kv(torch.full((4,), self.robot_cfg.kv, device=self.device))
+
+    def set_control_mode(self, mode: str):
+        """Sets the control mode for the manipulator."""
+        if mode not in ["PD_CONTROL", "TELEPORT"]:
+            raise ValueError("Invalid control mode. Must be 'PD_CONTROL' or 'TELEPORT'.")
+        self.control_mode = mode
 
     def reset(self, envs_idx: torch.Tensor):
         """Resets the robot's joint positions to default for specified environments."""
@@ -31,9 +38,12 @@ class AgilityForgeManipulator:
             qpos_to_set = self.default_joint_angles.expand(len(envs_idx), -1)
             self.entity.set_qpos(qpos_to_set, envs_idx=envs_idx)
 
-    def apply_action(self, position: torch.Tensor):
-        """Applies a target joint position to the PD controller."""
-        self.entity.control_dofs_position(position=position)
+    def apply_action(self, position: torch.Tensor, dofs_idx_local=None):
+        """Applies an action based on the current control mode."""
+        if self.control_mode == "PD_CONTROL":
+            self.entity.control_dofs_position(position=position)
+        elif self.control_mode == "TELEPORT":
+            self.entity.set_dofs_position(position, dofs_idx_local=dofs_idx_local)
 
     @property
     def ee_pose(self) -> torch.Tensor:
@@ -183,14 +193,19 @@ class AgilityForgeEnv:
 
         qpos = self.robot.entity.get_qpos()
         
+        # Teleport to the starting position for the clamp
+        self.robot.set_control_mode("TELEPORT")
         qpos[:, 0:2] = actions[:, 0:2]
-        self.robot.apply_action(qpos)
-        self._step_sim(self.cfg.env.action_duration_steps)
+        self.robot.apply_action(qpos, dofs_idx_local=[0, 1])
+        self._step_sim(1)  # One step to ensure the state is updated
 
+        # Switch to PD control for the clamping action
+        self.robot.set_control_mode("PD_CONTROL")
         qpos[:, 2:4] = actions[:, 2].unsqueeze(-1)
         self.robot.apply_action(qpos)
         self._step_sim(self.cfg.env.action_duration_steps)
 
+        # Reset for the next action
         qpos_prev = self.robot.entity.get_qpos()
         reset_qpos = self.initial_robot_qpos.clone()
         reset_qpos[:, 0:2] = qpos_prev[:, 0:2]
