@@ -64,20 +64,26 @@ def run():
     }
 
     # Control mode: "continuous" or "incremental"
-    control_mode = "incremental"
+    movement_mode = "incremental"
+    control_type = "PD_CONTROL"
     incremental_multiplier = 15.0
 
-    print(
-        "Teleop Controls:\n"
-        "  ←/→: Hinge\n"
-        "  ↑/↓: Slider\n"
-        "  j/k: Grippers\n"
-        "  b: Slow mode\n"
-        "  m: Toggle control mode (Continuous/Incremental)\n"
-        "  u: Reset environment\n"
-        "  esc: Quit\n"
-        f"\nCurrent mode: {control_mode.upper()}"
-    )
+    def print_controls():
+        print(
+            "Teleop Controls:\n"
+            "  ←/→: Hinge\n"
+            "  ↑/↓: Slider\n"
+            "  j/k: Grippers\n"
+            "  b: Slow mode\n"
+            "  m: Toggle movement mode (Continuous/Incremental)\n"
+            "  t: Toggle control type (PD_CONTROL/TELEPORT)\n"
+            "  u: Reset environment\n"
+            "  esc: Quit\n"
+            f"\nCurrent Movement Mode: {movement_mode.upper()}\n"
+            f"Current Control Type: {control_type.upper()}"
+        )
+
+    print_controls()
     
     obs, _ = env.reset()
     qpos = robot.entity.get_dofs_position()
@@ -94,8 +100,13 @@ def run():
 
             # Toggle control mode
             if keyboard.KeyCode.from_char("m") in newly_pressed:
-                control_mode = "incremental" if control_mode == "continuous" else "continuous"
-                print(f"Control mode switched to: {control_mode.upper()}")
+                movement_mode = "incremental" if movement_mode == "continuous" else "continuous"
+                print(f"Movement mode switched to: {movement_mode.upper()}")
+
+            if keyboard.KeyCode.from_char("t") in newly_pressed:
+                control_type = "TELEPORT" if control_type == "PD_CONTROL" else "PD_CONTROL"
+                robot.set_control_mode(control_type)
+                print(f"Control type switched to: {control_type.upper()}")
 
             if keyboard.KeyCode.from_char("u") in keys:
                 obs, _ = env.reset()
@@ -106,13 +117,13 @@ def run():
             speed_modifiers = [0.25, 0.35, 0.5] if keyboard.KeyCode.from_char("b") in keys else [1., 1., 1.]
 
             # Determine which keys to process based on control mode
-            active_keys = newly_pressed if control_mode == "incremental" else keys
+            active_keys = newly_pressed if movement_mode == "incremental" else keys
 
             # Update joint positions based on key presses
             for key, (index, direction) in controls.items():
                 if key in active_keys:
                     # Calculate movement multiplier
-                    move_mult = incremental_multiplier if control_mode == "incremental" else 1.0
+                    move_mult = incremental_multiplier if movement_mode == "incremental" else 1.0
                     
                     if index == 0: # Slider
                         qpos[0, index] += direction * env.cfg.slider_speed * speed_modifiers[0] * move_mult
