@@ -26,6 +26,15 @@ class AgilityForgeManipulator:
         self.entity.set_dofs_kp(torch.full((4,), self.robot_cfg.kp, device=self.device))
         self.entity.set_dofs_kv(torch.full((4,), self.robot_cfg.kv, device=self.device))
 
+    def set_clamp_force_range(self):
+        """Sets the force range for the gripper joints."""
+        max_force = self.robot_cfg.clamp_force
+        # The gripper DOFs are the last two
+        dofs_idx = torch.tensor([2, 3], device=self.device)
+        lower = torch.full((2,), -max_force, device=self.device)
+        upper = torch.full((2,), max_force, device=self.device)
+        self.entity.set_dofs_force_range(lower, upper, dofs_idx_local=dofs_idx)
+
     def set_control_mode(self, mode: str):
         """Sets the control mode for the manipulator."""
         if mode not in ["PD_CONTROL", "TELEPORT"]:
@@ -68,6 +77,7 @@ class AgilityForgeEnv:
         self.scene.build(n_envs=self.cfg.env.num_envs, env_spacing=(0.75, 0.5))
 
         self.robot.set_pd_gains()
+        self.robot.set_clamp_force_range()
         self.initial_robot_qpos = self.robot.entity.get_qpos().clone()
         self.initial_mpm_pos = self.mpm_entity.get_state().pos.clone()
         self._set_fixed_particles()
