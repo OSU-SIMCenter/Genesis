@@ -133,12 +133,12 @@ class RobotOptions(Options):
         self.action_lower_bounds = torch.tensor([
             action_x_center - action_x_width / 2,
             -action_hinge_angle_limit_deg,
-            action_gripper_open_val,
+            action_gripper_closed_val,
         ])
         self.action_upper_bounds = torch.tensor([
             action_x_center + action_x_width / 2,
             action_hinge_angle_limit_deg,
-            action_gripper_closed_val,
+            action_gripper_open_val,
         ])
 
         
