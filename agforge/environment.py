@@ -50,7 +50,7 @@ class AgilityForgeManipulator:
     def apply_action(self, position: torch.Tensor, dofs_idx_local=None):
         """Applies an action based on the current control mode."""
         if self.control_mode == "PD_CONTROL":
-            self.entity.control_dofs_position(position=position)
+            self.entity.control_dofs_position(position=position, dofs_idx_local=dofs_idx_local)
         elif self.control_mode == "TELEPORT":
             self.entity.set_dofs_position(position, dofs_idx_local=dofs_idx_local)
 
@@ -87,7 +87,7 @@ class AgilityForgeEnv:
         self.num_actions = self.cfg.env.num_actions
         self.num_envs = self.cfg.env.num_envs
         self.max_episode_length = self.cfg.env.max_episode_length
-        self.target_mpm_pos = torch.empty_like(self.initial_mpm_pos)
+        self.target_mpm_pos = torch.zeros_like(self.initial_mpm_pos)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
         self.extras = {}
@@ -206,13 +206,13 @@ class AgilityForgeEnv:
         # Teleport to the starting position for the clamp
         self.robot.set_control_mode("TELEPORT")
         qpos[:, 0:2] = actions[:, 0:2]
-        self.robot.apply_action(qpos, dofs_idx_local=[0, 1])
+        self.robot.apply_action(qpos[:, 0:2], dofs_idx_local=[0, 1])
         self._step_sim(1)  # One step to ensure the state is updated
 
         # Switch to PD control for the clamping action
         self.robot.set_control_mode("PD_CONTROL")
         qpos[:, 2:4] = actions[:, 2].unsqueeze(-1)
-        self.robot.apply_action(qpos)
+        self.robot.apply_action(qpos[:, 2:4], dofs_idx_local=[2, 3])
         self._step_sim(self.cfg.env.action_duration_steps)
 
         # Reset for the next action

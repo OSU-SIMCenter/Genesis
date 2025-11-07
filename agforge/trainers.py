@@ -38,6 +38,7 @@ class SACTrainer(BaseTrainer):
                 "class_name": "ActorCritic",
                 "actor_hidden_dims": self.sac_cfg.actor_hidden_dims,
                 "critic_hidden_dims": self.sac_cfg.critic_hidden_dims,
+                "noise_std_type": "log",
             },
             "runner": {
                 "max_iterations": self.sac_cfg.max_iterations,
@@ -54,7 +55,7 @@ class SACTrainer(BaseTrainer):
         print(f"Starting SAC (PPO) training for {self.sac_cfg.max_iterations} iterations...")
         train_cfg = self._create_train_config()
         runner = OnPolicyRunner(self.env, train_cfg, self.cfg.general.log_dir, device=self.device)
-        runner.learn(num_learning_iterations=self.sac_cfg.max_iterations, init_at_random_ep_len=True)
+        runner.learn(num_learning_iterations=self.sac_cfg.max_iterations)
         print("SAC (PPO) training complete.")
 
 class AdamTrainer(BaseTrainer):
