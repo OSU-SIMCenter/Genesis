@@ -1,9 +1,9 @@
 import asyncio
 import json
 import websockets
-from genesis_env import GenesisEnvironment
+from unity_environment import UnityEnvironment
 
-sim = GenesisEnvironment()
+sim = UnityEnvironment()
 
 async def handle_client(websocket):
     print("Unity connected.")
