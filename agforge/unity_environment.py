@@ -40,11 +40,10 @@ class UnityEnvironment(AgilityForgeGymEnv):
             "Times": [10]
         }
     
-    def update(self):
-        self.step(action=np.zeros(self.action_space.shape))
+    def update(self, translation_x=0.0, euler_x=0.0):
+        if not action: action = np.zeros(self.action_space.shape)
+        self.step(action=action)
         vertices = self.get_particles()
-        print(type(vertices))
-        print(vertices.shape)
         print("Got genesis result!")
         return {
             "Vertices": vertices.flatten().tolist(),
@@ -58,7 +57,7 @@ class UnityEnvironment(AgilityForgeGymEnv):
     def get_particles(self):
         return transform_points(
             points=self.billet.get_particles_pos(envs_idx=0),
-            translation=-self.cfg.robot.cylinder_pos,
+            translation=-(self.cfg.robot.cylinder_pos + np.array([-0.375 * self.cfg.robot.cylinder_height, 0, 0])),
             scale=(50.0,)*3,
             flip_axis=0
         )
