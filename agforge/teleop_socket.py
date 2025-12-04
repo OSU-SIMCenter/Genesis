@@ -9,20 +9,59 @@ from options import TeleopOptions
 from agforge_builder import build_env, RobotXMLGenerator
 from environment import AgilityForgeEnv
 
+import math
+import time
+
 # --- 1. Shared State for Asynchronous Tasks ---
+class InputMapper:
+    """
+    Configurable mapping from client inputs to robot qpos.
+    Parameters can be tuned to match client coordinate system to robot joints.
+    """
+    def __init__(self):
+        # Mapping parameters - these can be tuned
+        # Unity: -0.329346, 0.83443
+        # Genesis: 0.0296, -0.0384
+        pass
+    
+    def lerp_two_points(self, x, x1=-0.329346, y1=-0.0384, x2=0.83443, y2=0.0296):
+        return y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+        
+    def map_client_to_qpos(self, translation, rotation):
+        """
+        Map client inputs to robot qpos values.
+        
+        Args:
+            translation: Client translation input (x translation)
+            rotation: Client rotation input (x euler angle)
+            
+        Returns:
+            tuple: (slider_qpos, hinge_qpos)
+        """
+        slider_qpos = self.lerp_two_points(translation)
+        hinge_qpos = math.radians(rotation)
+        return slider_qpos, hinge_qpos
+
 class SharedState:
     def __init__(self, env: AgilityForgeEnv):
         self.env = env
         self.robot = env.robot
         self.qpos = self.robot.entity.get_dofs_position()
         self.dof_limits = self.robot.entity.get_dofs_limit()
+        print(f"Robot DOF limits: {self.dof_limits}")
         self.lock = asyncio.Lock()
+        
+        # Input mapper for client -> robot coordinate transformation
+        self.input_mapper = InputMapper()
 
         # Dynamically get gripper limits
         xml_generator = RobotXMLGenerator(robot_cfg=env.cfg.robot)
         self.gripper_closed_pos = xml_generator.gripper_slide_range[1]
         self.gripper_open_pos = xml_generator.gripper_slide_range[0]
 
+        self.is_pressing = False
+        self.press_start_time = 0.0
+        self.press_duration = 8.0  # seconds
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
@@ -37,8 +76,8 @@ class SharedState:
         # to match client-side expectations.
         points = self.env.mpm_entity.get_particles_pos(envs_idx=0)
         cfg = self.env.cfg.robot
-        translation=-(cfg.cylinder_pos + np.array([-0.375 * cfg.cylinder_height, 0, 0]))
-        scale=(50.0,)*3
+        translation=-(cfg.cylinder_pos + np.array([-0.2 * cfg.cylinder_height, 0, 0]))
+        scale=(33.0, 33.0, 33.0)
         flip_axis=0
         points = points + torch.tensor(translation, device=points.device).view(1, 1, 3)
         points = points * torch.tensor(scale, device=points.device).view(1, 1, 3)
@@ -69,6 +108,7 @@ async def simulation_loop(websocket, state: SharedState):
                 "Temperatures": np.full(len(vertices) // 3, 293.0, dtype=float).tolist(),
                 "Pressure": 0,
                 "StressField": -1,
+                "is_pressing": state.is_pressing,
             }
             await websocket.send(json.dumps(response))
             
@@ -96,38 +136,41 @@ async def handle_client(websocket, state: SharedState, path=None):
         async for msg in websocket:
             try:
                 packet = json.loads(msg)
-                print(f"Received command: {packet}")
+                # print(f"Received command: {packet}")
 
                 qpos = await state.get_qpos()
 
-                if packet.get("request") == "update":
+                if state.is_pressing:
+                    if time.time() - state.press_start_time > state.press_duration:
+                        qpos[0, 2] = state.gripper_open_pos
+                        qpos[0, 3] = state.gripper_open_pos
+                        state.robot.set_control_mode("TELEPORT")
+                        state.is_pressing = False
+                    elif time.time() - state.press_start_time > state.press_duration/1.1:
+                        qpos[0, 2] = state.gripper_open_pos
+                        qpos[0, 3] = state.gripper_open_pos
+                    await state.set_qpos(qpos)
+
+                elif packet.get("request") == "update":
                     # Extract translation and rotation from the packet
                     translation = packet.get("translation", 0.0)
                     rotation = packet.get("rotation", 0.0)
                     
-                    # Update qpos with translation (slider) and rotation (hinge)
-                    qpos[0, 0] = translation  # x_slider
-                    qpos[0, 1] = rotation    # x_hinge
+                    # Map client inputs to robot qpos using configurable mapping
+                    slider_qpos, hinge_qpos = state.input_mapper.map_client_to_qpos(translation, rotation)
+                    
+                    # Update qpos with mapped values
+                    qpos[0, 0] = slider_qpos  # x_slider
+                    qpos[0, 1] = hinge_qpos   # x_hinge
                     await state.set_qpos(qpos)
 
-                elif packet.get("request") == "press":
-                    # Toggle grippers between open and closed
-                    current_left = qpos[0, 2].item()
-                    current_right = qpos[0, 3].item()
+                elif packet.get("request") == "strike":
+                    qpos[0, 2] = state.gripper_closed_pos
+                    qpos[0, 3] = state.gripper_closed_pos
                     
-                    # Determine if grippers are currently closed (near closed position)
-                    is_closed = (abs(current_left - state.gripper_closed_pos) < 0.001 and
-                                abs(current_right - state.gripper_closed_pos) < 0.001)
-                    
-                    if is_closed:
-                        # Open grippers
-                        qpos[0, 2] = state.gripper_open_pos
-                        qpos[0, 3] = state.gripper_open_pos
-                    else:
-                        # Close grippers
-                        qpos[0, 2] = state.gripper_closed_pos
-                        qpos[0, 3] = state.gripper_closed_pos
-                    
+                    state.robot.set_control_mode("PD_CONTROL")
+                    state.is_pressing = True
+                    state.press_start_time = time.time()
                     await state.set_qpos(qpos)
 
                 elif packet.get("request") == "temperature":
@@ -155,6 +198,8 @@ async def main():
     cfg.general.show_viewer = True
     env = build_env(cfg)
     shared_state = SharedState(env)
+    shared_state.robot.set_control_mode("TELEPORT")
+
     print("Environment ready. Server listening on port 8765.")
 
     # The handler for websockets.serve must accept both websocket and path.
