@@ -101,27 +101,33 @@ async def handle_client(websocket, state: SharedState, path=None):
                 qpos = await state.get_qpos()
 
                 if packet.get("request") == "update":
-                    # This now matches genesis_socket.py, which takes no arguments.
-                    # The simulation loop will continue to send back state data.
-                    pass
+                    # Extract translation and rotation from the packet
+                    translation = packet.get("translation", 0.0)
+                    rotation = packet.get("rotation", 0.0)
+                    
+                    # Update qpos with translation (slider) and rotation (hinge)
+                    qpos[0, 0] = translation  # x_slider
+                    qpos[0, 1] = rotation    # x_hinge
+                    await state.set_qpos(qpos)
 
                 elif packet.get("request") == "press":
-                    # For compatibility with genesis_socket.py, this performs a quick clamp and release.
-                    qpos[0, 2] = state.gripper_closed_pos
-                    qpos[0, 3] = state.gripper_closed_pos
-                    await state.set_qpos(qpos)
+                    # Toggle grippers between open and closed
+                    current_left = qpos[0, 2].item()
+                    current_right = qpos[0, 3].item()
                     
-                    await asyncio.sleep(0.5)
+                    # Determine if grippers are currently closed (near closed position)
+                    is_closed = (abs(current_left - state.gripper_closed_pos) < 0.001 and
+                                abs(current_right - state.gripper_closed_pos) < 0.001)
                     
-                    qpos = await state.get_qpos()
-                    qpos[0, 2] = state.gripper_open_pos
-                    qpos[0, 3] = state.gripper_open_pos
-                    await state.set_qpos(qpos)
-
-                elif packet.get("request") == "release":
-                    # A new command, not in genesis_socket.py, to open the grippers.
-                    qpos[0, 2] = state.gripper_open_pos
-                    qpos[0, 3] = state.gripper_open_pos
+                    if is_closed:
+                        # Open grippers
+                        qpos[0, 2] = state.gripper_open_pos
+                        qpos[0, 3] = state.gripper_open_pos
+                    else:
+                        # Close grippers
+                        qpos[0, 2] = state.gripper_closed_pos
+                        qpos[0, 3] = state.gripper_closed_pos
+                    
                     await state.set_qpos(qpos)
 
                 elif packet.get("request") == "temperature":
@@ -146,7 +152,7 @@ async def main():
     print("Building the simulation environment... (This may take a moment)")
     cfg = TeleopOptions()
     # Ensure the viewer is off for server mode
-    cfg.general.show_viewer = False
+    cfg.general.show_viewer = True
     env = build_env(cfg)
     shared_state = SharedState(env)
     print("Environment ready. Server listening on port 8765.")
