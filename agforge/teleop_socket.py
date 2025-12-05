@@ -4,6 +4,8 @@ import websockets
 import torch
 import numpy as np
 import functools
+import trimesh
+import genesis.utils.particle as pu
 
 from options import TeleopOptions
 from agforge_builder import build_env, RobotXMLGenerator
@@ -63,6 +65,15 @@ class SharedState:
         self.press_start_time = 0.0
         self.press_duration = 5.5  # seconds
 
+        # Surface reconstruction attributes
+        self.reconstructed_mesh = trimesh.Trimesh()
+        self.recon_enabled = True  # Master switch for reconstruction
+        self.recon_frame_interval = 5  # Reconstruct every 5 frames
+        self.recon_particle_fraction = 0.5  # Use 50% of particles
+        self.frame_counter = 0
+
+        self.create_reconstructed_mesh()
+
     async def set_qpos(self, new_qpos):
         async with self.lock:
             # self.qpos = torch.clamp(new_qpos, self.dof_limits[0], self.dof_limits[1])
@@ -73,18 +84,49 @@ class SharedState:
         async with self.lock:
             return self.qpos.clone()
 
-    async def get_particles(self):
-        # This transformation can be defined as in unity_environment.py
-        # to match client-side expectations.
-        points = self.env.mpm_entity.get_particles_pos(envs_idx=0)
+    def _apply_transformation(self, points):
         cfg = self.env.cfg.robot
-        translation=-(cfg.cylinder_pos + np.array([-0.2 * cfg.cylinder_height, 0, 0]))
-        scale=(33.0, 33.0, 33.0)
-        flip_axis=0
-        points = points + torch.tensor(translation, device=points.device).view(1, 1, 3)
-        points = points * torch.tensor(scale, device=points.device).view(1, 1, 3)
-        points[:, :, flip_axis] *= -1
-        return points.flatten().tolist()
+        translation = -(cfg.cylinder_pos + np.array([-0.2 * cfg.cylinder_height, 0, 0]))
+        scale = (33.0, 33.0, 33.0)
+        flip_axis = 0
+        
+        points = points + torch.tensor(translation, device=points.device).view(1, 3)
+        points = points * torch.tensor(scale, device=points.device).view(1, 3)
+        points[:, flip_axis] *= -1
+        return points
+
+    async def get_reconstructed_mesh_and_particles(self):
+        # Return the raw particle data and the reconstructed mesh data
+        points = self._apply_transformation(self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0))
+        
+        vertices = self._apply_transformation(torch.tensor(self.reconstructed_mesh.vertices, device=self.env.device))
+        triangles = self.reconstructed_mesh.faces
+        
+        return vertices, triangles, points
+
+    async def update_reconstructed_mesh(self):
+        if not self.recon_enabled or not self.is_pressing:
+            return
+
+        self.frame_counter += 1
+        if self.frame_counter % self.recon_frame_interval != 0:
+            return
+
+        self.create_reconstructed_mesh()
+    
+    def create_reconstructed_mesh(self):
+        particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0).cpu().numpy()
+        
+        if self.recon_particle_fraction < 1.0:
+            num_particles = int(len(particles) * self.recon_particle_fraction)
+            indices = np.random.choice(len(particles), num_particles, replace=False)
+            particles = particles[indices]
+            
+        self.reconstructed_mesh = pu.particles_to_mesh(
+            positions=particles,
+            radius=self.env.mpm_entity.particle_size,
+            backend='splashsurf'
+        )
 
 
 # --- 2. Simulation and Producer Loop ---
@@ -102,12 +144,16 @@ async def simulation_loop(websocket, state: SharedState):
             state.robot.apply_action(qpos)
             state.env.scene.step()
 
-            # Send particle data back to the client in the requested format
-            vertices = await state.get_particles()
+            # Update reconstruction and send data
+            await state.update_reconstructed_mesh()
+            vertices, triangles, particles = await state.get_reconstructed_mesh_and_particles()
+            
             response = {
-                "Vertices": vertices,
+                "Vertices": vertices.flatten().tolist(),
+                "Triangles": triangles.flatten().tolist(),
+                "Particles": particles.flatten().tolist(),
                 "Steps": [0],
-                "Temperatures": np.full(len(vertices) // 3, 293.0, dtype=float).tolist(),
+                "Temperatures": np.full(len(particles) // 3, 293.0, dtype=float).tolist(),
                 "Pressure": 0,
                 "StressField": -1,
                 "is_pressing": state.is_pressing,
