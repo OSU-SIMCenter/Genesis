@@ -61,11 +61,13 @@ class SharedState:
 
         self.is_pressing = False
         self.press_start_time = 0.0
-        self.press_duration = 8.0  # seconds
+        self.press_duration = 5.5  # seconds
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
-            self.qpos = torch.clamp(new_qpos, self.dof_limits[0], self.dof_limits[1])
+            # self.qpos = torch.clamp(new_qpos, self.dof_limits[0], self.dof_limits[1])
+            new_qpos[:,:2] = torch.clamp(new_qpos[:,:2], self.dof_limits[0][:2], self.dof_limits[1][:2])
+            self.qpos = new_qpos
 
     async def get_qpos(self):
         async with self.lock:
@@ -165,8 +167,8 @@ async def handle_client(websocket, state: SharedState, path=None):
                     await state.set_qpos(qpos)
 
                 elif packet.get("request") == "strike":
-                    qpos[0, 2] = state.gripper_closed_pos
-                    qpos[0, 3] = state.gripper_closed_pos
+                    qpos[0, 2] = state.gripper_closed_pos * packet.get("force", 0.1) * 10. * 1.3
+                    qpos[0, 3] = state.gripper_closed_pos * packet.get("force", 0.1) * 10. * 1.3
                     
                     state.robot.set_control_mode("PD_CONTROL")
                     state.is_pressing = True
