@@ -50,7 +50,6 @@ class SharedState:
         self.robot = env.robot
         self.qpos = self.robot.entity.get_dofs_position()
         self.dof_limits = self.robot.entity.get_dofs_limit()
-        print(f"Robot DOF limits: {self.dof_limits}")
         self.lock = asyncio.Lock()
         
         # Input mapper for client -> robot coordinate transformation
@@ -63,13 +62,13 @@ class SharedState:
 
         self.is_pressing = False
         self.press_start_time = 0.0
-        self.press_duration = 5.5  # seconds
+        self.press_duration = 7.0  # seconds
 
         # Surface reconstruction attributes
         self.reconstructed_mesh = trimesh.Trimesh()
         self.recon_enabled = True  # Master switch for reconstruction
-        self.recon_frame_interval = 5  # Reconstruct every 5 frames
-        self.recon_particle_fraction = 0.5  # Use 50% of particles
+        self.recon_frame_interval = 3  # Reconstruct every 3 frames
+        self.recon_particle_fraction = 1.0
         self.frame_counter = 0
 
         self.create_reconstructed_mesh()
@@ -153,7 +152,7 @@ async def simulation_loop(websocket, state: SharedState):
                 "Triangles": triangles.flatten().tolist(),
                 "Particles": particles.flatten().tolist(),
                 "Steps": [0],
-                "Temperatures": np.full(len(particles) // 3, 293.0, dtype=float).tolist(),
+                "Temperatures": np.full(len(vertices) // 3, 293.0, dtype=float).tolist(),
                 "Pressure": 0,
                 "StressField": -1,
                 "is_pressing": state.is_pressing,
