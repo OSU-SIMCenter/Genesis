@@ -185,7 +185,7 @@ class AgilityForgeOptions(Options):
             substeps=16,
             gravity=(0, 0, 0),
         )
-        self.robot = RobotOptions(robot_time_to_seconds=0.03 * self.sim.substeps / self.sim.dt)
+        self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt)
         self.mpm = MPMOptions(
             grid_density=self.robot.base_grid_density,
             particle_size=0.8 * 0.01 * 64.0 / self.robot.base_grid_density,
