@@ -220,7 +220,7 @@ class AgilityForgeOptions(Options):
         )
 
         self.vis = VisOptions(
-            particle_render_fraction=0.5,
+            particle_render_fraction=0.3,
             show_world_frame=False,
             visualize_mpm_boundary=False,
             visualize_mpm_grid=False,
