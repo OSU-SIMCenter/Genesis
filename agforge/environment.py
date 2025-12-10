@@ -13,7 +13,7 @@ class AgilityForgeManipulator:
         self.robot_cfg = robot_cfg
         morph = gs.morphs.MJCF(file=GENERATED_ROBOT_XML_PATH)
         material = gs.materials.Rigid(
-            coup_softness=0.002,
+            coup_softness=0.001e-1,
             gravity_compensation=1.0,
         )
         self.entity = scene.add_entity(morph=morph, material=material)
