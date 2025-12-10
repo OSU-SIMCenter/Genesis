@@ -52,6 +52,7 @@ class AgilityForgeManipulator:
         if self.control_mode == "PD_CONTROL":
             self.entity.control_dofs_position(position=position, dofs_idx_local=dofs_idx_local)
         elif self.control_mode == "TELEPORT":
+            self.entity.control_dofs_position(position=position, dofs_idx_local=dofs_idx_local)
             self.entity.set_dofs_position(position, dofs_idx_local=dofs_idx_local)
 
     @property
