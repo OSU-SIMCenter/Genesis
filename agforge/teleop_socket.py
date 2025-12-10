@@ -5,44 +5,67 @@ import torch
 import numpy as np
 import functools
 import trimesh
+import struct
+import math
+import time
+
 import genesis.utils.particle as pu
+from genesis.utils.misc import ti_to_numpy
+import gstaichi as ti
 
 from options import TeleopOptions
 from agforge_builder import build_env, RobotXMLGenerator
 from environment import AgilityForgeEnv
 
-import math
-import time
+# Transformation constants (used by both InputMapper and SharedState)
+TRANSFORM_SCALE = 31.275
+TRANSFORM_HEIGHT_FACTOR = 0.375
 
-# --- 1. Shared State for Asynchronous Tasks ---
+
 class InputMapper:
     """
-    Configurable mapping from client inputs to robot qpos.
-    Parameters can be tuned to match client coordinate system to robot joints.
-    """
-    def __init__(self):
-        # Mapping parameters - these can be tuned
-        # Unity: -0.329346, 0.83443
-        # Genesis: 0.0296, -0.0384
-        pass
+    Maps client (Unity) coordinates to Genesis robot qpos.
     
-    def lerp_two_points(self, x, x1=-0.329346, y1=-0.0384, x2=0.83443, y2=0.0296):
-        return y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+    Unity positions are calculated automatically from the transformation parameters
+    (scale, cylinder_height) that are also used in _apply_transformation.
+    """
+    def __init__(self, cylinder_height: float,
+                 genesis_billet_end: float = -0.0383,
+                 unity_base_offset: float = -0.59): # 0.57, 1.16
+        """
+        Args:
+            cylinder_height: Height of the cylinder in Genesis (meters)
+            genesis_billet_end: Genesis x-position of the fixed end of the billet
+            unity_base_offset: Base offset for Unity billet end position
+        """
+        # Genesis positions
+        self.genesis_end = genesis_billet_end
+        self.genesis_start = genesis_billet_end + cylinder_height
         
-    def map_client_to_qpos(self, translation, rotation):
+        # Unity positions (calculated from transformation parameters)
+        self.unity_end = -0.14 #unity_base_offset + (TRANSFORM_HEIGHT_FACTOR * cylinder_height * TRANSFORM_SCALE)
+        # unity_billet_length = cylinder_height * TRANSFORM_SCALE
+        self.unity_start = 1.04 #self.unity_end + unity_billet_length
+    
+    def map_client_to_qpos(self, translation: float, rotation: float):
         """
         Map client inputs to robot qpos values.
         
         Args:
-            translation: Client translation input (x translation)
-            rotation: Client rotation input (x euler angle)
+            translation: Client translation input (Unity x position)
+            rotation: Client rotation input (degrees)
             
         Returns:
             tuple: (slider_qpos, hinge_qpos)
         """
-        slider_qpos = self.lerp_two_points(translation)
+        x = translation
+        x1, y1 = self.unity_end, self.genesis_end
+        x2, y2 = self.unity_start, self.genesis_start
+        slider_qpos = y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+        
         hinge_qpos = math.radians(rotation)
         return slider_qpos, hinge_qpos
+
 
 class SharedState:
     def __init__(self, env: AgilityForgeEnv):
@@ -52,8 +75,8 @@ class SharedState:
         self.dof_limits = self.robot.entity.get_dofs_limit()
         self.lock = asyncio.Lock()
         
-        # Input mapper for client -> robot coordinate transformation
-        self.input_mapper = InputMapper()
+        # Input mapper configured with cylinder height from the environment
+        self.input_mapper = InputMapper(cylinder_height=env.cfg.robot.cylinder_height)
 
         # Dynamically get gripper limits
         xml_generator = RobotXMLGenerator(robot_cfg=env.cfg.robot)
@@ -64,10 +87,10 @@ class SharedState:
         self.press_start_time = 0.0
         self.press_duration = 7.0  # seconds
 
-        # Surface reconstruction attributes
+        # Surface reconstruction
         self.reconstructed_mesh = trimesh.Trimesh()
-        self.recon_enabled = True  # Master switch for reconstruction
-        self.recon_frame_interval = 3  # Reconstruct every 3 frames
+        self.recon_enabled = True
+        self.recon_frame_interval = 2
         self.recon_particle_fraction = 1.0
         self.frame_counter = 0
 
@@ -75,8 +98,7 @@ class SharedState:
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
-            # self.qpos = torch.clamp(new_qpos, self.dof_limits[0], self.dof_limits[1])
-            new_qpos[:,:2] = torch.clamp(new_qpos[:,:2], self.dof_limits[0][:2], self.dof_limits[1][:2])
+            new_qpos[:, :2] = torch.clamp(new_qpos[:, :2], self.dof_limits[0][:2], self.dof_limits[1][:2])
             self.qpos = new_qpos
 
     async def get_qpos(self):
@@ -84,23 +106,25 @@ class SharedState:
             return self.qpos.clone()
 
     def _apply_transformation(self, points):
+        """Transform points from Genesis space to Unity space."""
         cfg = self.env.cfg.robot
-        translation = -(cfg.cylinder_pos + np.array([-0.2 * cfg.cylinder_height, 0, 0]))
-        scale = (33.0, 33.0, 33.0)
-        flip_axis = 0
+        translation = -(cfg.cylinder_pos + np.array([-TRANSFORM_HEIGHT_FACTOR * cfg.cylinder_height, 0, 0]))
+        scale = (TRANSFORM_SCALE,) * 3
         
         points = points + torch.tensor(translation, device=points.device).view(1, 3)
         points = points * torch.tensor(scale, device=points.device).view(1, 3)
-        points[:, flip_axis] *= -1
+        points[:, 0] *= -1  # Flip x-axis
         return points
 
     async def get_reconstructed_mesh_and_particles(self):
-        # Return the raw particle data and the reconstructed mesh data
-        points = self._apply_transformation(self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0))
-        
-        vertices = self._apply_transformation(torch.tensor(self.reconstructed_mesh.vertices, device=self.env.device))
+        """Return transformed mesh vertices, triangles, and particle positions."""
+        points = self._apply_transformation(
+            self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+        )
+        vertices = self._apply_transformation(
+            torch.tensor(self.reconstructed_mesh.vertices, device=self.env.device)
+        )
         triangles = self.reconstructed_mesh.faces
-        
         return vertices, triangles, points
 
     async def update_reconstructed_mesh(self):
@@ -114,52 +138,86 @@ class SharedState:
         self.create_reconstructed_mesh()
     
     def create_reconstructed_mesh(self):
-        particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0).cpu().numpy()
+        """Reconstruct surface mesh from active particles using splashsurf."""
+        solver = self.env.scene.sim.mpm_solver
         
+        # Get environment offset
+        offset = self.env.scene.envs_offset[0]
+        if hasattr(offset, 'cpu'):
+            offset = offset.cpu().numpy()
+        elif hasattr(offset, 'numpy'):
+            offset = offset.numpy()
+        
+        # Get particle positions and active mask
+        particles = ti_to_numpy(solver.particles_render.pos)[:, 0] + offset
+        active = ti_to_numpy(solver.particles_render.active)[:, 0].astype(bool)
+        particles = particles[active]
+
+        # Subsample if needed
         if self.recon_particle_fraction < 1.0:
             num_particles = int(len(particles) * self.recon_particle_fraction)
             indices = np.random.choice(len(particles), num_particles, replace=False)
             particles = particles[indices]
-            
+
+        radius = solver.particle_radius
         self.reconstructed_mesh = pu.particles_to_mesh(
             positions=particles,
-            radius=self.env.mpm_entity.particle_size,
+            radius=radius,
             backend='splashsurf'
         )
 
 
-# --- 2. Simulation and Producer Loop ---
+def _prepare_array(arr, dtype):
+    """Convert array to flattened numpy array of specified dtype."""
+    if isinstance(arr, torch.Tensor):
+        arr = arr.cpu().numpy()
+    if isinstance(arr, list):
+        arr = np.array(arr)
+    flat = arr.flatten().astype(dtype)
+    return flat, len(flat)
+
+
 async def simulation_loop(websocket, state: SharedState):
-    """
-    Runs the simulation continuously and sends state updates to the client.
-    """
+    """Runs the simulation and sends state updates to the client."""
     print("Starting simulation loop...")
+    
     while True:
         try:
-            # Get the latest target positions
             qpos = await state.get_qpos()
-
-            # Apply action and step simulation
             state.robot.apply_action(qpos)
             state.env.scene.step()
+            ti.sync()
+            
+            # Update render fields for particle access
+            if hasattr(state.env.scene.sim.mpm_solver, 'update_render_fields'):
+                state.env.scene.sim.mpm_solver.update_render_fields()
+            else:
+                state.env.scene.visualizer.update_visual_states()
 
-            # Update reconstruction and send data
             await state.update_reconstructed_mesh()
             vertices, triangles, particles = await state.get_reconstructed_mesh_and_particles()
             
-            response = {
-                "Vertices": vertices.flatten().tolist(),
-                "Triangles": triangles.flatten().tolist(),
-                "Particles": particles.flatten().tolist(),
-                "Steps": [0],
-                "Temperatures": np.full(len(vertices) // 3, 293.0, dtype=float).tolist(),
+            # Prepare binary message
+            v_flat, v_count = _prepare_array(vertices, np.float32)
+            t_flat, t_count = _prepare_array(triangles, np.int32)
+            p_flat, p_count = _prepare_array(particles, np.float32)
+            
+            header = {
+                "steps": [0],
                 "Pressure": 0,
                 "StressField": -1,
                 "is_pressing": state.is_pressing,
+                "counts": {
+                    "vertices": v_count,
+                    "faces": t_count,
+                    "particles": p_count
+                }
             }
-            await websocket.send(json.dumps(response))
+            header_json = json.dumps(header).encode('utf-8')
+            binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes()
+            message = struct.pack('<I', len(header_json)) + header_json + binary_body
             
-            # Run at ~60Hz
+            await websocket.send(message)
             await asyncio.sleep(1/60)
 
         except websockets.ConnectionClosed:
@@ -169,61 +227,50 @@ async def simulation_loop(websocket, state: SharedState):
             print(f"Error in simulation loop: {e}")
             break
 
-# --- 3. Client Message Consumer ---
+
 async def handle_client(websocket, state: SharedState, path=None):
-    """
-    Listens for client messages and updates the shared state.
-    """
+    """Listens for client messages and updates the shared state."""
     print("Client connected. Ready to receive commands.")
     
-    # Create and run the simulation loop as a concurrent task
     producer_task = asyncio.create_task(simulation_loop(websocket, state))
 
     try:
         async for msg in websocket:
             try:
                 packet = json.loads(msg)
-                # print(f"Received command: {packet}")
-
                 qpos = await state.get_qpos()
 
                 if state.is_pressing:
-                    if time.time() - state.press_start_time > state.press_duration:
+                    elapsed = time.time() - state.press_start_time
+                    if elapsed > state.press_duration:
                         qpos[0, 2] = state.gripper_open_pos
                         qpos[0, 3] = state.gripper_open_pos
                         state.robot.set_control_mode("TELEPORT")
                         state.is_pressing = False
-                    elif time.time() - state.press_start_time > state.press_duration/1.1:
+                    elif elapsed > state.press_duration / 1.15:
                         qpos[0, 2] = state.gripper_open_pos
                         qpos[0, 3] = state.gripper_open_pos
                     await state.set_qpos(qpos)
 
                 elif packet.get("request") == "update":
-                    # Extract translation and rotation from the packet
                     translation = packet.get("translation", 0.0)
                     rotation = packet.get("rotation", 0.0)
-                    
-                    # Map client inputs to robot qpos using configurable mapping
                     slider_qpos, hinge_qpos = state.input_mapper.map_client_to_qpos(translation, rotation)
-                    
-                    # Update qpos with mapped values
-                    qpos[0, 0] = slider_qpos  # x_slider
-                    qpos[0, 1] = hinge_qpos   # x_hinge
+                    qpos[0, 0] = slider_qpos
+                    qpos[0, 1] = hinge_qpos
                     await state.set_qpos(qpos)
 
                 elif packet.get("request") == "strike":
-                    qpos[0, 2] = state.gripper_closed_pos * packet.get("force", 0.1) * 10. * 1.3
-                    qpos[0, 3] = state.gripper_closed_pos * packet.get("force", 0.1) * 10. * 1.3
-                    
+                    force = packet.get("force", 0.1)
+                    qpos[0, 2] = state.gripper_closed_pos * force * 10.0 * 1.3
+                    qpos[0, 3] = state.gripper_closed_pos * force * 10.0 * 1.3
                     state.robot.set_control_mode("PD_CONTROL")
                     state.is_pressing = True
                     state.press_start_time = time.time()
                     await state.set_qpos(qpos)
 
                 elif packet.get("request") == "temperature":
-                    # Added for compatibility, but does nothing in this sim
-                    pass
-
+                    pass  # Placeholder for future implementation
 
             except json.JSONDecodeError:
                 print("Invalid JSON received from client.")
@@ -231,29 +278,25 @@ async def handle_client(websocket, state: SharedState, path=None):
                 print(f"Error processing client message: {e}")
     
     finally:
-        # Clean up the simulation task when the client disconnects
         producer_task.cancel()
         await asyncio.gather(producer_task, return_exceptions=True)
-        print("Client disconnected and simulation task cancelled.")
+        print("Client disconnected.")
 
 
-# --- 4. Main Server Execution ---
 async def main():
-    print("Building the simulation environment... (This may take a moment)")
+    print("Building simulation environment...")
     cfg = TeleopOptions()
-    # Ensure the viewer is off for server mode
     cfg.general.show_viewer = True
     env = build_env(cfg)
     shared_state = SharedState(env)
     shared_state.robot.set_control_mode("TELEPORT")
 
     print("Environment ready. Server listening on port 8765.")
-
-    # The handler for websockets.serve must accept both websocket and path.
     handler = functools.partial(handle_client, state=shared_state)
 
     async with websockets.serve(handler, "localhost", 8765):
-        await asyncio.Future()  # run forever
+        await asyncio.Future()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
