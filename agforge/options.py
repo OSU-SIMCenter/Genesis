@@ -111,7 +111,7 @@ class RobotOptions(Options):
         self.mpm_lower_bound = tuple(self.cylinder_pos - mpm_lower_offset)
         self.mpm_upper_bound = tuple(self.cylinder_pos + mpm_upper_offset)
 
-        fixed_region_size = np.array([0.25 * self.cylinder_height, 4 * self.cylinder_radius, 4 * self.cylinder_radius])
+        fixed_region_size = np.array([0.35 * self.cylinder_height, 4 * self.cylinder_radius, 4 * self.cylinder_radius])
         fixed_region_center = self.cylinder_pos + np.array([0.5 * self.cylinder_height, 0, 0])
         self.fixed_region_bounds = torch.tensor(np.array([
             fixed_region_center - fixed_region_size / 2,
@@ -220,7 +220,7 @@ class AgilityForgeOptions(Options):
         )
 
         self.vis = VisOptions(
-            particle_render_fraction=0.3,
+            particle_render_fraction=1.0,
             show_world_frame=False,
             visualize_mpm_boundary=False,
             visualize_mpm_grid=False,
