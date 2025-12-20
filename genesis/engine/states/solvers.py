@@ -21,7 +21,7 @@ class SimState(RBC):
             self._solvers_state.append(solver.get_state(f_local))
 
     def serializable(self):
-        self.scene = None
+        self._scene = None
 
         for solver_state in self._solvers_state:
             if solver_state is not None:
