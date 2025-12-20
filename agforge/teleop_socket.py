@@ -96,6 +96,9 @@ class SharedState:
 
         self.create_reconstructed_mesh()
 
+        # Checkpoint storage
+        self.checkpoints = []
+
     async def set_qpos(self, new_qpos):
         async with self.lock:
             new_qpos[:, :2] = torch.clamp(new_qpos[:, :2], self.dof_limits[0][:2], self.dof_limits[1][:2])
@@ -104,6 +107,66 @@ class SharedState:
     async def get_qpos(self):
         async with self.lock:
             return self.qpos.clone()
+
+    async def reset_simulation(self):
+        async with self.lock:
+            # Full reset
+            self.env.reset()
+            self.qpos = self.robot.entity.get_dofs_position()
+            self.is_pressing = False
+            self.checkpoints = []
+            self.create_reconstructed_mesh()
+            print("Simulation reset.")
+
+    async def save_checkpoint(self):
+        async with self.lock:
+            # Genesis SimState
+            sim_state = self.env.scene.sim.get_state()
+            sim_state.serializable()
+            
+            # Clear queried states in simulator to prevent memory leak
+            # Simulator appends to _queried_states on every get_state()
+            if hasattr(self.env.scene.sim, '_queried_states'):
+                self.env.scene.sim._queried_states.clear()
+
+            ckpt = {
+                'sim_state': sim_state,
+                'is_pressing': self.is_pressing,
+                'press_start_time': self.press_start_time,
+                'qpos': self.qpos.clone()
+            }
+            self.checkpoints.append(ckpt)
+            print(f"Checkpoint saved. Total checkpoints: {len(self.checkpoints)}")
+
+    async def load_checkpoint(self):
+        async with self.lock:
+            if not self.checkpoints:
+                print("No checkpoints to undo.")
+                return
+
+            ckpt = self.checkpoints.pop()
+            
+            # Restore SimState
+            self.env.scene.sim.reset(ckpt['sim_state'])
+
+            # --- Synchronization for Visualization ---
+            ti.sync()
+            if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
+                self.env.scene.sim.mpm_solver.update_render_fields()
+            else:
+                self.env.scene.visualizer.update_visual_states()
+            
+            # Restore Aux State
+            self.is_pressing = ckpt['is_pressing']
+            self.press_start_time = ckpt['press_start_time']
+            self.qpos = ckpt['qpos']
+            
+            # Force update robot physics state to match restored qpos if needed, 
+            # though sim.reset() should handle it. 
+            # We also ensure our local qpos tracks what we just restored.
+
+            self.create_reconstructed_mesh()
+            print("Checkpoint loaded (Undo).")
 
     def _apply_transformation(self, points):
         """Transform points from Genesis space to Unity space."""
@@ -252,6 +315,12 @@ async def handle_client(websocket, state: SharedState, path=None):
                         qpos[0, 3] = state.gripper_open_pos
                     await state.set_qpos(qpos)
 
+                elif packet.get("request") == "reset":
+                    await state.reset_simulation()
+
+                elif packet.get("request") == "undo":
+                    await state.load_checkpoint()
+
                 elif packet.get("request") == "update":
                     translation = packet.get("translation", 0.0)
                     rotation = packet.get("rotation", 0.0)
@@ -261,6 +330,7 @@ async def handle_client(websocket, state: SharedState, path=None):
                     await state.set_qpos(qpos)
 
                 elif packet.get("request") == "strike":
+                    await state.save_checkpoint() # Save checkpoint before strike
                     force = packet.get("force", 0.1)
                     qpos[0, 2] = state.gripper_closed_pos * force * 10.0 * 1.3
                     qpos[0, 3] = state.gripper_closed_pos * force * 10.0 * 1.3
@@ -290,6 +360,10 @@ async def main():
     env = build_env(cfg)
     shared_state = SharedState(env)
     shared_state.robot.set_control_mode("TELEPORT")
+
+    # Perform warm-up reset to ensure JIT/Allocations for reset are done
+    print("Warming up simulation reset...")
+    await shared_state.reset_simulation()
 
     print("Environment ready. Server listening on port 8765.")
     handler = functools.partial(handle_client, state=shared_state)
