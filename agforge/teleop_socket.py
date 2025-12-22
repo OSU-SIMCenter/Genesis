@@ -85,7 +85,7 @@ class SharedState:
 
         self.is_pressing = False
         self.press_start_time = 0.0
-        self.press_duration = 7.0  # seconds
+        self.press_duration = 4.0  # seconds
 
         # Surface reconstruction
         self.reconstructed_mesh = trimesh.Trimesh()
@@ -112,6 +112,14 @@ class SharedState:
         async with self.lock:
             # Full reset
             self.env.reset()
+
+            # --- Synchronization for Visualization ---
+            ti.sync()
+            if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
+                self.env.scene.sim.mpm_solver.update_render_fields()
+            else:
+                self.env.scene.visualizer.update_visual_states()
+
             self.qpos = self.robot.entity.get_dofs_position()
             self.is_pressing = False
             self.checkpoints = []
@@ -331,7 +339,7 @@ async def handle_client(websocket, state: SharedState, path=None):
 
                 elif packet.get("request") == "strike":
                     await state.save_checkpoint() # Save checkpoint before strike
-                    force = packet.get("force", 0.1)
+                    force = (packet.get("force", 0.1) * 0.4) + 0.05
                     qpos[0, 2] = state.gripper_closed_pos * force * 10.0 * 1.3
                     qpos[0, 3] = state.gripper_closed_pos * force * 10.0 * 1.3
                     state.robot.set_control_mode("PD_CONTROL")
@@ -356,7 +364,7 @@ async def handle_client(websocket, state: SharedState, path=None):
 async def main():
     print("Building simulation environment...")
     cfg = TeleopOptions()
-    cfg.general.show_viewer = True
+    cfg.general.show_viewer = False
     env = build_env(cfg)
     shared_state = SharedState(env)
     shared_state.robot.set_control_mode("TELEPORT")
