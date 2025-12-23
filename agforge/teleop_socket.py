@@ -339,7 +339,7 @@ async def handle_client(websocket, state: SharedState, path=None):
 
                 elif packet.get("request") == "strike":
                     await state.save_checkpoint() # Save checkpoint before strike
-                    force = (packet.get("force", 0.1) * 0.4) + 0.05
+                    force = (packet.get("force", 0.1) * 0.35) + 0.05
                     qpos[0, 2] = state.gripper_closed_pos * force * 10.0 * 1.3
                     qpos[0, 3] = state.gripper_closed_pos * force * 10.0 * 1.3
                     state.robot.set_control_mode("PD_CONTROL")
