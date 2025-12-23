@@ -84,9 +84,6 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
     """
     assert "pbs" in sampler
 
-    if not (gs.platform == "Linux" and platform.machine() == "x86_64"):
-        gs.raise_exception(f"Physics-based particle sampler '{sampler}' is only supported on Linux x86.")
-
     # compute file name via hashing for caching
     ptc_file_path = msu.get_ptc_path(mesh.vertices, mesh.faces, p_size, sampler)
 
@@ -103,63 +100,123 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
 
     if not is_cached_loaded:
         with gs.logger.timer(f"Sampling particles with ~<{sampler}>~ sampler and generating `.ptc` file:"):
-            sdf_res = int(sampler.split("-")[-1])
-
             # We scale up a bit the particle size because this method tends to sample denser particles compared to `random` and `regular` samplers.
             scale = 1.104  # Magic number from Pingchuan Ma.
             particle_radius = p_size * scale / 2
+            
+            # Check if we are on Linux x86 (Original PBS implementation)
+            if gs.platform == "Linux" and platform.machine() == "x86_64":
+                sdf_res = int(sampler.split("-")[-1])
 
-            fd, mesh_path = tempfile.mkstemp(suffix=".obj")
-            os.close(fd)
-            fd, vtk_path = tempfile.mkstemp(suffix=".vtk")
-            os.close(fd)
-            mesh.export(mesh_path)
+                fd, mesh_path = tempfile.mkstemp(suffix=".obj")
+                os.close(fd)
+                fd, vtk_path = tempfile.mkstemp(suffix=".vtk")
+                os.close(fd)
+                mesh.export(mesh_path)
 
-            try:
-                # Try importing VTK. It would fail on Linux if not graphic server is running.
-                import vtk
-                from vtk.util.numpy_support import vtk_to_numpy
+                try:
+                    # Try importing VTK. It would fail on Linux if not graphic server is running.
+                    import vtk
+                    from vtk.util.numpy_support import vtk_to_numpy
 
-                # Sample particles
-                command = (
-                    os.path.join(miu.get_src_dir(), "ext/VolumeSampling"),
-                    "-i",
-                    mesh_path,
-                    "-o",
-                    vtk_path,
-                    "--no-cache",
-                    "--mode",
-                    4,
-                    "-r",
-                    particle_radius,
-                    "--res",
-                    f"{sdf_res},{sdf_res},{sdf_res}",
-                    "--steps",
-                    100,  # use bigger value leads to smoother surface
-                )
-                result = subprocess.run(map(str, command), capture_output=True, text=True)
-                if result.stdout:
-                    gs.logger.debug(result.stdout)
-                if result.stderr:
-                    gs.logger.warning(result.stderr)
-                if os.path.getsize(vtk_path) == 0:
-                    raise OSError("Output VTK file is empty.")
+                    # Sample particles
+                    command = (
+                        os.path.join(miu.get_src_dir(), "ext/VolumeSampling"),
+                        "-i",
+                        mesh_path,
+                        "-o",
+                        vtk_path,
+                        "--no-cache",
+                        "--mode",
+                        4,
+                        "-r",
+                        particle_radius,
+                        "--res",
+                        f"{sdf_res},{sdf_res},{sdf_res}",
+                        "--steps",
+                        100,  # use bigger value leads to smoother surface
+                    )
+                    result = subprocess.run(map(str, command), capture_output=True, text=True)
+                    if result.stdout:
+                        gs.logger.debug(result.stdout)
+                    if result.stderr:
+                        gs.logger.warning(result.stderr)
+                    if os.path.getsize(vtk_path) == 0:
+                        raise OSError("Output VTK file is empty.")
 
-                # Read the generated VTK file
-                reader = vtk.vtkUnstructuredGridReader()
-                reader.SetFileName(vtk_path)
-                reader.Update()
-                positions = vtk_to_numpy(reader.GetOutput().GetPoints().GetData())
-            except (OSError, ImportError) as e:
-                gs.raise_exception_from(f"Physics-based particle sampler '{sampler}' failed.", e)
-            finally:
-                os.remove(mesh_path)
-                os.remove(vtk_path)
+                    # Read the generated VTK file
+                    reader = vtk.vtkUnstructuredGridReader()
+                    reader.SetFileName(vtk_path)
+                    reader.Update()
+                    positions = vtk_to_numpy(reader.GetOutput().GetPoints().GetData())
+                except (OSError, ImportError) as e:
+                    gs.raise_exception_from(f"Physics-based particle sampler '{sampler}' failed.", e)
+                finally:
+                    os.remove(mesh_path)
+                    os.remove(vtk_path)
 
-            # Clean up the intermediate files
-            output_dir = os.path.join(miu.get_src_dir(), "ext/output")
-            if os.path.exists(output_dir):
-                shutil.rmtree(output_dir, ignore_errors=True)
+            else:
+                # Windows / Non-x86 Linux Fallback: Scipy Poisson Disk Sampling
+                try:
+                    from scipy.stats import qmc
+                except ImportError:
+                    gs.raise_exception("Scipy is required for PBS sampling on Windows. Please install it with `pip install scipy`.")
+
+                gs.logger.info("Using Scipy Poisson Disk sampler fallback for Windows.")
+                
+                # Setup bounds
+                bounds = mesh.bounds
+                x_min, y_min, z_min = bounds[0]
+                x_max, y_max, z_max = bounds[1]
+                dims = bounds[1] - bounds[0]
+                
+                # Normalize logic: qmc.PoissonDisk samples in [0, 1]^d.
+                # We map the largest dimension of our mesh to 1.0.
+                max_dim = np.max(dims)
+                if max_dim == 0:
+                    positions = np.zeros((0, 3))
+                else:
+                    # User feedback optimization:
+                    # The native PBS sampler generates ~6k particles vs Scipy's ~20k with the previous radius.
+                    # This implies we were sampling too densely (radius too small, allowing overlaps).
+                    # We apply a scaling factor of 1.5 to the radius (approx 3.3x volume reduction) to match density.
+                    # 1.5 * particle_radius results in spacing ~0.825 * p_size.
+                    norm_radius = (particle_radius * 1.5) / max_dim
+                    
+                    # Avoid extremely small radius hanging the sampler
+                    if norm_radius < 1e-4:
+                         gs.logger.warning(f"Normalized radius {norm_radius} is very small, sampling might be slow.")
+
+                    # Use 'ncandidates=30' (default) which is sufficient for good quality.
+                    engine = qmc.PoissonDisk(d=3, radius=norm_radius, hypersphere='volume', ncandidates=30)
+                    
+                    try:
+                        # Generate samples in [0, 1]^3
+                        # We might need to generate in chunks or check if fill_space is robust for large N
+                        samples = engine.fill_space()
+                    except Exception as e:
+                         gs.raise_exception_from("Scipy Poisson Disk generation failed.", e)
+
+                    # Scale back to world coordinates
+                    # We treat the [0,1] cube as having size `max_dim`
+                    world_samples = samples * max_dim + bounds[0]
+                    
+                    # Filter samples inside the actual mesh bounding box
+                    mask = (world_samples[:, 0] <= x_max) & \
+                           (world_samples[:, 1] <= y_max) & \
+                           (world_samples[:, 2] <= z_max)
+                    potential_positions = world_samples[mask]
+
+                    # Precise filtering using Signed Distance Function (SDF)
+                    # Use igl as in trimesh_to_particles_simple
+                    sd, *_ = igl.signed_distance(potential_positions, mesh.vertices, mesh.faces)
+                    positions = potential_positions[sd < 0.0]
+
+            # Clean up the intermediate files (Linux helper cleanup, kept for safety or structure)
+            if gs.platform == "Linux" and platform.machine() == "x86_64":
+                output_dir = os.path.join(miu.get_src_dir(), "ext/output")
+                if os.path.exists(output_dir):
+                    shutil.rmtree(output_dir, ignore_errors=True)
 
             # Cache the generated positions
             os.makedirs(os.path.dirname(ptc_file_path), exist_ok=True)

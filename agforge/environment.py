@@ -113,7 +113,7 @@ class AgilityForgeEnv:
         self.mpm_entity = self.scene.add_entity(
             material=gs.materials.MPM.ElastoPlastic(
                 E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
-                von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress
+                von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress, sampler="pbs",
             ),
             morph=gs.morphs.Cylinder(
                 radius=self.cfg.robot.cylinder_radius, height=self.cfg.robot.cylinder_height, pos=self.cfg.robot.cylinder_pos, euler=self.cfg.robot.cylinder_euler
