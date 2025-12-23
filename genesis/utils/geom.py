@@ -1,5 +1,7 @@
 import math
 
+import warnings
+
 import numpy as np
 import numba as nb
 import torch
@@ -8,6 +10,19 @@ import torch.nn.functional as F
 import gstaichi as ti
 
 import genesis as gs
+
+
+def jit_script(func):
+    """
+    Wrapper for torch.jit.script that falls back to the original function
+    if scripting fails (e.g. when source code is unavailable in PyInstaller).
+    """
+    try:
+        return torch.jit.script(func)
+    except Exception as e:
+        # warnings.warn(f"JIT Compilation failed for {func.__name__}, falling back to Python execution. Error: {e}")
+        return func
+
 
 # ------------------------------------------------------------------------------------
 # ------------------------------------- taichi ----------------------------------------
@@ -520,7 +535,7 @@ def _np_xyz_to_quat(xyz: np.ndarray, rpy: bool = False, out: np.ndarray | None =
     return out_
 
 
-@torch.jit.script
+@jit_script
 def _tc_xyz_to_quat(xyz: torch.Tensor, rpy: bool = False, out: torch.Tensor | None = None) -> torch.Tensor:
     if out is None:
         out = torch.empty(xyz.shape[:-1] + (4,), dtype=xyz.dtype, device=xyz.device)
@@ -588,7 +603,7 @@ def _np_quat_to_R(quat: np.ndarray, out: np.ndarray | None = None) -> np.ndarray
     return out_
 
 
-@torch.jit.script
+@jit_script
 def _tc_quat_to_R(quat, out: torch.Tensor | None = None):
     if out is None:
         R = torch.empty(quat.shape[:-1] + (3, 3), dtype=quat.dtype, device=quat.device)
@@ -686,7 +701,7 @@ def _np_quat_to_xyz(quat, rpy=False, out=None):
     return out_
 
 
-@torch.jit.script
+@jit_script
 def _tc_quat_to_xyz(quat, eps: float, rpy: bool = False):
     xyz = torch.empty(quat.shape[:-1] + (3,), dtype=quat.dtype, device=quat.device)
     x, y, z = xyz[..., :1], xyz[..., 1:2], xyz[..., 2:]
@@ -793,7 +808,7 @@ def _np_R_to_quat(R, out=None):
     return out_
 
 
-@torch.jit.script
+@jit_script
 def _tc_R_to_quat(R, out=None):
     if out is None:
         quat = torch.zeros(R.shape[:-2] + (4,), dtype=R.dtype, device=R.device)
@@ -952,7 +967,7 @@ def _np_quat_mul(u, v, out=None):
     return out_.reshape(u.shape)
 
 
-@torch.jit.script
+@jit_script
 def _tc_quat_mul(u, v):
     w1, x1, y1, z1 = u[..., 0], u[..., 1], u[..., 2], u[..., 3]
     w2, x2, y2, z2 = v[..., 0], v[..., 1], v[..., 2], v[..., 3]
@@ -1014,7 +1029,7 @@ def _np_transform_by_quat(v, quat, out=None):
     return out_
 
 
-@torch.jit.script
+@jit_script
 def _tc_transform_by_quat(v, quat, out: torch.Tensor | None = None):
     q_w, q_x, q_y, q_z = quat[..., :1], quat[..., 1:2], quat[..., 2:3], quat[..., 3:]
     q_ww, q_wx, q_wy, q_wz = q_w * q_w, q_w * q_x, q_w * q_y, q_w * q_z
@@ -1240,7 +1255,7 @@ def _np_z_up_to_R(z, up=None, out=None):
     return out_
 
 
-@torch.jit.script
+@jit_script
 def _tc_z_up_to_R(z, eps: float, up=None, out: torch.Tensor | None = None):
     if out is None:
         R = torch.empty(z.shape[:-1] + (3, 3), dtype=z.dtype, device=z.device)
