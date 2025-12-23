@@ -1,10 +1,22 @@
 import torch
+import os
+import sys
 import genesis as gs
 from options import (
     AgilityForgeOptions,
     RobotOptions,
     GENERATED_ROBOT_XML_PATH,
 )
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(__file__)
+
+    return os.path.join(base_path, relative_path)
 
 class AgilityForgeManipulator:
     """Encapsulates the robot's properties and provides a clean action interface."""
@@ -113,7 +125,8 @@ class AgilityForgeEnv:
         self.mpm_entity = self.scene.add_entity(
             material=gs.materials.MPM.ElastoPlastic(
                 E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
-                von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress
+                von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress,
+                sampler=resource_path("pbs_samples/cylinder.ptc"),
             ),
             morph=gs.morphs.Cylinder(
                 radius=self.cfg.robot.cylinder_radius, height=self.cfg.robot.cylinder_height, pos=self.cfg.robot.cylinder_pos, euler=self.cfg.robot.cylinder_euler

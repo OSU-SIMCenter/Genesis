@@ -153,6 +153,9 @@ class ParticleEntity(Entity):
         """
         self.sampler = self._material.sampler
 
+        if self.sampler.endswith(".ptc"):
+             return
+
         match self.sampler.split("-"):
             case ["regular"]:
                 pass

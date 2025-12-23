@@ -49,9 +49,9 @@ class Base(Material):
 
         if sampler is None:
             sampler = "pbs" if (gs.platform == "Linux" and platform.machine() == "x86_64") else "random"
-        if not (sampler in ("pbs", "random", "regular") or sampler.startswith("pbs-")):
+        if not (sampler in ("pbs", "random", "regular") or sampler.startswith("pbs-") or sampler.endswith(".ptc")):
             gs.raise_exception(
-                f"Particle sampler must be either 'pbs(-[0-9]+)', 'random' or 'regular. Got '{sampler}'."
+                f"Particle sampler must be either 'pbs(-[0-9]+)', 'random', 'regular' or a .ptc file path. Got '{sampler}'."
             )
 
         self._E = E
