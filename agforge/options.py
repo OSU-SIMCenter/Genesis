@@ -9,7 +9,7 @@ from genesis.options import ProfilingOptions, SimOptions, MPMOptions, VisOptions
 
 ureg = UnitRegistry()
 
-GENERATED_ROBOT_XML_PATH = "genesis/assets/xml/agforge_demo.xml"
+GENERATED_ROBOT_XML_PATH = "agforge_demo.xml"
 
 def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> float:
     """Convert a quantity to use a specified time unit instead of seconds."""
