@@ -90,6 +90,22 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
     """
     assert "pbs" in sampler
 
+    if sampler.endswith(".ptc"):
+        # Direct file loading mode requested by user
+        if os.path.exists(sampler):
+            gs.logger.info(f"Loading pre-computed particles from static file: {sampler}")
+            try:
+                with open(sampler, "rb") as file:
+                    positions = pkl.load(file)
+                # Adjust positions relative to the requested offset 'pos'
+                positions += np.asarray(pos)
+                return positions
+            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError) as e:
+                 gs.raise_exception_from(f"Failed to load static particle file: {sampler}", e)
+        else:
+             gs.raise_exception(f"Static particle file not found: {sampler}")
+
+    # Standard PBS logic (Linux only checks)
     if not (sys.platform == "linux" and platform.machine() == "x86_64"):
         gs.raise_exception(f"Physics-based particle sampler '{sampler}' is only supported on Linux x86.")
 

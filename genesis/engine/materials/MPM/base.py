@@ -15,14 +15,14 @@ from ..base import Material
 if TYPE_CHECKING:
     from genesis.engine.entities.mpm_entity import MPMEntity
 
-_SAMPLER_PATTERN = re.compile(r"^pbs(-\d+)?$|^random$|^regular$")
+_SAMPLER_PATTERN = re.compile(r"^pbs(-\d+)?$|^random$|^regular$|.*\.ptc$")
 
 
 def _validate_sampler(v: str) -> str:
     if not isinstance(v, str) or not _SAMPLER_PATTERN.match(v):
         raise PydanticCustomError(
             "invalid_sampler",
-            "Input should be 'pbs', 'pbs-<seed>', 'random', or 'regular'",
+            "Input should be 'pbs', 'pbs-<seed>', 'random', 'regular', or a .ptc file path",
             {"value": v},
         )
     return v
