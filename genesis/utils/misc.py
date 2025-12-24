@@ -59,10 +59,14 @@ class redirect_libc_stderr:
         self.original_stderr_fileno = None
 
     def __enter__(self):
+        # In PyInstaller (noconsole) or some embedded environments, sys.stderr might be None
+        if sys.stderr is None:
+            return self
+
         try:
             self.stderr_fileno = sys.stderr.fileno()
         except (io.UnsupportedOperation, AttributeError):
-            # Do nothing is not a real OS-level file descriptor but rather some IO buffer
+            # Do nothing if not a real OS-level file descriptor but rather some IO buffer
             return self
 
         self.original_stderr_fileno = os.dup(self.stderr_fileno)
