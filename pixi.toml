@@ -1,0 +1,10 @@
+[workspace]
+authors = ["Timmmothy <bank.of.thomas@gmail.com>"]
+channels = ["conda-forge"]
+name = "forge-controller"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]

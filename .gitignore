@@ -152,4 +152,6 @@ dmypy.json
 .pyre/
 
 # agforge
-agforge_demo.xml
+agforge_demo.xml# pixi environments
+.pixi/*
+!.pixi/config.toml
