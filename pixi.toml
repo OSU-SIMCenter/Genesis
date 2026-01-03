@@ -31,12 +31,16 @@ index-strategy = "unsafe-best-match"
 torch = "*"
 torchvision = "*"
 
-# --- Feature: CPU (Default) ---
+# --- Feature: CPU-Only ---
 [feature.cpu.pypi-dependencies]
 # Uses standard PyPI (CPU on Linux/Mac, or default CUDA 12.x on Windows)
 torch = "*"
 torchvision = "*"
 
+[feature.agf-server.pypi-dependencies]
+websockets = "*"
+pint = "*"
+
 [environments]
-default = ["cpu"]
-gpu = ["cuda"]
+default = ["cuda", "agf-server"]
+cpu-only = ["cpu", "agf-server"]
