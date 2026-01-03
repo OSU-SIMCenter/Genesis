@@ -1,10 +1,42 @@
 [workspace]
-authors = ["Timmmothy <bank.of.thomas@gmail.com>"]
+name = "genesis-world"
+# Standard Conda channel for Python and system tools
 channels = ["conda-forge"]
-name = "forge-controller"
-platforms = ["win-64"]
+# Supports Windows, Linux, Apple Silicon Mac
+platforms = ["win-64", "linux-64", "osx-arm64"]
 version = "0.1.0"
 
 [tasks]
 
+[system-requirements]
+# Required for modern Linux wheels (like pymeshlab)
+libc = { family = "glibc", version = "2.35" }
+
 [dependencies]
+# Downgrade to 3.12.* if you get compatibility errors
+python = "3.13.*"
+
+[pypi-dependencies]
+# Editable project install
+genesis-world = { path = ".", editable = true }
+
+# --- Feature: CUDA (GPU) ---
+[feature.cuda.pypi-options]
+# Switch url to cu128 or cu126 for better driver compatibility
+extra-index-urls = ["https://download.pytorch.org/whl/cu130"]
+# "unsafe-best-match": Correctly mixes CUDA wheels (from URL) with standard packages (from PyPI)
+index-strategy = "unsafe-best-match"
+
+[feature.cuda.pypi-dependencies]
+torch = "*"
+torchvision = "*"
+
+# --- Feature: CPU (Default) ---
+[feature.cpu.pypi-dependencies]
+# Uses standard PyPI (CPU on Linux/Mac, or default CUDA 12.x on Windows)
+torch = "*"
+torchvision = "*"
+
+[environments]
+default = ["cpu"]
+gpu = ["cuda"]
