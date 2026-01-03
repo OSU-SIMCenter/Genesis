@@ -157,3 +157,7 @@ outputs/
 
 # agforge
 agforge_demo.xml
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml
