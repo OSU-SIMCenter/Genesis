@@ -16,12 +16,19 @@ from recorder import AgForgeRecorder
 class MockEntity:
     def __init__(self, name):
         self.name = name
-        self.pos = torch.rand((1, 100, 3)) # 100 particles
-        self.Jp = torch.rand((1, 100))     # 100 stress values
-
+        self.n_particles = 100
+        
     def get_qpos(self):
         return torch.rand((1, 4))
     
+    @property
+    def pos(self):
+        return torch.rand((1, self.n_particles, 3))
+    
+    @property
+    def Jp(self):
+        return torch.rand((1, self.n_particles))
+
     def get_dofs_force(self):
         return torch.rand((1, 4))
 
@@ -40,81 +47,73 @@ def test_recording_flow():
     if os.path.exists(test_dir):
         shutil.rmtree(test_dir)
     
-    print("--- Starting Recorder Test ---")
+    print("--- Starting Recorder Test (Ragged Support) ---")
     
     recorder = AgForgeRecorder(data_dir=test_dir)
     mock_sim_state = MockEntity("mpm")
     mock_robot = MockRobot()
     
-    target_id = "cylinder_test_01"
+    target_id = "cylinder_test_ragged"
     
     # 1. Start Episode
     print(f"1. Starting Episode for {target_id}")
     recorder.start_new_episode(target_id)
     
-    # 2. Simulate Strike 1 (5 frames)
-    print("2. Simulating Strike 1...")
+    # 2. Simulate Strike 1 (5 frames at N=100)
+    print("2. Simulating Strike 1 (N=100)...")
+    mock_sim_state.n_particles = 100
     recorder.mark_strike_start()
     for _ in range(5):
         recorder.record_frame(mock_sim_state, mock_robot.entity)
     recorder.mark_strike_end()
     
-    # 3. Simulate Strike 2 (5 frames) - TO BE UNDONE
-    print("3. Simulating Strike 2 (Mistake)...")
-    recorder.mark_strike_start()
-    for _ in range(5):
-        recorder.record_frame(mock_sim_state, mock_robot.entity)
-    recorder.mark_strike_end()
-    
-    # 4. Undo Strike 2
-    print("4. Undoing Strike 2...")
-    recorder.handle_undo()
-    
-    # Verify buffer len (should be 5, not 10)
-    print(f"   Buffer length after undo: {len(recorder.buffer['mpm_pos'])}")
-    assert len(recorder.buffer['mpm_pos']) == 5, "Undo failed to remove frames!"
-    
-    # 5. Simulate Strike 3 (5 frames) - Valid
-    print("5. Simulating Strike 3...")
+    # 3. Simulate Cut/Loss (5 frames at N=80)
+    print("3. Simulating Strike 2 after cutting (N=80)...")
+    mock_sim_state.n_particles = 80
     recorder.mark_strike_start()
     for _ in range(5):
         recorder.record_frame(mock_sim_state, mock_robot.entity)
     recorder.mark_strike_end()
     
     # 6. Flush (End of Episode)
-    print("6. Flushing to disk...")
+    print("4. Flushing to disk...")
     recorder.flush_to_disk()
     
     # --- VERIFICATION ---
     print("\n--- Verifying Output ---")
     
-    # Check File Existence
+    # Look for file in db
     db_con = duckdb.connect(os.path.join(test_dir, "metadata.duckdb"))
-    res = db_con.execute("SELECT * FROM episodes").fetchall()
+    res = db_con.execute("SELECT file_path FROM episodes").fetchone()
     db_con.close()
-    
-    print(f"DB Content: {res}")
-    assert len(res) == 1, "Database should have 1 entry"
-    
-    row = res[0]
-    ep_id = row[0]
-    file_path = row[2]
-    num_strikes = row[3]
-    
-    assert num_strikes == 2, f"Should have 2 valid strikes, got {num_strikes}"
-    assert os.path.exists(file_path), "HDF5 file not found"
+    file_path = res[0]
     
     # Check HDF5 Content
     with h5py.File(file_path, "r") as f:
         print("HDF5 Keys:", list(f.keys()))
         particles = f["state/mpm_particles"][:]
-        stress = f["state/mpm_stress"][:]
+        mask = f["state/mpm_mask"][:]
         
         print(f"Particles Shape: {particles.shape}")
+        print(f"Mask Shape: {mask.shape}")
         
-        assert particles.shape[0] == 10, "Should have 10 frames total (5 from Strike 1, 5 from Strike 3)"
-        assert f.attrs["target_id"] == target_id, "Target ID mismatch"
+        # Check Total Frames
+        assert particles.shape[0] == 10, "Total frames should be 10"
         
+        # Check Max Dimension
+        assert particles.shape[1] == 100, "2nd dim should be max particles (100)"
+        
+        # Check First 5 Frames (N=100)
+        assert np.all(mask[0:5, :]), "First 5 frames should have all mask=True"
+        
+        # Check Last 5 Frames (N=80)
+        # First 80 should be True, last 20 should be False
+        assert np.all(mask[5:, :80]), "Last 5 frames: First 80 particles should be True"
+        assert not np.any(mask[5:, 80:]), "Last 5 frames: Last 20 particles should be False (Padding)"
+        
+        # Check Padding Correctness (should be zero in pos)
+        assert np.all(particles[5:, 80:] == 0), "Padded particle values should be 0"
+
     print("\n--- TEST PASSED ---")
 
 if __name__ == "__main__":

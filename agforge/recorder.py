@@ -160,6 +160,7 @@ class AgForgeRecorder:
     def flush_to_disk(self):
         """
         Writes the buffered data to an HDF5 file and updates DuckDB.
+        Handles variable particle counts by padding to N_max and saving a mask.
         """
         if not self.buffer["mpm_pos"]:
             print("[Recorder] Buffer empty, skipping save.")
@@ -174,15 +175,30 @@ class AgForgeRecorder:
         filename = f"ep_{ep_id:06d}.h5"
         file_path = os.path.join(shard_path, filename)
         
-        # 2. Key Metrics
-        mpm_pos_arr = np.array(self.buffer["mpm_pos"], dtype=np.float32)
-        stress_arr = np.array(self.buffer["mpm_stress"], dtype=np.float32)
+        # 2. Key Metrics & Ragged Array Handling
+        # Determine max particles in this episode
+        max_particles = max(len(frame) for frame in self.buffer["mpm_pos"]) if self.buffer["mpm_pos"] else 0
+        num_frames = len(self.buffer["mpm_pos"])
+        
+        # Pre-allocate padded arrays
+        start_time = time.time()
+        mpm_pos_arr = np.zeros((num_frames, max_particles, 3), dtype=np.float32)
+        mpm_stress_arr = np.zeros((num_frames, max_particles), dtype=np.float32)
+        mpm_mask_arr = np.zeros((num_frames, max_particles), dtype=bool)
+        
+        # Fill padded arrays
+        for i in range(num_frames):
+            n_p = len(self.buffer["mpm_pos"][i])
+            mpm_pos_arr[i, :n_p, :] = self.buffer["mpm_pos"][i]
+            mpm_stress_arr[i, :n_p] = self.buffer["mpm_stress"][i]
+            mpm_mask_arr[i, :n_p] = True # Mark active particles
+            
         force_arr = np.array(self.buffer["force_torque"], dtype=np.float32)
         qpos_arr = np.array(self.buffer["qpos"], dtype=np.float32)
         
-        max_stress = float(np.max(stress_arr)) if stress_arr.size > 0 else 0.0
+        max_stress = float(np.max(mpm_stress_arr)) if mpm_stress_arr.size > 0 else 0.0
         num_strikes = len(self.buffer["strike_indices"])
-        duration = len(mpm_pos_arr)
+        duration = num_frames
         
         # 3. Write HDF5
         try:
@@ -192,14 +208,16 @@ class AgForgeRecorder:
                 f.attrs["target_id"] = self.buffer["target_id"]
                 
                 # Datasets with LZF Compression for large arrays
+                # LZF is extremely efficient for zero-padded regions
                 f.create_dataset("state/mpm_particles", data=mpm_pos_arr, compression="lzf")
-                f.create_dataset("state/mpm_stress", data=stress_arr, compression="lzf")
+                f.create_dataset("state/mpm_stress", data=mpm_stress_arr, compression="lzf")
+                f.create_dataset("state/mpm_mask", data=mpm_mask_arr, compression="lzf") # New Mask
                 
                 # Smaller arrays don't strict need compression but good practice
                 f.create_dataset("obs/force_torque", data=force_arr)
                 f.create_dataset("obs/qpos", data=qpos_arr)
                 
-            print(f"[Recorder] Saved Episode {ep_id} to {file_path}")
+            print(f"[Recorder] Saved Episode {ep_id} to {file_path} (Max Particles: {max_particles})")
             
             # 4. Update DuckDB
             con = duckdb.connect(self.db_path)
