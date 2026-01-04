@@ -340,9 +340,14 @@ def _splashsurf_worker(positions, radius, args_dict, result_queue):
         normals = mesh_with_data.point_attributes["normals"]
         vertices = mesh_with_data.mesh.vertices
         triangles = mesh_with_data.mesh.triangles
-        result_queue.put_nowait((vertices, triangles, normals))
+        if result_queue is not None:
+            result_queue.put_nowait((vertices, triangles, normals))
+        
+        del mesh_with_data # Explicitly release C++ wrapper
+        return vertices, triangles, normals
     except Exception as e:
-        result_queue.put_nowait(e)
+        if result_queue is not None:
+            result_queue.put_nowait(e)
         raise
 
 
@@ -397,19 +402,28 @@ def particles_to_mesh(positions, radius, backend):
         return trimesh.Trimesh(vertices, faces, process=False)
     elif "splashsurf" in backend:
         # FIXME: Running in subprocess or manually reclaiming free-ed head memory is necessary to avoid unbounded growth
-        result_queue = Queue()
-        if malloc_trim is not None:
-            _splashsurf_worker(positions, radius, args_dict, result_queue)
-            result = result_queue.get()
-            malloc_trim(0)
+        # On Windows, spawning a process is too slow (~4.5s), so we run in-process and try to trim working set
+        if platform.system() == "Windows":
+            vertices, triangles, normals = _splashsurf_worker(positions, radius, args_dict, None)
+            try:
+                # Windows-specific memory reduction hint (fast, negligible performance impact)
+                ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
+            except Exception:
+                pass
         else:
-            proc = Process(target=_splashsurf_worker, args=(positions, radius, args_dict, result_queue))
-            proc.start()
-            result = result_queue.get()
-            proc.join()
-            if proc.exitcode != 0:
-                gs.raise_exception_from(f"splashsurf subprocess failed with exit code {proc.exitcode}", result)
-        vertices, triangles, normals = result
+            result_queue = Queue()
+            if malloc_trim is not None:
+                _splashsurf_worker(positions, radius, args_dict, result_queue)
+                result = result_queue.get()
+                malloc_trim(0)
+            else:
+                proc = Process(target=_splashsurf_worker, args=(positions, radius, args_dict, result_queue))
+                proc.start()
+                result = result_queue.get()
+                proc.join()
+                if proc.exitcode != 0:
+                    gs.raise_exception_from(f"splashsurf subprocess failed with exit code {proc.exitcode}", result)
+            vertices, triangles, normals = result
         mesh = trimesh.Trimesh(vertices=vertices, faces=triangles, face_normals=normals, process=False)
         gs.logger.debug(f"[splashsurf]: reconstruct vertices: {mesh.vertices.shape}, {mesh.faces.shape}")
         return mesh
