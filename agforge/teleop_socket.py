@@ -16,6 +16,7 @@ import gstaichi as ti
 from options import TeleopOptions
 from agforge_builder import build_env, RobotXMLGenerator
 from environment import AgilityForgeEnv
+from recorder import AgForgeRecorder
 
 # Transformation constants (used by both InputMapper and SharedState)
 TRANSFORM_SCALE = 31.275
@@ -98,6 +99,9 @@ class SharedState:
 
         # Checkpoint storage
         self.checkpoints = []
+        
+        # Data Recorder
+        self.recorder = AgForgeRecorder()
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
@@ -265,6 +269,15 @@ async def simulation_loop(websocket, state: SharedState):
             else:
                 state.env.scene.visualizer.update_visual_states()
 
+            # Record Data Frame (only if pressing/striking)
+            if state.is_pressing:
+                # We need to access mpm state. 'state.env.mpm_entity' provides this.
+                # However, mpm_entity.get_state() creates a new object. 
+                # Ideally we pass references, but get_state() is okay for now.
+                # We also need robot state.
+                mpm_state = state.env.mpm_entity.get_state()
+                state.recorder.record_frame(mpm_state, state.robot.entity)
+
             await state.update_reconstructed_mesh()
             vertices, triangles, particles = await state.get_reconstructed_mesh_and_particles()
             
@@ -318,15 +331,22 @@ async def handle_client(websocket, state: SharedState, path=None):
                         qpos[0, 3] = state.gripper_open_pos
                         state.robot.set_control_mode("TELEPORT")
                         state.is_pressing = False
+                        # Mark strike end
+                        state.recorder.mark_strike_end()
                     elif elapsed > state.press_duration / 1.15:
                         qpos[0, 2] = state.gripper_open_pos
                         qpos[0, 3] = state.gripper_open_pos
                     await state.set_qpos(qpos)
 
                 elif packet.get("request") == "reset":
+                    # Flush any pending data before resetting
+                    await state.set_qpos(qpos) # Ensure locks if needed, though reset handles it
+                    state.recorder.flush_to_disk()
+                    state.recorder.start_new_episode(state.recorder.current_target_id)
                     await state.reset_simulation()
 
                 elif packet.get("request") == "undo":
+                    state.recorder.handle_undo()
                     await state.load_checkpoint()
 
                 elif packet.get("request") == "update":
@@ -338,6 +358,16 @@ async def handle_client(websocket, state: SharedState, path=None):
                     await state.set_qpos(qpos)
 
                 elif packet.get("request") == "strike":
+                    # Check for Target Change
+                    target_id = packet.get("target_id", "default_cylinder")
+                    if target_id != state.recorder.current_target_id:
+                        print(f"Target changed from {state.recorder.current_target_id} to {target_id}. Flushing episode.")
+                        state.recorder.flush_to_disk()
+                        state.recorder.start_new_episode(target_id)
+                    
+                    # Mark strike start for Recorder (so we know what segment to undo)
+                    state.recorder.mark_strike_start()
+
                     await state.save_checkpoint() # Save checkpoint before strike
                     force = (packet.get("force", 0.1) * 0.35) + 0.05
                     qpos[0, 2] = state.gripper_closed_pos * force * 10.0 * 1.3

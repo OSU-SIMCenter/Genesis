@@ -40,6 +40,8 @@ torchvision = "*"
 [feature.agf-server.pypi-dependencies]
 websockets = "*"
 pint = "*"
+h5py = "*"
+duckdb = "*"
 
 [environments]
 default = ["cuda", "agf-server"]
