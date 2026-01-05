@@ -445,6 +445,14 @@ class MPMOptions(Options):
     grid_density: float = 64
     enable_CPIC: bool = False
 
+    # Thermal physics
+    default_initial_temperature: float = 293.15  # Kelvin
+    default_thermal_diffusivity: float = 1.1e-5  # m^2/s (Steel)
+    default_heat_capacity: float = 450.0  # J/(kg K) (Steel)
+    thermal_contact_conductivity: float = 50.0  # W/(m^2 K) - contact conductance
+    T_ref: float = 293.15
+    T_melt: float = 1793.0
+
     # These will later be converted to discrete grid bound. The actual grid boundary could be slightly tighter.
     lower_bound: tuple = (-1.0, -1.0, 0.0)
     upper_bound: tuple = (1.0, 1.0, 1.0)
