@@ -1,0 +1,52 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Pixi
+      uses: prefix-dev/setup-pixi@v0.5.1
+      with:
+        pixi-version: v0.39.0
+        cache: true
+        cache-key: ${{ runner.os }}-pixi-${{ hashFiles('building/pixi.lock') }}
+        auth-token: ${{ secrets.GITHUB_TOKEN }}
+        manifest-path: building/pixi.toml
+
+    - name: Build Application
+      shell: bash
+      run: |
+        cd building
+        # --verbose for CI debugging if needed, but normally clean is better
+        pixi run python build.py --target=local --tool=nuitka
+
+    - name: Upload Artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: teleop-socket-windows
+        path: building/dist/nuitka/windows/teleop_socket.dist
+        if-no-files-found: error
+
+    - name: Upload Artifacts (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: teleop-socket-linux
+        path: building/dist/nuitka/linux/teleop_socket.dist
+        if-no-files-found: error
