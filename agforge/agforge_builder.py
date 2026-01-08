@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 import genesis as gs
 
 from options import AgilityForgeOptions, RobotOptions, GENERATED_ROBOT_XML_PATH
@@ -109,7 +110,33 @@ def build_env(cfg: AgilityForgeOptions) -> AgilityForgeEnv:
     generator.write_to_file()
 
     # --- Step 2: Initialize Genesis and create environment ---
-    gs.init(backend=gs.gpu, logging_level="info", performance_mode=cfg.performance_mode)
+    # --- Step 2: Initialize Genesis and create environment ---
+    backend = gs.cpu
+    
+    # Check for GPU availability via Torch first
+    if torch.cuda.is_available():
+        try:
+            # Test tensor allocation to ensure CUDA is actually usable
+            _ = torch.tensor([1.0], device="cuda")
+            print("✅ Torch reports CUDA is available. Attempting Genesis GPU init...")
+            backend = gs.gpu
+        except Exception as e:
+            print(f"⚠️ Torch CUDA check failed ({e}). Defaulting to CPU.")
+    else:
+        print("⚠️ Torch reports CUDA not available. Defaulting to CPU.")
+
+    try:
+        gs.init(backend=backend, logging_level="info", performance_mode=cfg.performance_mode)
+    except Exception as e:
+        # If GPU init specifically fails (and we were trying it), we might want to fallback.
+        # But Genesis might be in a dirty state. We'll try one fallback if we were attempting GPU.
+        if backend == gs.gpu:
+             print(f"⚠️ Genesis GPU init failed ({e}). Attempting fallback to CPU...")
+             # Note: This might still fail if Genesis doesn't support re-init after partial failure.
+             # But it's better than the previous logic which guaranteed failure on post-init checks.
+             gs.init(backend=gs.cpu, logging_level="info", performance_mode=cfg.performance_mode)
+        else:
+             raise e
     
     env = AgilityForgeEnv(cfg)
     

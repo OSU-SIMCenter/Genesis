@@ -23,10 +23,12 @@ LD_LIBRARY_PATH = os.path.join(miu.get_src_dir(), "ext/ParticleMesher/ParticleMe
 sys.path.append(LD_LIBRARY_PATH)
 os.environ["LD_LIBRARY_PATH"] = ":".join(filter(None, (os.environ.get("LD_LIBRARY_PATH"), LD_LIBRARY_PATH)))
 
-try:
-    malloc_trim = ctypes.CDLL(ctypes.util.find_library("c")).malloc_trim
-except (AttributeError, TypeError):
-    malloc_trim = None
+malloc_trim = None
+if platform.system() == "Linux":
+    try:
+        malloc_trim = ctypes.CDLL(ctypes.util.find_library("c")).malloc_trim
+    except (AttributeError, TypeError, Exception):
+        malloc_trim = None
 
 
 def n_particles_vol(p_size=0.01, volume=1.0):
