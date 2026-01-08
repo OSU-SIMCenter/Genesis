@@ -1,0 +1,107 @@
+Thermal Physics Implementation Plan
+Goal Description
+Implement thermal physics (temperature) modeling in the Genesis MPM solver. The goal is to allow particles to carry temperature, transfer it to the grid, and receive updated temperature back, enabling thermal simulation. This will be implemented by creating a specialized 
+
+MPMSolver that inherits from and extends 
+BaseMPMSolver.User Review Required
+IMPORTANT
+Base Code Refactoring: To avoid duplicating the massive 
+
+p2g and 
+g2p kernels, I propose refactoring 
+BaseMPMSolver (in 
+genesis/engine/solvers/base_mpm_solver.py) to break out field initialization into overrideable methods.
+Proposed Changes
+1. Refactor 
+BaseMPMSolver for Extensibility
+File: 
+
+genesis/engine/solvers/base_mpm_solver.pyI will extract the dictionary definitions from init_* methods into separate get_*_template methods.
+# BEFORE
+def init_particle_fields(self):
+    struct_particle_state = ti.types.struct(
+        pos=gs.ti_vec3,
+        vel=gs.ti_vec3,
+        # ...
+    )
+
+# AFTER
+def get_particle_state_template(self):
+    return {
+        "pos": gs.ti_vec3,
+        "vel": gs.ti_vec3,
+        # ...
+    }
+
+def init_particle_fields(self):
+    # Now uses the template method we can override
+    struct_particle_state = ti.types.struct(**self.get_particle_state_template())
+    # ...
+2. Implement 
+MPMSolver with Thermal Physics
+File: 
+
+genesis/engine/solvers/mpm_solver.pyI will override the template methods to add the 
+
+temp field and implement the physics kernels.Step 2a: Add Fields
+class MPMSolver(BaseMPMSolver):
+    def get_particle_state_template(self):
+        # Extend base fields with 'temp'
+        return super().get_particle_state_template() | {"temp": gs.ti_float}
+
+    def get_grid_cell_state_template(self):
+        # Add 'temp_m' (thermal momentum: mass * temp) to grid
+        return super().get_grid_cell_state_template() | {"temp_m": gs.ti_float}
+Step 2b: Implement Thermal Kernels
+I will write separate, smaller kernels for thermal physics to avoid touching the complex momentum 
+
+p2g/
+g2p.@ti.kernel
+def p2g_thermal(self, f: ti.i32):
+    for i_p, i_b in ti.ndrange(self._n_particles, self._B):
+        if self.particles_ng[f, i_p, i_b].active:
+             # ... standard MPM spline calculation ...
+            
+            # Transfer Heat (Temperature * Mass) to Grid
+            weighted_temp_m = weight * self.particles_info[i_p].mass * self.particles[f, i_p, i_b].temp
+            self.grid[f, base + offset, i_b].temp_m += weighted_temp_m
+
+@ti.kernel
+def g2p_thermal(self, f: ti.i32):
+    for i_p, i_b in ti.ndrange(self._n_particles, self._B):
+        if self.particles_ng[f, i_p, i_b].active:
+            # ... standard MPM spline calculation ...
+            
+            # Read back from Grid
+            grid_temp_m = self.grid[f, base + offset, i_b].temp_m
+            grid_mass = self.grid[f, base + offset, i_b].mass
+            
+            # Compute grid temperature (Heat / Mass) safely
+            grid_temp = grid_temp_m / ti.max(grid_mass, 1e-10)
+            
+            new_temp += weight * grid_temp
+            
+            # Update particle temperature
+            self.particles[f + 1, i_p, i_b].temp = new_temp
+Step 2c: Integrate into Stepping Loop
+Override the simulation steps to call the new kernels alongside the base ones.
+def substep_pre_coupling(self, f):
+    # Run standard momentum P2G
+    super().substep_pre_coupling(f)
+    # Run our extra thermal P2G
+    self.p2g_thermal(f)
+
+def substep_post_coupling(self, f):
+    # Run our thermal G2P
+    self.g2p_thermal(f)
+    # Run standard momentum G2P
+    super().substep_post_coupling(f)
+Verification Plan
+Automated Tests
+Validation Script: Create a script tests/test_thermal_diffusion.py that limits the scope to verifying advection.Initialize a block of particles.
+Set half of them to temp=100 and half to temp=0.
+Run simulation.
+Verify 
+temp stays attached to the correct particles as they move.
+Manual Verification
+Visual Inspection: Since we don't have a temperature visualizer yet, I will use print debugging or a simple color-mapping script to verify the values are changing as expected.
