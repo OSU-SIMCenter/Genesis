@@ -381,4 +381,8 @@ async def main():
 
 
 if __name__ == "__main__":
+    # Required for 'spawn' method to work correctly on Windows and compiled Linux,
+    # preventing infinite recursive spawning of the application.
+    import multiprocessing
+    multiprocessing.freeze_support()
     asyncio.run(main())

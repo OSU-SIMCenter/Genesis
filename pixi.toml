@@ -7,6 +7,7 @@ platforms = ["win-64", "linux-64", "osx-arm64"]
 version = "0.1.0"
 
 [tasks]
+build = "python build.py --target=local"
 
 [system-requirements]
 # Required for modern Linux wheels (like pymeshlab)
@@ -41,6 +42,18 @@ torchvision = "*"
 websockets = "*"
 pint = "*"
 
+# --- Feature: Build Tools ---
+[feature.build.dependencies]
+nuitka = ">=2.4"
+pyinstaller = "*"
+# Using standard pixi channels for tools
+[feature.build.target.linux-64.dependencies]
+patchelf = "*"
+ccache = "*"
+
+[feature.build.target.win-64.dependencies]
+
+
 [environments]
-default = ["cuda", "agf-server"]
-cpu-only = ["cpu", "agf-server"]
+default = ["cuda", "agf-server", "build"]
+cpu-only = ["cpu", "agf-server", "build"]

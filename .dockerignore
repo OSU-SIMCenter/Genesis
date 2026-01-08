@@ -1,0 +1,12 @@
+# Exclude huge binary folders and temp files from Docker context
+dist/
+build/
+.pixi/
+__pycache__/
+*.pyc
+.git/
+.github/
+.idea/
+.vscode/
+nuitka-crash-report.xml
+*.spec
