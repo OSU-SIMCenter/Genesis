@@ -21,6 +21,7 @@ def resource_path(relative_path):
 class AgilityForgeManipulator:
     """Encapsulates the robot's properties and provides a clean action interface."""
     def __init__(self, scene: gs.Scene, robot_cfg: RobotOptions):
+        self.scene = scene
         self.device = gs.device
         self.robot_cfg = robot_cfg
         morph = gs.morphs.MJCF(file=GENERATED_ROBOT_XML_PATH)
@@ -30,6 +31,13 @@ class AgilityForgeManipulator:
         )
         self.entity = scene.add_entity(morph=morph, material=material)
         self.ee_link = self.entity.get_link("clamp_bar")
+        self.left_gripper = self.entity.get_link("left_gripper")
+        self.right_gripper = self.entity.get_link("right_gripper")
+        
+        # Calculate indices relative to the entity start for force lookup
+        self.left_gripper_idx = self.left_gripper.idx - self.entity.link_start
+        self.right_gripper_idx = self.right_gripper.idx - self.entity.link_start
+        
         self.default_joint_angles = torch.tensor([0.0, 0.0, 0.0, 0.0], dtype=torch.float32, device=self.device)
         self.control_mode = "PD_CONTROL"  # Initial control mode
 
@@ -49,8 +57,8 @@ class AgilityForgeManipulator:
 
     def set_control_mode(self, mode: str):
         """Sets the control mode for the manipulator."""
-        if mode not in ["PD_CONTROL", "TELEPORT"]:
-            raise ValueError("Invalid control mode. Must be 'PD_CONTROL' or 'TELEPORT'.")
+        if mode not in ["PD_CONTROL", "TELEPORT", "VELOCITY_CONTROL"]:
+            raise ValueError("Invalid control mode. Must be 'PD_CONTROL', 'TELEPORT', or 'VELOCITY_CONTROL'.")
         self.control_mode = mode
 
     def reset(self, envs_idx: torch.Tensor):
@@ -59,13 +67,135 @@ class AgilityForgeManipulator:
             qpos_to_set = self.default_joint_angles.expand(len(envs_idx), -1)
             self.entity.set_qpos(qpos_to_set, envs_idx=envs_idx)
 
-    def apply_action(self, position: torch.Tensor, dofs_idx_local=None):
+    def apply_action(self, action: torch.Tensor, dofs_idx_local=None):
         """Applies an action based on the current control mode."""
         if self.control_mode == "PD_CONTROL":
-            self.entity.control_dofs_position(position=position, dofs_idx_local=dofs_idx_local)
+            self.entity.control_dofs_position(position=action, dofs_idx_local=dofs_idx_local)
         elif self.control_mode == "TELEPORT":
-            self.entity.control_dofs_position(position=position, dofs_idx_local=dofs_idx_local)
-            self.entity.set_dofs_position(position, dofs_idx_local=dofs_idx_local)
+            self.entity.control_dofs_position(position=action, dofs_idx_local=dofs_idx_local)
+            self.entity.set_dofs_position(action, dofs_idx_local=dofs_idx_local)
+        elif self.control_mode == "VELOCITY_CONTROL":
+            self.apply_velocity(velocity=action, dofs_idx_local=dofs_idx_local)
+
+    def apply_velocity(self, velocity: torch.Tensor, dofs_idx_local=None):
+        """
+        Applies velocity control by setting both the physical velocity state and the PD controller target.
+        This provides 'stiff' velocity tracking suitable for the approaching stage.
+        """
+        self.entity.set_dofs_velocity(velocity, dofs_idx_local=dofs_idx_local)
+        self.entity.control_dofs_velocity(velocity, dofs_idx_local=dofs_idx_local)
+
+    def get_gripper_net_contact_force(self):
+        """
+        Returns the net external contact force on the left and right grippers.
+        Returns:
+            torch.Tensor: Shape (n_envs, 2, 3) where dim 1 is [Left, Right]
+        """
+        # (n_envs, n_links, 3)
+        net_forces = self.entity.get_links_net_contact_force()
+        # Select gripper links
+        # Assuming single env for now or preserving batch dim
+        if net_forces.dim() == 2: # (n_links, 3) - happens if n_envs=0 or something weird, but likely (n_envs, n_links, 3)
+             return torch.stack([net_forces[self.left_gripper_idx], net_forces[self.right_gripper_idx]], dim=0).unsqueeze(0)
+             
+        # (n_envs, n_links, 3)
+        # (n_envs, n_links, 3)
+        rigid_forces = torch.stack([
+            net_forces[:, self.left_gripper_idx, :],
+            net_forces[:, self.right_gripper_idx, :]
+        ], dim=1)
+        
+        # Add MPM forces if available (from LegacyCoupler accumulator)
+        coupler = self.scene.sim.coupler
+        if hasattr(coupler, 'get_link_coupling_forces'):
+             # Get global indices
+             idx_L = self.entity.get_link("left_gripper").idx
+             idx_R = self.entity.get_link("right_gripper").idx
+             
+             # Fetch accumulated MPM coupling forces
+             mpm_L_np = coupler.get_link_coupling_forces(link_idx=idx_L, envs_idx=0)
+             mpm_R_np = coupler.get_link_coupling_forces(link_idx=idx_R, envs_idx=0)
+             
+             if mpm_L_np is not None and mpm_R_np is not None:
+                 mpm_L = torch.tensor(mpm_L_np, device=self.device, dtype=torch.float32)
+                 mpm_R = torch.tensor(mpm_R_np, device=self.device, dtype=torch.float32)
+                 
+                 # Stack [L, R] -> (2, 3) -> unsqueeze -> (1, 2, 3)
+                 mpm_stack = torch.stack([mpm_L, mpm_R]).unsqueeze(0)
+                 
+                 # Expand to match batch size if needed
+                 if rigid_forces.shape[0] > 1:
+                      mpm_stack = mpm_stack.expand(rigid_forces.shape[0], -1, -1)
+                 
+                 # Normalize accumulated forces by substeps
+                 # LegacyCoupler accumulates forces over all substeps in a step
+                 if hasattr(self.scene.sim, '_substeps'):
+                     substeps = self.scene.sim._substeps
+                 else:
+                     substeps = 1 # Fallback
+                     
+                 return rigid_forces + (mpm_stack / substeps)
+             
+        return rigid_forces
+
+    def _rotate_vector_by_quat(self, vector, quat):
+        """
+        Rotates a vector by a quaternion.
+        vector: (3,) or (N, 3)
+        quat: (4,) [w, x, y, z] or (N, 4)  # Genesis uses wxyz format
+        """
+        # Standard implementation: v + 2*cross(q_xyz, cross(q_xyz, v) + q_w*v)
+        # Ensure dimensions match
+        if vector.dim() == 1: vector = vector.unsqueeze(0)
+        if quat.dim() == 1: quat = quat.unsqueeze(0)
+        
+        # Genesis quaternion format is [w, x, y, z]
+        q_w = quat[:, 0].unsqueeze(-1)
+        q_xyz = quat[:, 1:4]
+        
+        t = 2.0 * torch.cross(q_xyz, vector, dim=-1)
+        return vector + q_w * t + torch.cross(q_xyz, t, dim=-1)
+
+    def get_resistance_forces(self):
+        """
+        Returns the scalar resistance force opposing the squeeze motion.
+        Projects the net contact force onto the INVERSE squeeze direction.
+        Positive value means resistance (pushing back against squeeze).
+        
+        Returns:
+            torch.Tensor: Shape (n_envs, 2) [Force_L, Force_R]
+        """
+        # Get orientation of clamp_bar (parent of grippers)
+        # quat is (n_envs, 4) or (4,)
+        quat = self.ee_link.get_quat() 
+        if quat.dim() == 1: quat = quat.unsqueeze(0)
+
+        # Local squeeze directions (Pushing IN)
+        # Left slides +Y: (0, 1, 0)
+        # Right slides -Y: (0, -1, 0)
+        local_squeeze_L = torch.tensor([0.0, 1.0, 0.0], device=self.device).expand(quat.shape[0], 3)
+        local_squeeze_R = torch.tensor([0.0, -1.0, 0.0], device=self.device).expand(quat.shape[0], 3)
+        
+        # Global squeeze directions
+        global_squeeze_L = self._rotate_vector_by_quat(local_squeeze_L, quat)
+        global_squeeze_R = self._rotate_vector_by_quat(local_squeeze_R, quat)
+        
+        # Get Contact Forces (F_contact)
+        # shape: (n_envs, 2, 3)
+        contact_forces = self.get_gripper_net_contact_force()
+        force_L = contact_forces[:, 0, :]
+        force_R = contact_forces[:, 1, :]
+        
+        # Resistance is Component of Force opposing Motion
+        # F_resist = Dot(F_contact, -v_squeeze)
+        #          = - Dot(F_contact, v_squeeze)
+        
+        resist_L = -torch.sum(force_L * global_squeeze_L, dim=-1)
+        resist_R = -torch.sum(force_R * global_squeeze_R, dim=-1)
+        
+        # Return tuple of floats for single environment (compatibility with teleop_socket)
+        # Assuming batch size 1 for teleop
+        return resist_L[0].item(), resist_R[0].item()
 
     @property
     def ee_pose(self) -> torch.Tensor:

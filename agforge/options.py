@@ -252,8 +252,21 @@ class AgilityForgeOptions(Options):
 class TrainingOptions(AgilityForgeOptions):
     """Aggregated configuration for training."""
 
+class StrikeOptions(Options):
+    """Parameters for the approaching and pressing stage."""
+    approach_speed: float = 5.e1
+    contact_force_threshold: float = 300.0 # Force threshold to detect contact
+    
+class AdaptiveControlConfig(Options):
+    """Configuration for adaptive control gains."""
+    base_kp: float = 5000.0
+    base_kv: float = 200.0
+    mass_scale_factor: float = 1.0
+
 class TeleopOptions(AgilityForgeOptions):
     """Aggregated configuration for teleoperation."""
+    strike: StrikeOptions = StrikeOptions()
+    adaptive_control: AdaptiveControlConfig = AdaptiveControlConfig()
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002
