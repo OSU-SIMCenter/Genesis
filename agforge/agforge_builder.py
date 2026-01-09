@@ -50,11 +50,7 @@ class RobotXMLGenerator:
         """Populates the XML template with the derived parameters."""
         return f"""
 <mujoco model="agforge_demo">
-  <compiler angle="degree" inertiafromgeom="true"/>
-
-  <default>
-    <joint armature="0.1" damping="1"/>
-  </default>
+  <compiler angle="degree" inertiafromgeom="false"/>
 
   <asset>
     <material name="gripper" rgba="0.8 0.2 0.2 1"/>
@@ -71,11 +67,14 @@ class RobotXMLGenerator:
         <inertial pos="0 0 0" mass="1e-7" diaginertia="1e-7 1e-7 1e-7"/>
 
         <body name="clamp_bar" pos="0 0 0">
+          <inertial pos="0 0 0" mass="1.0" diaginertia="0.01 0.01 0.01"/>
           <body name="left_gripper" pos="0 {-self.gripper_start_pos_y:.4f} 0">
+            <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
             <joint name="left_gripper_slide" type="slide" axis="0 1 0" range="{self._to_str(self.gripper_slide_range)}"/>
             <geom type="box" size="{self._to_str(self.gripper_size)}" material="gripper"/>
           </body>
           <body name="right_gripper" pos="0 {self.gripper_start_pos_y:.4f} 0">
+            <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
             <joint name="right_gripper_slide" type="slide" axis="0 -1 0" range="{self._to_str(self.gripper_slide_range)}"/>
             <geom type="box" size="{self._to_str(self.gripper_size)}" material="gripper"/>
           </body>

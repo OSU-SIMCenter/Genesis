@@ -106,6 +106,13 @@ class LegacyCoupler(RBC):
         self._dx = 1 / 1024
         self._stencil_size = int(np.floor(self._dx / self.sph_solver.hash_grid_cell_size) + 2)
 
+        if self._rigid_mpm: # Always initialize if rigid_mpm is active, not just for CPIC
+             self.link_coupling_forces = qd.Vector.field(
+                3,
+                dtype=gs.qd_float,
+                shape=(self.rigid_solver.n_links_, self.sim._B),
+            )
+
         self.reset(envs_idx=self.sim.scene._envs_idx)
 
     def reset(self, envs_idx=None) -> None:
@@ -114,6 +121,12 @@ class LegacyCoupler(RBC):
                 self.mpm_rigid_normal.fill(0)
             else:
                 self._kernel_reset_mpm(envs_idx)
+        
+        if self._rigid_mpm:
+             if envs_idx is None:
+                 self.link_coupling_forces.fill(0)
+             else:
+                 self._kernel_reset_link_coupling_forces(envs_idx)
 
         if self._rigid_sph:
             if envs_idx is None:
@@ -130,6 +143,30 @@ class LegacyCoupler(RBC):
     def _kernel_reset_sph(self, envs_idx: qd.types.ndarray()):
         for i_p, i_g, i_b_ in qd.ndrange(self.sph_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
             self.sph_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
+
+    @qd.kernel
+    def _kernel_reset_link_coupling_forces(self, envs_idx: qd.types.ndarray()):
+        for i_l, i_b_ in qd.ndrange(self.rigid_solver.n_links_, envs_idx.shape[0]):
+            self.link_coupling_forces[i_l, envs_idx[i_b_]] = 0.0
+
+    def get_link_coupling_forces(self, link_idx=None, envs_idx=None):
+        if not hasattr(self, 'link_coupling_forces'):
+            return None
+            
+        forces = gs.utils.misc.qd_to_numpy(self.link_coupling_forces)  # Shape: (n_links_, n_envs, 3)
+        
+        if link_idx is not None:
+            forces = forces[link_idx]
+            if envs_idx is not None:
+                forces = forces[envs_idx]
+        elif envs_idx is not None:
+            forces = forces[:, envs_idx, :]
+            
+        return forces
+    
+    def clear_link_coupling_forces(self):
+        if hasattr(self, 'link_coupling_forces'):
+            self.link_coupling_forces.fill(0)
 
     @qd.func
     def _func_collide_with_rigid(
@@ -343,6 +380,9 @@ class LegacyCoupler(RBC):
                 i_b,
                 links_state,
             )
+
+            # Store the coupling force for contact detection
+            self.link_coupling_forces[geoms_info.link_idx[geom_idx], i_b] += force
 
         return vel
 
