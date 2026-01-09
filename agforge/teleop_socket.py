@@ -75,6 +75,13 @@ class InputMapper:
         return slider_qpos, hinge_qpos
 
 
+from enum import Enum
+
+class StrikeState(Enum):
+    IDLE = 0
+    APPROACHING = 1
+    HOLDING = 2
+
 class SharedState:
     def __init__(self, env: AgilityForgeEnv):
         self.env = env
@@ -91,9 +98,15 @@ class SharedState:
         self.gripper_closed_pos = xml_generator.gripper_slide_range[1]
         self.gripper_open_pos = xml_generator.gripper_slide_range[0]
 
-        self.is_pressing = False
+        # Strike Logic State
+        self.strike_state = StrikeState.IDLE
+        self.contact_L = False
+        self.contact_R = False
+        self.target_squeeze_force = 1000.0 # Default, updated by request
+
+        self.last_update_time = time.time()
         self.press_start_time = 0.0
-        self.press_duration = 4.0  # seconds
+        self.press_duration = 4.0
 
         # Surface reconstruction
         self.reconstructed_mesh = trimesh.Trimesh()
@@ -112,12 +125,109 @@ class SharedState:
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
+            # Only clamp slider/hinge, grippers managed by logic if striking
             new_qpos[:, :2] = torch.clamp(new_qpos[:, :2], self.dof_limits[0][:2], self.dof_limits[1][:2])
             self.qpos = new_qpos
 
     async def get_qpos(self):
         async with self.lock:
             return self.qpos.clone()
+
+    async def trigger_strike(self, force_param):
+        async with self.lock:
+            if self.strike_state != StrikeState.IDLE:
+                return
+            
+            print(f"Strike Triggered! Force param: {force_param}")
+            # Reset contact flags
+            self.contact_L = False
+            self.contact_R = False
+            self.strike_state = StrikeState.APPROACHING
+            
+            # Map force parameter (0-1) to target Newton force? 
+            # Or just use it as a scalar for position-based squeeze (legacy)?
+            # For now, let's store it, but Approaching stage relies on contact detection.
+            # Use configured approach speed
+            self.robot.set_control_mode("VELOCITY_CONTROL")
+            
+            # Save checkpoint for undo
+            await self.save_checkpoint()
+
+    def update_strike_logic(self):
+        """Called every simulation step to handle strike state machine."""
+        if self.strike_state == StrikeState.IDLE:
+            return
+
+        dt = self.env.cfg.sim.dt # physics dt, logic update
+        
+        # --- APPROACHING STAGE ---
+        if self.strike_state == StrikeState.APPROACHING:
+            approach_speed = self.env.cfg.strike.approach_speed
+            contact_threshold = self.env.cfg.strike.contact_force_threshold
+            
+            # Get resistance forces (projected along closing axis)
+            force_L, force_R = self.robot.get_resistance_forces()
+            print(f"Resistance Forces: L={force_L:.2f}, R={force_R:.2f}")
+            
+            # Check for contact
+            if not self.contact_L and force_L > contact_threshold:
+                self.contact_L = True
+                print(f"Contact L Detected! Force: {force_L:.2f}")
+                
+            if not self.contact_R and force_R > contact_threshold:
+                self.contact_R = True
+                print(f"Contact R Detected! Force: {force_R:.2f}")
+
+            # Calculate Velocity Command
+            # Left Gripper (Index 2): Closing is +Y? 
+            # Wait, let's re-verify direction.
+            # AgilityForgeBuilder: 
+            # Left Gripper: Axis (0, 1, 0). Closing = Moves towards Center (0). Start Y is negative (-start_y).
+            # Center is 0. So it moves from negative Y to 0. Velocity should be +Y. POSITIVE.
+            # Right Gripper: Axis (0, -1, 0). Pos "0 start_y 0". Start Y is positive.
+            # Center is 0. So it moves from positive Y to 0. Velocity should be +Y?
+            # Join Axis (0, -1, 0) means positive q-velocity moves in (0, -1, 0) direction (Negative Y).
+            # From positive Y to 0 is Negative Y direction. So q-velocity should be POSITIVE.
+            # So both should have POSITIVE q-velocity to close.
+            
+            vel_cmd = torch.zeros(4, device=self.env.device)
+            
+            # Keep Slider/Hinge zero velocity (or maintain position? VELOCITY_CONTROL mode zeros others)
+            # Actually VELOCITY_CONTROL mode in apply_velocity sets all?
+            # apply_velocity takes (4,) tensor.
+            
+            # Gripper Velocity
+            v_close = approach_speed
+            
+            if self.contact_L:
+                vel_cmd[2] = 0.0 # Freeze
+            else:
+                vel_cmd[2] = v_close
+                
+            if self.contact_R:
+                vel_cmd[3] = 0.0 # Freeze
+            else:
+                vel_cmd[3] = v_close
+                
+            # Apply Velocity Command
+            # We must be careful not to zero out slider/hinge velocity if they were moving, 
+            # but usually they are static during strike.
+            self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+            
+            # Transition Condition
+            if self.contact_L and self.contact_R:
+                print("Both Contacts Established. Ready for next stage.")
+                # Transition to HOLDING to verify "Approaching" is done and presses are stopped.
+                self.strike_state = StrikeState.HOLDING
+                
+                # Switch to TELEPORT to hold current position
+                self.robot.set_control_mode("TELEPORT")
+                self.qpos = self.robot.entity.get_qpos() # Sync qpos to current
+                
+        # --- HOLDING STAGE ---
+        elif self.strike_state == StrikeState.HOLDING:
+            # Just maintain position (handled by standard loop using self.qpos)
+            pass 
 
     async def reset_simulation(self):
         async with self.lock:
@@ -132,7 +242,9 @@ class SharedState:
                 self.env.scene.visualizer.update_visual_states()
 
             self.qpos = self.robot.entity.get_dofs_position()
-            self.is_pressing = False
+            self.strike_state = StrikeState.IDLE
+            self.contact_L = False
+            self.contact_R = False
             self.checkpoints = []
             self.create_reconstructed_mesh()
             print("Simulation reset.")
@@ -150,8 +262,7 @@ class SharedState:
 
             ckpt = {
                 'sim_state': sim_state,
-                'is_pressing': self.is_pressing,
-                'press_start_time': self.press_start_time,
+                'strike_state': self.strike_state,
                 'qpos': self.qpos.clone()
             }
             self.checkpoints.append(ckpt)
@@ -176,14 +287,9 @@ class SharedState:
                 self.env.scene.visualizer.update_visual_states()
             
             # Restore Aux State
-            self.is_pressing = ckpt['is_pressing']
-            self.press_start_time = ckpt['press_start_time']
+            self.strike_state = ckpt.get('strike_state', StrikeState.IDLE)
             self.qpos = ckpt['qpos']
             
-            # Force update robot physics state to match restored qpos if needed, 
-            # though sim.reset() should handle it. 
-            # We also ensure our local qpos tracks what we just restored.
-
             self.create_reconstructed_mesh()
             print("Checkpoint loaded (Undo).")
 
@@ -214,8 +320,15 @@ class SharedState:
         return vertices, triangles, points
 
     async def update_reconstructed_mesh(self):
-        if not self.recon_enabled or not self.is_pressing:
-            return
+        if not self.recon_enabled or self.strike_state == StrikeState.IDLE:
+             # Only reconstruct when active
+             # Or maybe keep reconstruction active? 
+             # Logic said "if not is_pressing" return. 
+             # Let's reconstruct if we are in APPROACHING or SQUEEZING or HOLDING
+             pass
+        
+        if self.strike_state == StrikeState.IDLE:
+             return
 
         self.frame_counter += 1
         if self.frame_counter % self.recon_frame_interval != 0:
@@ -337,8 +450,26 @@ async def simulation_loop(websocket, state: SharedState):
     
     try:
         while True:
-            qpos = await state.get_qpos()
-            state.robot.apply_action(qpos)
+            # 1. Clear accumulators
+
+
+            # 2. Logic Update (State Machine)
+            state.update_strike_logic()
+            
+            # 3. Apply Actions based on State
+            if state.strike_state == StrikeState.IDLE or state.strike_state == StrikeState.HOLDING:
+                # Standard Teleoperation / Holding
+                qpos = await state.get_qpos()
+                state.robot.apply_action(qpos)
+            
+            # Clear accumulators (Before stepping, but after logic/reading!)
+            # Logic (step N) reads forces from Step N-1.
+            # Then we clear accumulator.
+            # Then Step N calculates new forces.
+            if hasattr(state.env.scene.sim.coupler, 'clear_link_coupling_forces'):
+                state.env.scene.sim.coupler.clear_link_coupling_forces()
+            
+            # 4. Physics Step
             state.env.scene.step()
             
             # Update render fields for particle access
@@ -360,7 +491,7 @@ async def simulation_loop(websocket, state: SharedState):
                 "steps": [0],
                 "Pressure": 0,
                 "StressField": -1,
-                "is_pressing": state.is_pressing,
+                "is_pressing": state.strike_state != StrikeState.IDLE,
                 "counts": {
                     "vertices": v_count,
                     "faces": t_count,
@@ -438,24 +569,18 @@ async def handle_client(websocket, state: SharedState, path=None):
                     await state.load_checkpoint()
 
                 elif packet.get("request") == "update":
-                    if state.is_pressing:
-                        continue
-                    translation = packet.get("translation", 0.0)
-                    rotation = packet.get("rotation", 0.0)
-                    slider_qpos, hinge_qpos = state.input_mapper.map_client_to_qpos(translation, rotation)
-                    qpos[0, 0] = slider_qpos
-                    qpos[0, 1] = hinge_qpos
-                    await state.set_qpos(qpos)
+                    if state.strike_state == StrikeState.IDLE:
+                        translation = packet.get("translation", 0.0)
+                        rotation = packet.get("rotation", 0.0)
+                        slider_qpos, hinge_qpos = state.input_mapper.map_client_to_qpos(translation, rotation)
+                        qpos[0, 0] = slider_qpos
+                        qpos[0, 1] = hinge_qpos
+                        await state.set_qpos(qpos)
 
                 elif packet.get("request") == "strike":
-                    await state.save_checkpoint() # Save checkpoint before strike
-                    force = (packet.get("force", 0.1) * 0.35) + 0.05
-                    qpos[0, 2] = state.gripper_closed_pos * force * 10.0 * 1.3
-                    qpos[0, 3] = state.gripper_closed_pos * force * 10.0 * 1.3
-                    state.robot.set_control_mode("PD_CONTROL")
-                    state.is_pressing = True
-                    state.press_start_time = time.time()
-                    await state.set_qpos(qpos)
+                    if state.strike_state == StrikeState.IDLE:
+                         force = packet.get("force", 0.5)
+                         await state.trigger_strike(force)
 
                 elif packet.get("request") == "temperature":
                     pass  # Placeholder for future implementation
