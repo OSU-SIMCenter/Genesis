@@ -126,39 +126,67 @@ class MPMSolver(BaseMPMSolver):
         self.grid[f, idx, i_b].mass_thermal += weight * mass
 
     @ti.kernel
-    def grid_op_thermal(self, f: ti.i32):
+    def grid_op_thermal(
+        self,
+        f: ti.i32,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        sdf_info: array_class.SDFInfo,
+        collider_static_config: ti.template(),
+    ):
         for i, j, k, i_b in ti.ndrange(*self._grid_res, self._B):
             m = self.grid[f, i, j, k, i_b].mass_thermal
             if m > 0:
                 # Normalize temperature
                 self.grid[f, i, j, k, i_b].temp /= m
                 
-                # Apply diffusion (Explicit Laplacian) - Simply using current frame's values from neighbors
-                # Note: For strict correctness this should be double-buffered or use a temporary, but for small dt this is okay
-                # Alternatively, we could do it in two passes if we really cared, but let's do in-place for now as per plan
-                # Actually, in-place diffusion is bad for parallelization order.
-                # However, since we reset grid every step, we can't easily use previous step's grid.
-                # Let's just do a simplified diffusion: T += alpha * Laplace(T) * dt
-                # But calculating Laplace(T) requires neighbors.
-                
-                # Let's skip diffusion for this first pass and focus on Boundary/Environment cooling.
-                # Or implementing a basic version?
-                # The user's research suggested: T_new = T + dt * alpha * Laplacian(T)
-                
-                # Let's implement cooling
+                # --- Environmental Cooling (Air) ---
                 T_curr = self.grid[f, i, j, k, i_b].temp
                 T_air = 293.15
                 
-                # Simple Newton cooling if 'surface' (low mass density or checking neighbors?)
-                # User used: if self.grid_thermal_mass[I] < self.p_rho * self.dx**3 * 0.8:
-                # We can approximate density check
+                # Simple Newton cooling if 'surface'
                 rho_cell = m / (self._dx ** 3)
                 # Assuming approximate density of steel ~7800
                 if rho_cell < 7000.0: # Surface-ish
                      h_conv = 50.0 
-                     dT = -self.substep_dt * h_conv * (T_curr - T_air) # Simplified area term
-                     self.grid[f, i, j, k, i_b].temp += dT
-            
+                     # Use exponential decay for stability: T_new = T_air + (T_curr - T_air) * exp(-h*dt)
+                     # Delta = T_new - T_curr = (T_air - T_curr) * (1 - exp(-h*dt))
+                     decay_air = 1.0 - ti.exp(-self.substep_dt * h_conv)
+                     dT_air = (T_air - T_curr) * decay_air
+                     self.grid[f, i, j, k, i_b].temp += dT_air
+
+                # --- Contact Cooling (Rigid Body) ---
+                if ti.static(self.sim.rigid_solver.is_active):
+                    pos_world = (ti.Vector([i, j, k]) + self._grid_offset) * self._dx
+                    
+                    # Check distance to all rigid bodies
+                    # Note: Ideally we use efficient broadphase, but iterating geoms is fine for small number of tools
+                    for i_g in range(self.sim.rigid_solver.n_geoms):
+                        if geoms_info.needs_coup[i_g]:
+                            signed_dist = sdf_decomp.sdf_func_world(
+                                geoms_state=geoms_state,
+                                geoms_info=geoms_info,
+                                sdf_info=sdf_info,
+                                pos_world=pos_world,
+                                geom_idx=i_g,
+                                batch_idx=i_b,
+                            )
+                            
+                            # If close enough (e.g. within 1.5 dx), apply contact cooling
+                            # We use a slightly generous threshold to capture the interface
+                            if signed_dist < self._dx * 1.5:
+                                T_rigid = 293.15 # TODO: Fetch actual temp if rigid body has thermal state
+                                h_contact = 5000.0 # High conductivity for contact
+                                
+                                # Current temp might have changed due to air cooling
+                                T_curr_updated = self.grid[f, i, j, k, i_b].temp
+                                
+                                # Use exponential decay for stability
+                                decay_contact = 1.0 - ti.exp(-self.substep_dt * h_contact)
+                                dT_contact = (T_rigid - T_curr_updated) * decay_contact
+                                self.grid[f, i, j, k, i_b].temp += dT_contact
+
             else:
                  self.grid[f, i, j, k, i_b].temp = 293.15 # Air temp
 
@@ -205,5 +233,12 @@ class MPMSolver(BaseMPMSolver):
 
     def substep_pre_coupling(self, f):
         super().substep_pre_coupling(f)
-        self.grid_op_thermal(f)
+        self.grid_op_thermal(
+            f,
+            self.sim.coupler.rigid_solver.geoms_state,
+            self.sim.coupler.rigid_solver.geoms_info,
+            self.sim.coupler.rigid_solver._rigid_global_info,
+            self.sim.coupler.rigid_solver.sdf._sdf_info,
+            self.sim.coupler.rigid_solver.collider._collider_static_config,
+        )
 
