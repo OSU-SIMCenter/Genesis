@@ -274,6 +274,22 @@ class BaseMPMSolver(Solver):
     def stencil_range(self):
         return ti.ndrange(3, 3, 3)
 
+    @ti.func
+    def p2g_modify_stress(self, f: ti.i32, i_p: ti.i32, i_b: ti.i32, stress: ti.template()):
+        return stress * self.get_particle_stress_scale(f, i_p, i_b)
+
+    @ti.func
+    def p2g_transfer_extra_fields(self, f: ti.i32, i_p: ti.i32, idx: ti.template(), i_b: ti.i32, weight: ti.f32):
+        pass
+
+    @ti.func
+    def g2p_prologue(self, f: ti.i32, i_p: ti.i32, i_b: ti.i32):
+        pass
+
+    @ti.func
+    def g2p_transfer_extra_fields(self, f: ti.i32, i_p: ti.i32, i_b: ti.i32, weight: ti.f32, grid_index: ti.template()):
+        pass
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- simulation -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -375,7 +391,7 @@ class BaseMPMSolver(Solver):
                 )
         
         # Apply constitutive hook (e.g. for thermal softening)
-        stress *= self.get_particle_stress_scale(f, i_p, i_b)
+        stress = self.p2g_modify_stress(f, i_p, i_b, stress)
 
         stress = (-self.substep_dt * self._particle_volume * 4 * self._inv_dx * self._inv_dx) * stress
         affine = stress + self.particles_info[i_p].mass * self.particles[f, i_p, i_b].C
@@ -420,6 +436,7 @@ class BaseMPMSolver(Solver):
                 self.grid[f, base - self._grid_offset + offset, i_b].mass += (
                     weight * self.particles_info[i_p].mass
                 )
+                self.p2g_transfer_extra_fields(f, i_p, base - self._grid_offset + offset, i_b, weight)
 
             if not self.particles_info[i_p].free:  # non-free particles behave as boundary conditions
                 self.grid[f, base - self._grid_offset + offset, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
@@ -451,6 +468,7 @@ class BaseMPMSolver(Solver):
         links_state: array_class.LinksState,
         rigid_global_info: array_class.RigidGlobalInfo,
     ):
+        self.g2p_prologue(f, i_p, i_b)
         base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
         fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
         w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0) ** 2, 0.5 * (fx - 0.5) ** 2]
@@ -481,6 +499,7 @@ class BaseMPMSolver(Solver):
 
             new_vel += weight * grid_vel
             new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
+            self.g2p_transfer_extra_fields(f, i_p, i_b, weight, base - self._grid_offset + offset)
 
         # compute actual new_pos with new_vel
         new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel

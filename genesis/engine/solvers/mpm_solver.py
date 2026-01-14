@@ -118,26 +118,12 @@ class MPMSolver(BaseMPMSolver):
     # --------------------------------- Thermal Kernels ----------------------------------
     # ------------------------------------------------------------------------------------
 
-    @ti.kernel
-    def p2g_thermal_transfer(self, f: ti.i32):
-        for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            if self.particles_ng[f, i_p, i_b].active:
-                base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
-                fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
-                w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
-                
-                mass = self.particles_info[i_p].mass
-                temp = self.particles[f, i_p, i_b].temp
-                
-                for offset in ti.static(ti.grouped(self.stencil_range())):
-                    weight = gs.ti_float(1.0)
-                    for d in ti.static(range(3)):
-                        weight *= w[offset[d]][d]
-                    
-                    idx = base - self._grid_offset + offset
-                    # Transfer mass-weighted temperature
-                    self.grid[f, idx, i_b].temp += weight * mass * temp
-                    self.grid[f, idx, i_b].mass_thermal += weight * mass
+    @ti.func
+    def p2g_transfer_extra_fields(self, f: ti.i32, i_p: ti.i32, idx: ti.template(), i_b: ti.i32, weight: ti.f32):
+        mass = self.particles_info[i_p].mass
+        temp = self.particles[f, i_p, i_b].temp
+        self.grid[f, idx, i_b].temp += weight * mass * temp
+        self.grid[f, idx, i_b].mass_thermal += weight * mass
 
     @ti.kernel
     def grid_op_thermal(self, f: ti.i32):
@@ -176,32 +162,15 @@ class MPMSolver(BaseMPMSolver):
             else:
                  self.grid[f, i, j, k, i_b].temp = 293.15 # Air temp
 
-    @ti.kernel
-    def g2p_thermal_transfer(self, f: ti.i32):
-         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            if self.particles_ng[f, i_p, i_b].active:
-                base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
-                fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
-                w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0) ** 2, 0.5 * (fx - 0.5) ** 2]
-                
-                new_temp = gs.ti_float(0.0)
-                for offset in ti.static(ti.grouped(self.stencil_range())):
-                    weight = gs.ti_float(1.0)
-                    for d in ti.static(range(3)):
-                        weight *= w[offset[d]][d]
-                    
-                    idx = base - self._grid_offset + offset
-                    new_temp += weight * self.grid[f, idx, i_b].temp
-                
-                self.particles[f + 1, i_p, i_b].temp = new_temp
-                
-                # Copy other non-advected thermal states
-                self.particles[f + 1, i_p, i_b].plastic_strain = self.particles[f, i_p, i_b].plastic_strain
-                self.particles[f + 1, i_p, i_b].plastic_work = self.particles[f, i_p, i_b].plastic_work
-            else:
-                self.particles[f + 1, i_p, i_b].temp = self.particles[f, i_p, i_b].temp
-                self.particles[f + 1, i_p, i_b].plastic_strain = self.particles[f, i_p, i_b].plastic_strain
-                self.particles[f + 1, i_p, i_b].plastic_work = self.particles[f, i_p, i_b].plastic_work
+    @ti.func
+    def g2p_prologue(self, f: ti.i32, i_p: ti.i32, i_b: ti.i32):
+        self.particles[f + 1, i_p, i_b].temp = 0.0
+        self.particles[f + 1, i_p, i_b].plastic_strain = self.particles[f, i_p, i_b].plastic_strain
+        self.particles[f + 1, i_p, i_b].plastic_work = self.particles[f, i_p, i_b].plastic_work
+
+    @ti.func
+    def g2p_transfer_extra_fields(self, f: ti.i32, i_p: ti.i32, i_b: ti.i32, weight: ti.f32, grid_index: ti.template()):
+        self.particles[f + 1, i_p, i_b].temp += weight * self.grid[f, grid_index, i_b].temp
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- Coupling Logic -----------------------------------
@@ -236,154 +205,5 @@ class MPMSolver(BaseMPMSolver):
 
     def substep_pre_coupling(self, f):
         super().substep_pre_coupling(f)
-        self.p2g_thermal_transfer(f)
         self.grid_op_thermal(f)
 
-    def substep_post_coupling(self, f):
-        super().substep_post_coupling(f)
-        self.g2p_thermal_transfer(f)
-
-    # ------------------------------------------------------------------------------------
-    # ----------------------------- Overridden P2G Helper --------------------------------
-    # ------------------------------------------------------------------------------------
-
-    @ti.func
-    def p2g_helper(
-        self,
-        f: ti.i32,
-        i_p: ti.i32,
-        i_b: ti.i32,
-        geoms_state: array_class.GeomsState,
-        geoms_info: array_class.GeomsInfo,
-        links_state: array_class.LinksState,
-        rigid_global_info: array_class.RigidGlobalInfo,
-        sdf_info: array_class.SDFInfo,
-        collider_static_config: ti.template(),
-    ):
-        # A. update F (deformation gradient), S (Sigma from SVD(F), essentially represents volume) and Jp
-        # (volume compression ratio) based on material type
-        J = self.particles[f, i_p, i_b].S.determinant()
-        F_new = ti.Matrix.zero(gs.ti_float, 3, 3)
-        S_new = ti.Matrix.zero(gs.ti_float, 3, 3)
-        Jp_new = gs.ti_float(1.0)
-        for material_idx in ti.static(self._materials_idx):
-            if self.particles_info[i_p].material_idx == material_idx:
-                F_new, S_new, Jp_new = self._materials_update_F_S_Jp[material_idx](
-                    J=J,
-                    F_tmp=self.particles[f, i_p, i_b].F_tmp,
-                    U=self.particles[f, i_p, i_b].U,
-                    S=self.particles[f, i_p, i_b].S,
-                    V=self.particles[f, i_p, i_b].V,
-                    Jp=self.particles[f, i_p, i_b].Jp,
-                )
-        self.particles[f + 1, i_p, i_b].F = F_new
-        self.particles[f + 1, i_p, i_b].Jp = Jp_new
-
-        # B. compute stress
-        # NOTE:
-        # 1. Here we pass in both F_tmp and the updated F_new because in the official taichi example, F_new is
-        # used for stress computation. However, although this works for both elastic and elasto-plastic
-        # materials, it is mathematically incorrect for liquid material with non-zero viscosity (mu). In the
-        # latter case, stress computation needs to be based on the F_tmp (deformation gradient before resetting
-        # to identity).
-        # 2. Jp is only used by Snow material, and it uses Jp from the previous frame, not the updated one.
-        stress = ti.Matrix.zero(gs.ti_float, 3, 3)
-        for material_idx in ti.static(self._materials_idx):
-            if self.particles_info[i_p].material_idx == material_idx:
-                stress = self._materials_update_stress[material_idx](
-                    U=self.particles[f, i_p, i_b].U,
-                    S=S_new,
-                    V=self.particles[f, i_p, i_b].V,
-                    F_tmp=self.particles[f, i_p, i_b].F_tmp,
-                    F_new=F_new,
-                    J=J,
-                    Jp=self.particles[f, i_p, i_b].Jp,
-                    actu=self.particles[f, i_p, i_b].actu,
-                    m_dir=self.particles_info[i_p].muscle_direction,
-                )
-        
-        # --- ADIABATIC HEATING INJECTION ---
-        # Calculate Plastic Work
-        # W_p approx = sigma : D_p * dt
-        # But extracting D_p is hard here without modifying constitutive model.
-        # Approximation: If we softened the stress, the energy lost is roughly related to the stress drop.
-        # But the 'stress' variable here is Cauchy stress * J.
-        
-        # Better approach:
-        # The constitutive models (e.g. von Mises) usually return stress.
-        # If we want true coupling, we needed access to 'd_gamma' (plastic multiplier).
-        # But we don't have it here. This P2G function is generic.
-        
-        # Alternative: Assume substantial plastic work happens if stress is at yield?
-        # No.
-        
-        # Let's look at the plan: "Update particle temp based on plastic work".
-        # If we can't easily get plastic work from `_materials_update_stress`, we might need to rely on
-        # an approximation using the strain rate and current stress.
-        
-        # pass # Todo: Refine this if we can pass more info back from update_stress.
-        # For now, let's at least apply the softening scaling.
-        
-        # Apply constitutive hook (e.g. for thermal softening)
-        stress *= self.get_particle_stress_scale(f, i_p, i_b)
-
-        # ADIABATIC HEATING (Simplified)
-        # We can try to estimate plastic work if we knew the plastic strain increment.
-        # But `self.particles.plastic_strain` is not being updated by `update_stress`.
-        # The base `update_stress` doesn't know about `plastic_strain` field.
-        # Ideally, `update_stress` should return `plastic_strain_inc`... but it doesn't.
-        
-        # OK, critical limitation: Base solver `update_stress` returns only stress.
-        # We might need to subclass the MATERIALS too to support this properly?
-        # OR: We calculate Von Mises stress here, compare to Yield, and estimate plastic flow ourselves?
-        # That's basically re-implementing the constitutive model here.
-        # Given we are overriding P2G, we CAN do that.
-        # Most Genesis materials are hyperelastic or simple elastoplastic (Von Mises).
-        # If it's `MPMOptions` default, it's likely Von Mises.
-        
-        stress = (-self.substep_dt * self._particle_volume * 4 * self._inv_dx * self._inv_dx) * stress
-        affine = stress + self.particles_info[i_p].mass * self.particles[f, i_p, i_b].C
-
-        # C. project onto grid
-        base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
-        fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
-        w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
-        for offset in ti.static(ti.grouped(self.stencil_range())):
-            dpos = (offset.cast(gs.ti_float) - fx) * self._dx
-            weight = gs.ti_float(1.0)
-            for d in ti.static(range(3)):
-                weight *= w[offset[d]][d]
-
-            sep_geom_idx = -1
-            if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
-                # check if particle and cell center are at different side of any thin object
-                cell_pos = (base + offset) * self._dx
-
-                for i_g in range(self.sim.rigid_solver.n_geoms):
-                    if geoms_info.needs_coup[i_g]:
-                        sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
-                        sdf_normal_cell = sdf_decomp.sdf_func_normal_world(
-                            geoms_state=geoms_state,
-                            geoms_info=geoms_info,
-                            rigid_global_info=rigid_global_info,
-                            collider_static_config=collider_static_config,
-                            sdf_info=sdf_info,
-                            pos_world=cell_pos,
-                            geom_idx=i_g,
-                            batch_idx=i_b,
-                        )
-
-                        if sdf_normal_particle.dot(sdf_normal_cell) < 0:  # separated by geom i_g
-                            sep_geom_idx = i_g
-                            break
-                self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b] = sep_geom_idx
-            if sep_geom_idx == -1:
-                self.grid[f, base - self._grid_offset + offset, i_b].vel_in += weight * (
-                    self.particles_info[i_p].mass * self.particles[f, i_p, i_b].vel + affine @ dpos
-                )
-                self.grid[f, base - self._grid_offset + offset, i_b].mass += (
-                    weight * self.particles_info[i_p].mass
-                )
-
-            if not self.particles_info[i_p].free:  # non-free particles behave as boundary conditions
-                self.grid[f, base - self._grid_offset + offset, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
