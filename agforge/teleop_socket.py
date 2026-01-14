@@ -81,6 +81,8 @@ class StrikeState(Enum):
     IDLE = 0
     APPROACHING = 1
     HOLDING = 2
+    PRESSING = 3
+    RELEASE = 4
 
 class SharedState:
     def __init__(self, env: AgilityForgeEnv):
@@ -107,6 +109,7 @@ class SharedState:
         self.last_update_time = time.time()
         self.press_start_time = 0.0
         self.press_duration = 4.0
+        self.contact_width = 0.0
 
         # Surface reconstruction
         self.reconstructed_mesh = trimesh.Trimesh()
@@ -216,14 +219,95 @@ class SharedState:
             
             # Transition Condition
             if self.contact_L and self.contact_R:
-                print("Both Contacts Established. Ready for next stage.")
-                # Transition to HOLDING to verify "Approaching" is done and presses are stopped.
-                self.strike_state = StrikeState.HOLDING
+                print("Both Contacts Established. Entering PRESSING stage.")
                 
-                # Switch to TELEPORT to hold current position
-                self.robot.set_control_mode("TELEPORT")
-                self.qpos = self.robot.entity.get_qpos() # Sync qpos to current
+                self.strike_state = StrikeState.PRESSING
+                self.press_start_time = time.time()
                 
+                # Record initial separation
+                pos_L = self.robot.left_gripper.get_pos()
+                pos_R = self.robot.right_gripper.get_pos()
+                self.contact_width = torch.norm(pos_L - pos_R).item()
+                print(f"Contact Width: {self.contact_width:.4f}")
+                
+        # --- PRESSING STAGE ---
+        elif self.strike_state == StrikeState.PRESSING:
+            pressing_speed = self.env.cfg.strike.pressing_speed
+            target_strain = self.env.cfg.strike.target_strain
+            max_force = self.env.cfg.strike.max_force
+            pressing_timeout = self.env.cfg.strike.pressing_timeout
+            force_balance_gain = self.env.cfg.strike.force_balance_gain
+
+            # Get current forces
+            force_L, force_R = self.robot.get_resistance_forces()
+            print(f"Resistance Forces: L={force_L:.2f}, R={force_R:.2f}")
+            
+            # Calculate separation and strain
+            pos_L = self.robot.left_gripper.get_pos()
+            pos_R = self.robot.right_gripper.get_pos()
+            current_width = torch.norm(pos_L - pos_R).item()
+            
+            if self.contact_width > 1e-6:
+                current_strain = (self.contact_width - current_width) / self.contact_width
+            else:
+                current_strain = 0.0
+                
+            elapsed_time = time.time() - self.press_start_time
+            
+            # Debug Stats
+            # print(f"Strain: {current_strain:.4f}, FL: {force_L:.1f}, FR: {force_R:.1f}")
+
+            # Termination Conditions
+            stop_reason = None
+            if current_strain >= target_strain:
+                stop_reason = "Target Strain Reached"
+            elif force_L > max_force or force_R > max_force:
+                stop_reason = "Max Force Exceeded"
+            elif elapsed_time > pressing_timeout:
+                stop_reason = "Timeout"
+                
+            if stop_reason:
+                print(f"Pressing Finished: {stop_reason}. Strain: {current_strain:.4f}")
+                self.strike_state = StrikeState.RELEASE
+                # Stop immediately
+                vel_cmd = torch.zeros(4, device=self.env.device)
+                self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+                return
+
+            # Force Balancing Control
+            # Force imbalance: Positive if Left is pushing harder (needs to slow down) 
+            # or Right is pushing harder?
+            # Imbalance = L - R
+            # v_L = target - (L-R)*k
+            # v_R = target + (L-R)*k
+            # Check signs:
+            # If L > R (L pushing harder), L should slow down (reduce v_L). 
+            # Correction = (L-R) * k (Positive). v_L = v - corr (Reduced). Correct.
+            # R should speed up (increase v_R). v_R = v + corr (Increased). Correct.
+            
+            imbalance = force_L - force_R
+            correction = imbalance * force_balance_gain
+            
+            v_L = pressing_speed - correction
+            v_R = pressing_speed + correction
+            
+            # Clamp velocities to be non-negative (don't reverse?) 
+            # or allow reverse for active balancing? 
+            # Usually we don't want to open, just slow down.
+            v_L = max(0.0, v_L)
+            v_R = max(0.0, v_R)
+            
+            vel_cmd = torch.zeros(4, device=self.env.device)
+            vel_cmd[2] = v_L
+            vel_cmd[3] = v_R
+            
+            self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+
+        # --- RELEASE STAGE (Placeholder) ---
+        elif self.strike_state == StrikeState.RELEASE:
+             # Just hold for now, or user will implement next
+             pass 
+             
         # --- HOLDING STAGE ---
         elif self.strike_state == StrikeState.HOLDING:
             # Just maintain position (handled by standard loop using self.qpos)
@@ -246,6 +330,7 @@ class SharedState:
             self.contact_L = False
             self.contact_R = False
             self.checkpoints = []
+            self.contact_width = 0.0
             self.create_reconstructed_mesh()
             print("Simulation reset.")
 

@@ -257,6 +257,13 @@ class StrikeOptions(Options):
     approach_speed: float = 5.e1
     contact_force_threshold: float = 300.0 # Force threshold to detect contact
     
+    # Pressing Stage
+    pressing_speed: float = 5.e1 # m/s
+    force_balance_gain: float = 0.0 # (m/s) / N. Start with 0.0 for constant velocity testing as requested.
+    target_strain: float = 0.5 # 50% compression
+    max_force: float = 50000.0 # N
+    pressing_timeout: float = 5.0 # seconds
+    
 class AdaptiveControlConfig(Options):
     """Configuration for adaptive control gains."""
     base_kp: float = 5000.0
