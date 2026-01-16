@@ -65,6 +65,8 @@ dependencies = [
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
     # Surface reconstruction library for particle data from SPH simulations
+    # NOTE: This package (0.14.*) has a directory structure issue where 'pysplashsurf/pysplashsurf'
+    # shadows the 'pysplashsurf.abi3.so' extension. Ideally, use 'fix-splashsurf' task to patch it.
     "pysplashsurf==0.14.*",
 ]
 
