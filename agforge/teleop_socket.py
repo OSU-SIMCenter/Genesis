@@ -1,5 +1,8 @@
 import asyncio
 import json
+import traceback
+import sys
+import signal
 import websockets
 import torch
 import numpy as np
@@ -98,6 +101,9 @@ class SharedState:
 
         # Checkpoint storage
         self.checkpoints = []
+        
+        # Connection state for idle loop coordination
+        self.is_client_connected = False
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
@@ -177,14 +183,20 @@ class SharedState:
             print("Checkpoint loaded (Undo).")
 
     def _apply_transformation(self, points):
-        """Transform points from Genesis space to Unity space."""
+        """Transform points from Genesis space to Unity space (supports Tensor and Numpy)."""
         cfg = self.env.cfg.robot
         translation = -(cfg.cylinder_pos + np.array([-TRANSFORM_HEIGHT_FACTOR * cfg.cylinder_height, 0, 0]))
         scale = (TRANSFORM_SCALE,) * 3
         
-        points = points + torch.tensor(translation, device=points.device).view(1, 3)
-        points = points * torch.tensor(scale, device=points.device).view(1, 3)
-        points[:, 0] *= -1  # Flip x-axis
+        if isinstance(points, torch.Tensor):
+            points = points + torch.tensor(translation, dtype=torch.float32, device=points.device).view(1, 3)
+            points = points * torch.tensor(scale, dtype=torch.float32, device=points.device).view(1, 3)
+            points[:, 0] *= -1  # Flip x-axis
+        else: # Numpy path for CPU mesh vertices
+            points = points + translation.reshape(1, 3)
+            points = points * np.array(scale).reshape(1, 3)
+            points[:, 0] *= -1
+            
         return points
 
     async def get_reconstructed_mesh_and_particles(self):
@@ -192,9 +204,7 @@ class SharedState:
         points = self._apply_transformation(
             self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
         )
-        vertices = self._apply_transformation(
-            torch.tensor(self.reconstructed_mesh.vertices, device=self.env.device)
-        )
+        vertices = self._apply_transformation(self.reconstructed_mesh.vertices)
         triangles = self.reconstructed_mesh.faces
         return vertices, triangles, points
 
@@ -208,42 +218,110 @@ class SharedState:
 
         self.create_reconstructed_mesh()
     
+    async def update_press_state(self):
+        """Updates the press/strike state based on elapsed time."""
+        if not self.is_pressing:
+            return
+
+        elapsed = time.time() - self.press_start_time
+        should_update = False
+        
+        # We need to fetch current qpos to modify it
+        qpos = await self.get_qpos()
+
+        if elapsed > self.press_duration:
+            qpos[0, 2] = self.gripper_open_pos
+            qpos[0, 3] = self.gripper_open_pos
+            self.robot.set_control_mode("TELEPORT")
+            self.is_pressing = False
+            should_update = True
+        elif elapsed > self.press_duration / 1.15:
+            qpos[0, 2] = self.gripper_open_pos
+            qpos[0, 3] = self.gripper_open_pos
+            should_update = True
+            
+        if should_update:
+            await self.set_qpos(qpos)
+
     def create_reconstructed_mesh(self):
         """Reconstruct surface mesh from active particles using splashsurf."""
         solver = self.env.scene.sim.mpm_solver
         
         # Get environment offset
-        offset = self.env.scene.envs_offset[0]
-        if hasattr(offset, 'cpu'):
-            offset = offset.cpu().numpy()
-        elif hasattr(offset, 'numpy'):
-            offset = offset.numpy()
-        
         # Get particle positions and active mask
-        particles = ti_to_numpy(solver.particles_render.pos)[:, 0] + offset
-        active = ti_to_numpy(solver.particles_render.active)[:, 0].astype(bool)
-        particles = particles[active]
+        # Explicit synchronization for Metal backend
+        ti.sync()
+        
+        try:
+            t0 = time.time()
+            if hasattr(solver.particles_render.pos, 'to_numpy'):
+                 particles = solver.particles_render.pos.to_numpy()[:, 0]
+            else:
+                 particles = ti_to_numpy(solver.particles_render.pos)[:, 0]
+            
+            # Get environment offset
+            offset = self.env.scene.envs_offset[0]
+            
+            # Ensure it is on CPU and float32
+            if hasattr(offset, 'cpu'):
+                offset = offset.cpu().numpy()
+            elif hasattr(offset, 'numpy'):
+                offset = offset.numpy()
+                
+            particles = particles + offset
+            
+            if hasattr(solver.particles_render.active, 'to_numpy'):
+                active = solver.particles_render.active.to_numpy()[:, 0].astype(bool)
+            else:
+                active = ti_to_numpy(solver.particles_render.active)[:, 0].astype(bool)
+                
+            particles = particles[active]
+            
+            # Subsample if needed
+            if self.recon_particle_fraction < 1.0:
+                num_particles = int(len(particles) * self.recon_particle_fraction)
+                indices = np.random.choice(len(particles), num_particles, replace=False)
+                particles = particles[indices]
 
-        # Subsample if needed
-        if self.recon_particle_fraction < 1.0:
-            num_particles = int(len(particles) * self.recon_particle_fraction)
-            indices = np.random.choice(len(particles), num_particles, replace=False)
-            particles = particles[indices]
+            radius = solver.particle_radius
+            
+            # Check if particles is valid
+            if len(particles) == 0:
+                 print("Warning: No active particles for reconstruction.")
+                 return
 
-        radius = solver.particle_radius
-        self.reconstructed_mesh = pu.particles_to_mesh(
-            positions=particles,
-            radius=radius,
-            backend='splashsurf'
-        )
+            # print(f"DEBUG: Reconstructing {len(particles)} particles. Backend: splashsurf (in-process)")
+            self.reconstructed_mesh = pu.particles_to_mesh(
+                positions=particles,
+                radius=radius,
+                backend='splashsurf'
+            )
+            # t1 = time.time()
+            # print(f"DEBUG: Reconstruction took {t1-t0:.4f}s")
+            
+        except Exception as e:
+            print(f"Error during surface reconstruction: {e}")
+            self.reconstructed_mesh = trimesh.Trimesh()
 
 
 def _prepare_array(arr, dtype):
     """Convert array to flattened numpy array of specified dtype."""
+    if arr is None or len(arr) == 0:
+         return np.array([], dtype=dtype), 0
+
     if isinstance(arr, torch.Tensor):
-        arr = arr.cpu().numpy()
+        arr = arr.detach().cpu().numpy()
+    elif hasattr(arr, 'to_numpy'): # Taichi fields
+        arr = arr.to_numpy()
+    elif hasattr(arr, 'numpy'):
+        try:
+             arr = arr.numpy()
+        except:
+             pass
+             
     if isinstance(arr, list):
         arr = np.array(arr)
+        
     flat = arr.flatten().astype(dtype)
     return flat, len(flat)
 
@@ -252,12 +330,11 @@ async def simulation_loop(websocket, state: SharedState):
     """Runs the simulation and sends state updates to the client."""
     print("Starting simulation loop...")
     
-    while True:
-        try:
+    try:
+        while True:
             qpos = await state.get_qpos()
             state.robot.apply_action(qpos)
             state.env.scene.step()
-            ti.sync()
             
             # Update render fields for particle access
             if hasattr(state.env.scene.sim.mpm_solver, 'update_render_fields'):
@@ -265,6 +342,7 @@ async def simulation_loop(websocket, state: SharedState):
             else:
                 state.env.scene.visualizer.update_visual_states()
 
+            await state.update_press_state()
             await state.update_reconstructed_mesh()
             vertices, triangles, particles = await state.get_reconstructed_mesh_and_particles()
             
@@ -291,17 +369,54 @@ async def simulation_loop(websocket, state: SharedState):
             await websocket.send(message)
             await asyncio.sleep(1/60)
 
-        except websockets.ConnectionClosed:
-            print("Simulation loop stopped: Client disconnected.")
-            break
-        except Exception as e:
-            print(f"Error in simulation loop: {e}")
-            break
+    except websockets.ConnectionClosed:
+        print("Simulation loop stopped: Client disconnected.")
+    except Exception as e:
+        print(f"Error in simulation loop: {e}")
+        traceback.print_exc()
+    except asyncio.CancelledError:
+        print("Simulation loop cancelled.")
+    finally:
+        print("Simulation loop task finished.")
+
+async def viewer_idle_loop(state: SharedState):
+    """Keeps the viewer responsive when no client is connected."""
+    try:
+        while True:
+            if not state.is_client_connected:
+                # If no client, we must step the viewer manually to keep window responsive
+                if hasattr(state.env.scene, 'visualizer') and state.env.scene.visualizer:
+                     vis = state.env.scene.visualizer
+                     
+                     # Try standard render which should poll events
+                     if hasattr(vis, 'render'):
+                         vis.render()
+                     # Fallback/Additional: Pump Pyglet events if accessible
+                     elif hasattr(vis, 'viewer'):
+                         try:
+                             if hasattr(vis.viewer, 'dispatch_events'):
+                                 vis.viewer.dispatch_events()
+                             if hasattr(vis.viewer, 'flip'):
+                                 vis.viewer.flip()
+                         except Exception:
+                             pass
+                     else:
+                         # Last resort: just update states (unlikely to poll events)
+                         vis.update_visual_states()
+            
+            # Sleep a bit to yield to other tasks
+            await asyncio.sleep(0.02) # Slightly faster poll (50Hz)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"Error in viewer idle loop: {e}")
+        traceback.print_exc()
 
 
 async def handle_client(websocket, state: SharedState, path=None):
     """Listens for client messages and updates the shared state."""
     print("Client connected. Ready to receive commands.")
+    state.is_client_connected = True
     
     producer_task = asyncio.create_task(simulation_loop(websocket, state))
 
@@ -311,25 +426,15 @@ async def handle_client(websocket, state: SharedState, path=None):
                 packet = json.loads(msg)
                 qpos = await state.get_qpos()
 
-                if state.is_pressing:
-                    elapsed = time.time() - state.press_start_time
-                    if elapsed > state.press_duration:
-                        qpos[0, 2] = state.gripper_open_pos
-                        qpos[0, 3] = state.gripper_open_pos
-                        state.robot.set_control_mode("TELEPORT")
-                        state.is_pressing = False
-                    elif elapsed > state.press_duration / 1.15:
-                        qpos[0, 2] = state.gripper_open_pos
-                        qpos[0, 3] = state.gripper_open_pos
-                    await state.set_qpos(qpos)
-
-                elif packet.get("request") == "reset":
+                if packet.get("request") == "reset":
                     await state.reset_simulation()
 
                 elif packet.get("request") == "undo":
                     await state.load_checkpoint()
 
                 elif packet.get("request") == "update":
+                    if state.is_pressing:
+                        continue
                     translation = packet.get("translation", 0.0)
                     rotation = packet.get("rotation", 0.0)
                     slider_qpos, hinge_qpos = state.input_mapper.map_client_to_qpos(translation, rotation)
@@ -356,15 +461,22 @@ async def handle_client(websocket, state: SharedState, path=None):
                 print(f"Error processing client message: {e}")
     
     finally:
+        print("Cancelling simulation loop...")
         producer_task.cancel()
-        await asyncio.gather(producer_task, return_exceptions=True)
-        print("Client disconnected.")
+        try:
+            await producer_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"Error during producer task cancellation: {e}")
+        print("Client disconnected cleanly.")
+        state.is_client_connected = False
 
 
 async def main():
     print("Building simulation environment...")
     cfg = TeleopOptions()
-    cfg.general.show_viewer = False
+    cfg.general.show_viewer = True
     env = build_env(cfg)
     shared_state = SharedState(env)
     shared_state.robot.set_control_mode("TELEPORT")
@@ -376,8 +488,32 @@ async def main():
     print("Environment ready. Server listening on port 8765.")
     handler = functools.partial(handle_client, state=shared_state)
 
+    
+    # Create an event to signal shutdown
+    stop_event = asyncio.Event()
+
+    # Register signal handler for SIGINT (Ctrl+C)
+    loop = asyncio.get_running_loop()
+    def _handle_sigint():
+        print("\nReceived SIGINT (Ctrl+C). Shutting down...")
+        stop_event.set()
+        
+    loop.add_signal_handler(signal.SIGINT, _handle_sigint)
+
     async with websockets.serve(handler, "localhost", 8765):
-        await asyncio.Future()
+        # Start idle loop to keep window fresh when no client
+        idle_task = asyncio.create_task(viewer_idle_loop(shared_state))
+        try:
+             # Wait until stop signal is received
+             await stop_event.wait()
+        finally:
+             print("Cleaning up tasks...")
+             idle_task.cancel()
+             try:
+                 await idle_task
+             except asyncio.CancelledError:
+                 pass
+             print("Shutdown complete.")
 
 
 if __name__ == "__main__":
@@ -385,4 +521,6 @@ if __name__ == "__main__":
     # preventing infinite recursive spawning of the application.
     import multiprocessing
     multiprocessing.freeze_support()
+    # Increase recursion depth for Pyglet on macOS
+    sys.setrecursionlimit(3000)
     asyncio.run(main())

@@ -7,6 +7,7 @@ import sys
 import shutil
 import tempfile
 from multiprocessing import Process, Queue
+from queue import Empty
 
 import igl
 import numpy as np
@@ -405,7 +406,7 @@ def particles_to_mesh(positions, radius, backend):
     elif "splashsurf" in backend:
         # FIXME: Running in subprocess or manually reclaiming free-ed head memory is necessary to avoid unbounded growth
         # On Windows, spawning a process is too slow (~4.5s), so we run in-process and try to trim working set
-        if platform.system() == "Windows":
+        if platform.system() in ["Windows", "Darwin"]:
             vertices, triangles, normals = _splashsurf_worker(positions, radius, args_dict, None)
             try:
                 # Windows-specific memory reduction hint (fast, negligible performance impact)
@@ -421,10 +422,23 @@ def particles_to_mesh(positions, radius, backend):
             else:
                 proc = Process(target=_splashsurf_worker, args=(positions, radius, args_dict, result_queue))
                 proc.start()
-                result = result_queue.get()
-                proc.join()
-                if proc.exitcode != 0:
-                    gs.raise_exception_from(f"splashsurf subprocess failed with exit code {proc.exitcode}", result)
+                try:
+                    # Add timeout (e.g., 5 seconds) to prevent infinite hanging
+                    result = result_queue.get(timeout=5.0)
+                except Empty:
+                    gs.logger.error("splashsurf subprocess timed out.")
+                    proc.kill()
+                    # Return empty mesh on timeout
+                    vertices, triangles, normals = np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3))
+                    result = (vertices, triangles, normals)
+                finally:
+                    proc.join(timeout=1.0)
+                    if proc.is_alive():
+                        proc.kill()
+                        proc.join()
+
+                if proc.exitcode != 0 and proc.exitcode != -9: # -9 is SIGKILL
+                     gs.raise_exception_from(f"splashsurf subprocess failed with exit code {proc.exitcode}", result)
             vertices, triangles, normals = result
         mesh = trimesh.Trimesh(vertices=vertices, faces=triangles, face_normals=normals, process=False)
         gs.logger.debug(f"[splashsurf]: reconstruct vertices: {mesh.vertices.shape}, {mesh.faces.shape}")
