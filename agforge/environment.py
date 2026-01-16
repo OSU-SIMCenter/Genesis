@@ -30,21 +30,21 @@ class AgilityForgeManipulator:
         )
         self.entity = scene.add_entity(morph=morph, material=material)
         self.ee_link = self.entity.get_link("clamp_bar")
-        self.default_joint_angles = torch.tensor([0.0, 0.0, 0.0, 0.0], device=self.device)
+        self.default_joint_angles = torch.tensor([0.0, 0.0, 0.0, 0.0], dtype=torch.float32, device=self.device)
         self.control_mode = "PD_CONTROL"  # Initial control mode
 
     def set_pd_gains(self):
         """Sets the Proportional-Derivative controller gains for the robot's joints."""
-        self.entity.set_dofs_kp(torch.full((4,), self.robot_cfg.kp, device=self.device))
-        self.entity.set_dofs_kv(torch.full((4,), self.robot_cfg.kv, device=self.device))
+        self.entity.set_dofs_kp(torch.full((4,), self.robot_cfg.kp, dtype=torch.float32, device=self.device))
+        self.entity.set_dofs_kv(torch.full((4,), self.robot_cfg.kv, dtype=torch.float32, device=self.device))
 
     def set_clamp_force_range(self):
         """Sets the force range for the gripper joints."""
         max_force = self.robot_cfg.clamp_force
         # The gripper DOFs are the last two
-        dofs_idx = torch.tensor([2, 3], device=self.device)
-        lower = torch.full((2,), -max_force, device=self.device)
-        upper = torch.full((2,), max_force, device=self.device)
+        dofs_idx = torch.tensor([2, 3], dtype=torch.int32, device=self.device)
+        lower = torch.full((2,), -max_force, dtype=torch.float32, device=self.device)
+        upper = torch.full((2,), max_force, dtype=torch.float32, device=self.device)
         self.entity.set_dofs_force_range(lower, upper, dofs_idx_local=dofs_idx)
 
     def set_control_mode(self, mode: str):
@@ -79,6 +79,12 @@ class AgilityForgeEnv:
         self.cfg = cfg
         self.device = gs.device
 
+        # Cache constant tensors on device for performance (must be done before usage)
+        self.action_lower_bounds = self.cfg.env.action_lower_bounds.to(dtype=torch.float32, device=self.device)
+        self.action_upper_bounds = self.cfg.env.action_upper_bounds.to(dtype=torch.float32, device=self.device)
+        self.fixed_region_bounds = self.cfg.env.fixed_region_bounds.to(dtype=torch.float32, device=self.device)
+        self.target_shape_bounds = self.cfg.env.target_shape_bounds.to(dtype=torch.float32, device=self.device)
+
         self._setup_scene()
         self.robot = AgilityForgeManipulator(scene=self.scene, robot_cfg=self.cfg.robot)
         self._setup_entities()
@@ -103,6 +109,8 @@ class AgilityForgeEnv:
         self.target_mpm_pos = torch.zeros_like(self.initial_mpm_pos)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
+        self.extras = {}
+
         self.extras = {}
 
     def _setup_scene(self):
@@ -150,7 +158,7 @@ class AgilityForgeEnv:
 
     def _set_fixed_particles(self):
         """Identifies and sets the fixed MPM particles based on the defined region."""
-        bounds = self.cfg.env.fixed_region_bounds.to(self.device)
+        bounds = self.fixed_region_bounds
         mpm_pos_env0 = self.initial_mpm_pos[0]
         is_in_box = ((mpm_pos_env0 >= bounds[:, 0]) & (mpm_pos_env0 <= bounds[:, 1])).all(dim=1)
         self.mpm_entity.set_free(~is_in_box)
@@ -183,7 +191,7 @@ class AgilityForgeEnv:
         self.scene.reset(envs_idx=envs_idx)
 
         init_bounds = torch.stack([self.initial_mpm_pos[0].min(dim=0).values, self.initial_mpm_pos[0].max(dim=0).values])
-        target_bounds = self.cfg.env.target_shape_bounds.to(self.device)
+        target_bounds = self.target_shape_bounds
         
         eps = 1e-8
         scale = (target_bounds[1] - target_bounds[0]) / (init_bounds[1] - init_bounds[0] + eps)
@@ -212,7 +220,7 @@ class AgilityForgeEnv:
         """Applies an action and steps the simulation forward."""
         self.episode_length_buf += 1
         actions = torch.clamp(
-            actions, self.cfg.env.action_lower_bounds.to(self.device), self.cfg.env.action_upper_bounds.to(self.device)
+            actions, self.action_lower_bounds, self.action_upper_bounds
         )
 
         qpos = self.robot.entity.get_qpos()
