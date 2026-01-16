@@ -8,14 +8,15 @@ version = "0.1.0"
 
 [tasks]
 build = "python build.py --target=local"
+# Task to fix the pysplashsurf package structure issue (idempotent)
+fix-splashsurf = "python -c \"import pathlib, sysconfig; p = pathlib.Path(sysconfig.get_path('purelib')) / 'pysplashsurf' / 'pysplashsurf'; print(f'Checking {p}...'); p.rename(p.with_name('pysplashsurf_hidden')) if p.exists() else print('Already fixed')\""
 
 [system-requirements]
 # Required for modern Linux wheels (like pymeshlab)
 libc = { family = "glibc", version = "2.35" }
 
 [dependencies]
-# Downgrade to 3.12.* if you get compatibility errors
-python = "3.13.*"
+python = "3.12.*"
 
 [pypi-dependencies]
 # Editable project install
