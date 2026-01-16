@@ -6,33 +6,27 @@ import platform
 import shutil
 from pathlib import Path
 
-def get_nuitka_cmd(target_os, compiler="msvc", jobs=None):
-    """
-    Constructs the Nuitka command with necessary flags for the specific target.
-    """
+def get_nuitka_cmd(target_os, compiler="msvc", jobs=None, no_console=False):
+    """Constructs the Nuitka command with necessary flags."""
     cmd = [
         sys.executable, "-m", "nuitka",
         "--mode=standalone",
         "--main=agforge/teleop_socket.py",
         
-        # Output configuration (Manual Separation)
+        # Output configuration
         f"--output-dir=dist/nuitka/{target_os}",
         "--output-filename=teleop_socket",
         
         "--show-progress",
         "--assume-yes-for-downloads",
         
-        # Performance Optimizations
-        "--lto=yes", # Link Time Optimization
-        
-        # Plugins
+        # Performance & Plugins
+        "--lto=yes",
         "--enable-plugin=torch",
         "--enable-plugin=numpy",
         
-        # Data Directories
+        # Data & Core Packages
         "--include-data-dir=agforge/pbs_samples=agforge/pbs_samples",
-        
-        # Core Packages
         "--include-package=genesis",
         "--include-package=agforge",
     ]
@@ -47,31 +41,29 @@ def get_nuitka_cmd(target_os, compiler="msvc", jobs=None):
             "--include-module=websockets.legacy.server",
         ])
     elif target_os == "windows":
-        cmd.extend([
-            "--disable-console",
-            "--disable-ccache",
-        ])
+        if no_console:
+             cmd.append("--disable-console")
+        
+        cmd.append("--disable-ccache")
         
         if compiler == "mingw64":
             cmd.append("--mingw64")
         else:
-            # MSVC Configuration for High-Mem Projects (Torch)
+            # MSVC Configuration for High-Mem Projects
             cmd.append("--msvc=latest")
-            cmd.append("--low-memory") # Fixes C1002 heap error without hurting runtime perf
+            cmd.append("--low-memory")
             if jobs is None:
                 jobs = 1 # Force serial build by default for MSVC to save memory
     
     return cmd
 
-def get_pyinstaller_cmd(target_os):
-    """
-    Constructs the PyInstaller command.
-    """
-    sep = ";" if target_os == "windows" else ":"
+def get_pyinstaller_cmd(target_os, no_console=False):
+    """Constructs the PyInstaller command."""
+    sep = os.pathsep
     
     # Output Isolation
-    dist_path = os.path.join("dist", "pyinstaller", target_os)
-    work_path = os.path.join("build", "pyinstaller", target_os)
+    dist_path = Path("dist/pyinstaller") / target_os
+    work_path = Path("build/pyinstaller") / target_os
     
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -87,64 +79,59 @@ def get_pyinstaller_cmd(target_os):
         f"--specpath={work_path}", # Put spec file in build dir to keep root clean
         
         # Data Directories
-        # Use absolute path to avoid ambiguity. Map to root 'pbs_samples' to match environment.py's resource_path logic.
-        f"--add-data={os.path.abspath('agforge/pbs_samples')}{sep}pbs_samples",
+        f"--add-data={Path('agforge/pbs_samples').absolute()}{sep}pbs_samples",
         
-        # Hidden Imports (Manual)
-        # Note: --collect-all copies the package source/libs, but hidden-import ensures analysis finds it.
+        # Hidden Imports & Assets
         "--hidden-import=genesis",
-        "--hidden-import=genesis.utils.mesh", # Fix for crash in some environments
+        "--hidden-import=genesis.utils.mesh",
         "--hidden-import=agforge",
         "--hidden-import=websockets.legacy.server",
         "--hidden-import=tifffile",
         "--hidden-import=trimesh", 
         "--hidden-import=scipy.spatial.transform._rotation_groups",
         
-        # Collect complex packages that rely on internal data/binaries
         "--collect-all=coacd",
-        "--collect-all=gstaichi", # ESSENTIAL: Collects runtime_*.bc bitcode files for GPU/CPU backends
-        "--collect-all=z3", # ESSENTIAL: Collects libz3.dll
-        "--collect-all=glfw", # ESSENTIAL: Collects glfw3.dll
-        "--collect-all=mujoco", # ESSENTIAL: Collects mujoco.dll and assets
-        # genesis is collected to ensure all assets are present, despite being hidden-imported above
+        "--collect-all=gstaichi",
+        "--collect-all=z3",
+        "--collect-all=glfw",
+        "--collect-all=mujoco",
         "--collect-all=genesis", 
-        
-        "--windowed", # Equivalent to --noconsole, prevents cmd window on Windows
     ]
     
+    if no_console:
+        cmd.append("--windowed") # Equivalent to --noconsole, prevents cmd window on Windows
+        
     return cmd
 
-def run_local_build(tool, nuitka_compiler="msvc", jobs=None):
+def run_local_build(tool, nuitka_compiler="msvc", jobs=None, no_console=False):
     """Run the build locally using the specified tool."""
     current_os = platform.system().lower()
     
     # Define output directory for cleanup
     # logic matches the commands above
-    output_dir = os.path.join("dist", tool, current_os)
+    output_dir = Path("dist") / tool / current_os
     
     print(f"🚀 Starting Local Build using {tool.upper()} for {current_os}...")
     if tool == "nuitka" and current_os == "windows":
         print(f"🔧 Compiler Backend: {nuitka_compiler.upper()}")
     if jobs:
          print(f"⚙️  Parallel Jobs: {jobs}")
+    print(f"🖥️  Console: {'Disabled' if no_console else 'Enabled'}")
 
     print(f"📂 Output Directory: {output_dir}")
     
-    # 1. Clean previous build (Granular)
-    # 1. Clean previous build (Granular)
-    # Clean output directory (dist/)
+    print(f"📂 Output Directory: {output_dir}")
+    
+    # Clean previous build
     dirs_to_clean = [output_dir]
     
     # Also clean intermediate build directory if applicable
     if tool == "pyinstaller":
-        # PyInstaller uses a separate workpath
-        build_dir = os.path.join("build", tool, current_os)
+        build_dir = Path("build") / tool / current_os
         dirs_to_clean.append(build_dir)
-    # Note: Nuitka with --output-dir puts its .build folder INSIDE that dir, 
-    # so cleaning output_dir works for both.
 
     for d in dirs_to_clean:
-        if os.path.exists(d):
+        if d.exists():
             print(f"🧹 Cleaning {d}...")
             try:
                 # Retry logic for Windows file locks
@@ -154,9 +141,9 @@ def run_local_build(tool, nuitka_compiler="msvc", jobs=None):
                 print("   Attempting to continue...")
 
     if tool == "nuitka":
-        cmd = get_nuitka_cmd(current_os, compiler=nuitka_compiler, jobs=jobs)
+        cmd = get_nuitka_cmd(current_os, compiler=nuitka_compiler, jobs=jobs, no_console=no_console)
     elif tool == "pyinstaller":
-        cmd = get_pyinstaller_cmd(current_os)
+        cmd = get_pyinstaller_cmd(current_os, no_console=no_console)
     else:
         print(f"❌ Unknown tool: {tool}")
         sys.exit(1)
@@ -168,13 +155,13 @@ def run_local_build(tool, nuitka_compiler="msvc", jobs=None):
         
         # Helpful info on where to find it
         if tool == "pyinstaller":
-            exe_path = os.path.join(output_dir, "teleop_socket", "teleop_socket.exe" if current_os == "windows" else "teleop_socket")
+            exe_path = output_dir / "teleop_socket" / ("teleop_socket.exe" if current_os == "windows" else "teleop_socket")
         else:
             # Nuitka structure varies slightly by mode, but usually:
             if current_os == "windows":
-                exe_path = os.path.join(output_dir, "teleop_socket.dist", "teleop_socket.exe")
+                exe_path = output_dir / "teleop_socket.dist" / "teleop_socket.exe"
             else:
-                exe_path = os.path.join(output_dir, "teleop_socket.dist", "teleop_socket.bin")
+                exe_path = output_dir / "teleop_socket.dist" / "teleop_socket.bin"
                 
         print(f"👉 Executable located at: {exe_path}")
         
@@ -182,11 +169,8 @@ def run_local_build(tool, nuitka_compiler="msvc", jobs=None):
         print(f"❌ Build failed with error code {e.returncode}")
         sys.exit(1)
 
-# ... (docker build skipped for brevity, assumed unchanged) ...
-
 def run_docker_build():
     """Run the build using Docker (targets Linux output)."""
-    # ... (content remains same)
     print("🐳 Starting Docker Build (Linux Target)...")
     
     # Check if docker is available
@@ -214,14 +198,15 @@ def run_docker_build():
     ).decode().strip()
     
     try:
-        if os.path.exists("dist/linux"):
-            shutil.rmtree("dist/linux")
-        os.makedirs("dist/linux", exist_ok=True)
+        output_dir = Path("dist/linux")
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
         
         subprocess.check_call([
             "docker", "cp",
             f"{container_id}:/app/teleop_socket",
-            "dist/linux/teleop_socket.bin"
+            str(output_dir / "teleop_socket.bin")
         ])
         print("✅ Artifact extracted to dist/linux/teleop_socket.bin")
     finally:
@@ -237,11 +222,13 @@ def main():
                         help="Compiler for Nuitka on Windows: 'msvc' (default, system VS) or 'mingw64' (downloaded)")
     parser.add_argument("--jobs", type=int, default=None,
                         help="Number of parallel jobs for Nuitka (reduces memory usage)")
+    parser.add_argument("--no-console", action="store_true",
+                        help="Disable terminal window (default: console enabled)")
     
     args = parser.parse_args()
     
     if args.target == "local":
-        run_local_build(args.tool, nuitka_compiler=args.nuitka_compiler, jobs=args.jobs)
+        run_local_build(args.tool, nuitka_compiler=args.nuitka_compiler, jobs=args.jobs, no_console=args.no_console)
     elif args.target == "docker":
         if args.tool != "nuitka":
             print("⚠️  Warning: Docker build currently only supports Nuitka found in Dockerfile.")
