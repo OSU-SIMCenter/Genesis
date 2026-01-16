@@ -34,9 +34,11 @@ torch = "*"
 torchvision = "*"
 
 # --- Feature: CPU-Only ---
+[feature.cpu.pypi-options]
+extra-index-urls = ["https://download.pytorch.org/whl/nightly/cpu"]
+
 [feature.cpu.pypi-dependencies]
-# Uses standard PyPI (CPU on Linux/Mac, or default CUDA 12.x on Windows)
-torch = "*"
+torch = ">=2.9.2"
 torchvision = "*"
 
 [feature.agf-server.pypi-dependencies]
