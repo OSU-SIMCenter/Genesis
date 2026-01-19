@@ -506,7 +506,10 @@ async def main():
         print("\nReceived SIGINT (Ctrl+C). Shutting down...")
         stop_event.set()
         
-    loop.add_signal_handler(signal.SIGINT, _handle_sigint)
+    try:
+        loop.add_signal_handler(signal.SIGINT, _handle_sigint)
+    except NotImplementedError:
+        pass
 
     async with websockets.serve(handler, "localhost", 8765):
         # Start idle loop to keep window fresh when no client
