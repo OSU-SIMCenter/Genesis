@@ -9,7 +9,18 @@ from genesis.options import ProfilingOptions, SimOptions, MPMOptions, VisOptions
 
 ureg = UnitRegistry()
 
-GENERATED_ROBOT_XML_PATH = "agforge_demo.xml"
+import os
+import sys
+
+# Determine path for generated assets relative to the application/script
+if getattr(sys, 'frozen', False):
+    # If compiled with PyInstaller
+    _base_dir = os.path.dirname(sys.executable)
+else:
+    # If running as script
+    _base_dir = os.path.dirname(os.path.abspath(__file__))
+
+GENERATED_ROBOT_XML_PATH = os.path.join(_base_dir, "agforge_demo.xml")
 
 def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> float:
     """Convert a quantity to use a specified time unit instead of seconds."""
