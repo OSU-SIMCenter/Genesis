@@ -4,6 +4,11 @@ import traceback
 import sys
 import signal
 import websockets
+import logging
+
+# Suppress websockets connection errors (caused by port checks like 'nc')
+logging.getLogger("websockets").setLevel(logging.CRITICAL)
+
 import torch
 import numpy as np
 import functools
@@ -474,6 +479,9 @@ async def handle_client(websocket, state: SharedState, path=None):
 
 
 async def main():
+    # Force line buffering for stdout so logs appear immediately (fixes buffering issue)
+    sys.stdout.reconfigure(line_buffering=True)
+    
     print("Building simulation environment...")
     cfg = TeleopOptions()
     cfg.general.show_viewer = True
