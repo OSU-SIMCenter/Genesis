@@ -96,15 +96,16 @@ class SharedState:
         self.input_mapper = InputMapper(cylinder_height=env.cfg.robot.cylinder_height)
 
         # Dynamically get gripper limits
+        # Note: Grippers start at qpos=0 (open) and move to qpos=slide_distance (closed)
         xml_generator = RobotXMLGenerator(robot_cfg=env.cfg.robot)
-        self.gripper_closed_pos = xml_generator.gripper_slide_range[1]
-        self.gripper_open_pos = xml_generator.gripper_slide_range[0]
+        self.gripper_open_pos = xml_generator.gripper_slide_range[0]  # 0 = starting/open position
+        self.gripper_closed_pos = xml_generator.gripper_slide_range[1]  # slide_distance = closed
 
         # Strike Logic State
         self.strike_state = StrikeState.IDLE
         self.contact_L = False
         self.contact_R = False
-        self.target_squeeze_force = 1000.0 # Default, updated by request
+        self.target_strain = 0.5  # Default, updated by client force param
 
         self.last_update_time = time.time()
         self.press_start_time = 0.0
@@ -136,6 +137,12 @@ class SharedState:
         async with self.lock:
             return self.qpos.clone()
 
+    async def update_base_pose(self, slider_pos, hinge_pos):
+        """Atomically updates only the base (slider/hinge) position."""
+        async with self.lock:
+            self.qpos[0, 0] = slider_pos
+            self.qpos[0, 1] = hinge_pos
+
     async def trigger_strike(self, force_param):
         async with self.lock:
             if self.strike_state != StrikeState.IDLE:
@@ -147,16 +154,17 @@ class SharedState:
             self.contact_R = False
             self.strike_state = StrikeState.APPROACHING
             
-            # Map force parameter (0-1) to target Newton force? 
-            # Or just use it as a scalar for position-based squeeze (legacy)?
-            # For now, let's store it, but Approaching stage relies on contact detection.
-            # Use configured approach speed
-            self.robot.set_control_mode("VELOCITY_CONTROL")
+            # Map force parameter (0-1) to target strain
+            self.target_strain = force_param * 10.0
+            print(f"Target strain: {self.target_strain:.2f}")
             
-            # Save checkpoint for undo
-            await self.save_checkpoint()
+            self.robot.set_control_mode("VELOCITY_CONTROL")
+        
+        # Save checkpoint OUTSIDE the lock to avoid deadlock
+        # (save_checkpoint also acquires self.lock)
+        await self.save_checkpoint()
 
-    def update_strike_logic(self):
+    async def update_strike_logic(self):
         """Called every simulation step to handle strike state machine."""
         if self.strike_state == StrikeState.IDLE:
             return
@@ -233,7 +241,7 @@ class SharedState:
         # --- PRESSING STAGE ---
         elif self.strike_state == StrikeState.PRESSING:
             pressing_speed = self.env.cfg.strike.pressing_speed
-            target_strain = self.env.cfg.strike.target_strain
+            target_strain = self.target_strain  # Use client-provided target strain
             max_force = self.env.cfg.strike.max_force
             pressing_timeout = self.env.cfg.strike.pressing_timeout
             force_balance_gain = self.env.cfg.strike.force_balance_gain
@@ -308,48 +316,9 @@ class SharedState:
             release_speed = self.env.cfg.strike.pressing_speed # Reuse pressing speed for now
             contact_threshold = 10.0 # Low threshold for safe release
             
-            # Get current forces
-            force_L, force_R = self.robot.get_resistance_forces()
-            print(f"Release Forces: L={force_L:.2f}, R={force_R:.2f}")
-
-            # Exit Condition: Forces are low enough to safe teleport
-            if force_L < contact_threshold and force_R < contact_threshold:
-                 print("Forces released. Teleporting to Open Position.")
-                 
-                 # 1. Stop Velocities
-                 vel_cmd = torch.zeros(4, device=self.env.device)
-                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
-                 
-                 # 2. Teleport to Open
-                 # Reset Grippers to Open Position (qpos=0)
-                 # We must be careful to keep the slide/hinge positions!
-                 current_qpos = self.robot.entity.get_qpos()
-                 current_qpos[:, 2] = 0.0 # Left Gripper Open
-                 current_qpos[:, 3] = 0.0 # Right Gripper Open
-                 
-                 # Apply Teleport
-                 self.robot.set_control_mode("TELEPORT")
-                 self.robot.apply_action(current_qpos)
-                 
-                 # 3. Reset State
-                 self.strike_state = StrikeState.IDLE
-                 self.contact_L = False
-                 self.contact_R = False
-                 self.contact_width = 0.0
-                 return
-
-            # Apply Negative Velocity (Open)
-            # Both grippers move towards 0 (Open).
-            # Left: Positive Velocity closes (moves +Y). Negative opens (moves -Y).
-            # Right: Positive Velocity closes (moves -Y). Negative opens (moves +Y).
-            # Wait, verify signs.
-            # IN APPROACHING:
-            # v_close = approach_speed (Positive)
-            # vel_cmd[2] = v_close
-            # vel_cmd[3] = v_close
-            # So Positive Velocity = CLOSING.
-            # Therefore Negative Velocity = OPENING.
-            
+            # ALWAYS apply opening velocity first - grippers need to physically separate
+            # before forces can drop. This prevents the "immediate teleport" bug where
+            # forces read as ~0 right after pressing stops (grippers stationary).
             v_open = -release_speed
             
             vel_cmd = torch.zeros(4, device=self.env.device)
@@ -357,6 +326,38 @@ class SharedState:
             vel_cmd[3] = v_open
             
             self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+            
+            # Get current gripper positions to check if they've opened enough
+            pos_L = self.robot.left_gripper.get_pos()
+            pos_R = self.robot.right_gripper.get_pos()
+            current_width = torch.norm(pos_L - pos_R).item()
+            
+            # Get current forces
+            force_L, force_R = self.robot.get_resistance_forces()
+
+            # Exit Condition: Forces are low AND grippers have separated significantly
+            min_release_width = self.contact_width * 1.1  # At least 10% wider than contact
+            if force_L < contact_threshold and force_R < contact_threshold and current_width > min_release_width:
+                 # Stop Velocities
+                 vel_cmd = torch.zeros(4, device=self.env.device)
+                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+                 
+                 # Teleport to Open (direct access to avoid lock issues)
+                 current_qpos = self.qpos.clone()
+                 current_qpos[:, 2] = self.gripper_open_pos
+                 current_qpos[:, 3] = self.gripper_open_pos
+                 
+                 self.robot.set_control_mode("TELEPORT")
+                 self.qpos = current_qpos
+                 self.robot.apply_action(current_qpos)
+                 
+                 # Reset State
+                 self.strike_state = StrikeState.IDLE
+                 self.contact_L = False
+                 self.contact_R = False
+                 self.contact_width = 0.0
+                 print("Release complete.")
+                 return
 
         # --- HOLDING STAGE ---
         elif self.strike_state == StrikeState.HOLDING:
@@ -411,7 +412,7 @@ class SharedState:
 
             ckpt = self.checkpoints.pop()
             
-            # Restore SimState
+            # Restore SimState (MPM particles, etc.)
             self.env.scene.sim.reset(ckpt['sim_state'])
 
             # --- Synchronization for Visualization ---
@@ -421,9 +422,20 @@ class SharedState:
             else:
                 self.env.scene.visualizer.update_visual_states()
             
-            # Restore Aux State
-            self.strike_state = ckpt.get('strike_state', StrikeState.IDLE)
-            self.qpos = ckpt['qpos']
+            # Reset to IDLE state (don't restore strike_state - that would repeat the strike)
+            self.strike_state = StrikeState.IDLE
+            self.contact_L = False
+            self.contact_R = False
+            self.contact_width = 0.0
+            
+            # Restore base position but reset grippers to open
+            self.qpos = ckpt['qpos'].clone()
+            self.qpos[:, 2] = self.gripper_open_pos
+            self.qpos[:, 3] = self.gripper_open_pos
+            
+            # Apply the restored position
+            self.robot.set_control_mode("TELEPORT")
+            self.robot.apply_action(self.qpos)
             
             self.create_reconstructed_mesh()
             print("Checkpoint loaded (Undo).")
@@ -566,22 +578,19 @@ async def simulation_loop(websocket, state: SharedState):
 
 
             # 2. Logic Update (State Machine)
-            state.update_strike_logic()
+            await state.update_strike_logic()
             
-            # 3. Apply Actions based on State
+            # Apply Actions based on State
             if state.strike_state == StrikeState.IDLE or state.strike_state == StrikeState.HOLDING:
                 # Standard Teleoperation / Holding
                 qpos = await state.get_qpos()
                 state.robot.apply_action(qpos)
             
             # Clear accumulators (Before stepping, but after logic/reading!)
-            # Logic (step N) reads forces from Step N-1.
-            # Then we clear accumulator.
-            # Then Step N calculates new forces.
             if hasattr(state.env.scene.sim.coupler, 'clear_link_coupling_forces'):
                 state.env.scene.sim.coupler.clear_link_coupling_forces()
             
-            # 4. Physics Step
+            # Physics Step
             state.env.scene.step()
             
             # Update render fields for particle access
@@ -684,9 +693,15 @@ async def handle_client(websocket, state: SharedState, path=None):
                         translation = packet.get("translation", 0.0)
                         rotation = packet.get("rotation", 0.0)
                         slider_qpos, hinge_qpos = state.input_mapper.map_client_to_qpos(translation, rotation)
-                        qpos[0, 0] = slider_qpos
-                        qpos[0, 1] = hinge_qpos
-                        await state.set_qpos(qpos)
+                        
+                        # Use atomic update to prevent overwriting gripper state
+                        await state.update_base_pose(slider_qpos, hinge_qpos)
+                        
+                        # Apply immediately for responsiveness (optional, loop handles it too)
+                        # But loop runs at 60Hz, maybe client wants faster? 
+                        # Actually standard loop is fine.
+                        # qpos = await state.get_qpos()
+                        # await state.set_qpos(qpos) <--- OLD RACE CONDITION SOURCE
 
                 elif packet.get("request") == "strike":
                     if state.strike_state == StrikeState.IDLE:
