@@ -303,11 +303,61 @@ class SharedState:
             
             self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
 
-        # --- RELEASE STAGE (Placeholder) ---
+        # --- RELEASE STAGE ---
         elif self.strike_state == StrikeState.RELEASE:
-             # Just hold for now, or user will implement next
-             pass 
-             
+            release_speed = self.env.cfg.strike.pressing_speed # Reuse pressing speed for now
+            contact_threshold = 10.0 # Low threshold for safe release
+            
+            # Get current forces
+            force_L, force_R = self.robot.get_resistance_forces()
+            print(f"Release Forces: L={force_L:.2f}, R={force_R:.2f}")
+
+            # Exit Condition: Forces are low enough to safe teleport
+            if force_L < contact_threshold and force_R < contact_threshold:
+                 print("Forces released. Teleporting to Open Position.")
+                 
+                 # 1. Stop Velocities
+                 vel_cmd = torch.zeros(4, device=self.env.device)
+                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+                 
+                 # 2. Teleport to Open
+                 # Reset Grippers to Open Position (qpos=0)
+                 # We must be careful to keep the slide/hinge positions!
+                 current_qpos = self.robot.entity.get_qpos()
+                 current_qpos[:, 2] = 0.0 # Left Gripper Open
+                 current_qpos[:, 3] = 0.0 # Right Gripper Open
+                 
+                 # Apply Teleport
+                 self.robot.set_control_mode("TELEPORT")
+                 self.robot.apply_action(current_qpos)
+                 
+                 # 3. Reset State
+                 self.strike_state = StrikeState.IDLE
+                 self.contact_L = False
+                 self.contact_R = False
+                 self.contact_width = 0.0
+                 return
+
+            # Apply Negative Velocity (Open)
+            # Both grippers move towards 0 (Open).
+            # Left: Positive Velocity closes (moves +Y). Negative opens (moves -Y).
+            # Right: Positive Velocity closes (moves -Y). Negative opens (moves +Y).
+            # Wait, verify signs.
+            # IN APPROACHING:
+            # v_close = approach_speed (Positive)
+            # vel_cmd[2] = v_close
+            # vel_cmd[3] = v_close
+            # So Positive Velocity = CLOSING.
+            # Therefore Negative Velocity = OPENING.
+            
+            v_open = -release_speed
+            
+            vel_cmd = torch.zeros(4, device=self.env.device)
+            vel_cmd[2] = v_open
+            vel_cmd[3] = v_open
+            
+            self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+
         # --- HOLDING STAGE ---
         elif self.strike_state == StrikeState.HOLDING:
             # Just maintain position (handled by standard loop using self.qpos)
