@@ -421,30 +421,7 @@ class SharedState:
 
         self.create_reconstructed_mesh()
     
-    async def update_press_state(self):
-        """Updates the press/strike state based on elapsed time."""
-        if not self.is_pressing:
-            return
 
-        elapsed = time.time() - self.press_start_time
-        should_update = False
-        
-        # We need to fetch current qpos to modify it
-        qpos = await self.get_qpos()
-
-        if elapsed > self.press_duration:
-            qpos[0, 2] = self.gripper_open_pos
-            qpos[0, 3] = self.gripper_open_pos
-            self.robot.set_control_mode("TELEPORT")
-            self.is_pressing = False
-            should_update = True
-        elif elapsed > self.press_duration / 1.15:
-            qpos[0, 2] = self.gripper_open_pos
-            qpos[0, 3] = self.gripper_open_pos
-            should_update = True
-            
-        if should_update:
-            await self.set_qpos(qpos)
 
     def create_reconstructed_mesh(self):
         """Reconstruct surface mesh from active particles using splashsurf."""
@@ -563,7 +540,6 @@ async def simulation_loop(websocket, state: SharedState):
             else:
                 state.env.scene.visualizer.update_visual_states()
 
-            await state.update_press_state()
             await state.update_reconstructed_mesh()
             vertices, triangles, particles = await state.get_reconstructed_mesh_and_particles()
             
