@@ -150,9 +150,6 @@ class SharedState:
             self.target_strain = force_param * 10.0
             
             self.robot.set_control_mode("VELOCITY_CONTROL")
-        
-        # Save checkpoint OUTSIDE the lock to avoid deadlock
-        await self.save_checkpoint()
 
     async def update_strike_logic(self):
         """Called every simulation step to handle strike state machine."""
@@ -291,12 +288,36 @@ class SharedState:
                  self.contact_R = False
                  self.contact_width = 0.0
                  gs.logger.info("Strike → IDLE")
+                 
+                 # Save checkpoint after strike completes (not before)
+                 # Note: This is outside the normal async flow, but update_strike_logic
+                 # is already awaited from simulation_loop
+                 await self.save_checkpoint()
                  return
 
         # --- HOLDING STAGE ---
         elif self.strike_state == StrikeState.HOLDING:
             # Just maintain position (handled by standard loop using self.qpos)
             pass 
+
+    def _save_checkpoint_impl(self):
+        """Internal helper to save checkpoint without lock (caller must hold lock)."""
+        # Genesis SimState
+        sim_state = self.env.scene.sim.get_state()
+        sim_state.serializable()
+        
+        # Clear queried states in simulator to prevent memory leak
+        # Simulator appends to _queried_states on every get_state()
+        if hasattr(self.env.scene.sim, '_queried_states'):
+            self.env.scene.sim._queried_states.clear()
+
+        ckpt = {
+            'sim_state': sim_state,
+            'strike_state': self.strike_state,
+            'qpos': self.qpos.clone()
+        }
+        self.checkpoints.append(ckpt)
+        gs.logger.info(f"Checkpoint saved ({len(self.checkpoints)} total)")
 
     async def reset_simulation(self):
         async with self.lock:
@@ -317,34 +338,29 @@ class SharedState:
             self.checkpoints = []
             self.contact_width = 0.0
             self.create_reconstructed_mesh()
+            
+            # Save initial state as first checkpoint
+            self._save_checkpoint_impl()
+            
             gs.logger.info("Simulation reset")
 
     async def save_checkpoint(self):
         async with self.lock:
-            # Genesis SimState
-            sim_state = self.env.scene.sim.get_state()
-            sim_state.serializable()
-            
-            # Clear queried states in simulator to prevent memory leak
-            # Simulator appends to _queried_states on every get_state()
-            if hasattr(self.env.scene.sim, '_queried_states'):
-                self.env.scene.sim._queried_states.clear()
-
-            ckpt = {
-                'sim_state': sim_state,
-                'strike_state': self.strike_state,
-                'qpos': self.qpos.clone()
-            }
-            self.checkpoints.append(ckpt)
-            gs.logger.info(f"Checkpoint saved ({len(self.checkpoints)} total)")
+            self._save_checkpoint_impl()
 
     async def load_checkpoint(self):
+        """Undo to previous state. Since checkpoints are saved AFTER strikes,
+        we need to pop the current state (discard) and load the previous one."""
         async with self.lock:
-            if not self.checkpoints:
-                gs.logger.warning("No checkpoints to undo")
+            if len(self.checkpoints) < 2:
+                gs.logger.warning("No previous checkpoint to undo to")
                 return
 
-            ckpt = self.checkpoints.pop()
+            # Pop current state (discard - it's the current state)
+            self.checkpoints.pop()
+            
+            # Peek at previous state (don't pop - we want to keep it as current)
+            ckpt = self.checkpoints[-1]
             
             # Restore SimState (MPM particles, etc.)
             self.env.scene.sim.reset(ckpt['sim_state'])
@@ -372,7 +388,7 @@ class SharedState:
             self.robot.apply_action(self.qpos)
             
             self.create_reconstructed_mesh()
-            gs.logger.info("Checkpoint loaded (undo)")
+            gs.logger.info(f"Undo complete ({len(self.checkpoints)} checkpoints remaining)")
 
     def _apply_transformation(self, points):
         """Transform points from Genesis space to Unity space (supports Tensor and Numpy)."""
