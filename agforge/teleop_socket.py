@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import traceback
 import sys
@@ -96,10 +96,9 @@ class SharedState:
         self.input_mapper = InputMapper(cylinder_height=env.cfg.robot.cylinder_height)
 
         # Dynamically get gripper limits
-        # Note: Grippers start at qpos=0 (open) and move to qpos=slide_distance (closed)
         xml_generator = RobotXMLGenerator(robot_cfg=env.cfg.robot)
-        self.gripper_open_pos = xml_generator.gripper_slide_range[0]  # 0 = starting/open position
-        self.gripper_closed_pos = xml_generator.gripper_slide_range[1]  # slide_distance = closed
+        self.gripper_closed_pos = xml_generator.gripper_slide_range[1]
+        self.gripper_open_pos = xml_generator.gripper_slide_range[0]
 
         # Strike Logic State
         self.strike_state = StrikeState.IDLE
@@ -137,12 +136,6 @@ class SharedState:
         async with self.lock:
             return self.qpos.clone()
 
-    async def update_base_pose(self, slider_pos, hinge_pos):
-        """Atomically updates only the base (slider/hinge) position."""
-        async with self.lock:
-            self.qpos[0, 0] = slider_pos
-            self.qpos[0, 1] = hinge_pos
-
     async def trigger_strike(self, force_param):
         async with self.lock:
             if self.strike_state != StrikeState.IDLE:
@@ -161,7 +154,6 @@ class SharedState:
             self.robot.set_control_mode("VELOCITY_CONTROL")
         
         # Save checkpoint OUTSIDE the lock to avoid deadlock
-        # (save_checkpoint also acquires self.lock)
         await self.save_checkpoint()
 
     async def update_strike_logic(self):
@@ -313,36 +305,31 @@ class SharedState:
 
         # --- RELEASE STAGE ---
         elif self.strike_state == StrikeState.RELEASE:
-            release_speed = self.env.cfg.strike.pressing_speed # Reuse pressing speed for now
-            contact_threshold = 10.0 # Low threshold for safe release
+            release_speed = self.env.cfg.strike.pressing_speed
+            contact_threshold = 10.0
             
             # ALWAYS apply opening velocity first - grippers need to physically separate
-            # before forces can drop. This prevents the "immediate teleport" bug where
-            # forces read as ~0 right after pressing stops (grippers stationary).
             v_open = -release_speed
-            
             vel_cmd = torch.zeros(4, device=self.env.device)
             vel_cmd[2] = v_open
             vel_cmd[3] = v_open
-            
             self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
             
-            # Get current gripper positions to check if they've opened enough
+            # Check if grippers have separated enough
             pos_L = self.robot.left_gripper.get_pos()
             pos_R = self.robot.right_gripper.get_pos()
             current_width = torch.norm(pos_L - pos_R).item()
             
-            # Get current forces
             force_L, force_R = self.robot.get_resistance_forces()
 
-            # Exit Condition: Forces are low AND grippers have separated significantly
-            min_release_width = self.contact_width * 1.1  # At least 10% wider than contact
+            # Exit only if forces low AND grippers have separated
+            min_release_width = self.contact_width * 1.1
             if force_L < contact_threshold and force_R < contact_threshold and current_width > min_release_width:
-                 # Stop Velocities
+                 # Stop velocities
                  vel_cmd = torch.zeros(4, device=self.env.device)
                  self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
                  
-                 # Teleport to Open (direct access to avoid lock issues)
+                 # Teleport to open (use direct qpos access to avoid lock issues)
                  current_qpos = self.qpos.clone()
                  current_qpos[:, 2] = self.gripper_open_pos
                  current_qpos[:, 3] = self.gripper_open_pos
@@ -351,7 +338,7 @@ class SharedState:
                  self.qpos = current_qpos
                  self.robot.apply_action(current_qpos)
                  
-                 # Reset State
+                 # Reset state
                  self.strike_state = StrikeState.IDLE
                  self.contact_L = False
                  self.contact_R = False
@@ -580,17 +567,20 @@ async def simulation_loop(websocket, state: SharedState):
             # 2. Logic Update (State Machine)
             await state.update_strike_logic()
             
-            # Apply Actions based on State
+            # 3. Apply Actions based on State
             if state.strike_state == StrikeState.IDLE or state.strike_state == StrikeState.HOLDING:
                 # Standard Teleoperation / Holding
                 qpos = await state.get_qpos()
                 state.robot.apply_action(qpos)
             
             # Clear accumulators (Before stepping, but after logic/reading!)
+            # Logic (step N) reads forces from Step N-1.
+            # Then we clear accumulator.
+            # Then Step N calculates new forces.
             if hasattr(state.env.scene.sim.coupler, 'clear_link_coupling_forces'):
                 state.env.scene.sim.coupler.clear_link_coupling_forces()
             
-            # Physics Step
+            # 4. Physics Step
             state.env.scene.step()
             
             # Update render fields for particle access
@@ -693,15 +683,9 @@ async def handle_client(websocket, state: SharedState, path=None):
                         translation = packet.get("translation", 0.0)
                         rotation = packet.get("rotation", 0.0)
                         slider_qpos, hinge_qpos = state.input_mapper.map_client_to_qpos(translation, rotation)
-                        
-                        # Use atomic update to prevent overwriting gripper state
-                        await state.update_base_pose(slider_qpos, hinge_qpos)
-                        
-                        # Apply immediately for responsiveness (optional, loop handles it too)
-                        # But loop runs at 60Hz, maybe client wants faster? 
-                        # Actually standard loop is fine.
-                        # qpos = await state.get_qpos()
-                        # await state.set_qpos(qpos) <--- OLD RACE CONDITION SOURCE
+                        qpos[0, 0] = slider_qpos
+                        qpos[0, 1] = hinge_qpos
+                        await state.set_qpos(qpos)
 
                 elif packet.get("request") == "strike":
                     if state.strike_state == StrikeState.IDLE:
