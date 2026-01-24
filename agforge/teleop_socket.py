@@ -708,4 +708,9 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     # Increase recursion depth for Pyglet on macOS
     sys.setrecursionlimit(3000)
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # Clean exit on Ctrl+C (especially for Windows where signal handlers don't work)
+        pass
+
