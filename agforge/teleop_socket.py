@@ -15,6 +15,7 @@ import torch
 import numpy as np
 import trimesh
 import gstaichi as ti
+import genesis as gs
 
 import genesis.utils.particle as pu
 from genesis.utils.misc import ti_to_numpy
@@ -139,7 +140,7 @@ class SharedState:
             if self.strike_state != StrikeState.IDLE:
                 return
             
-            print(f"Strike Triggered! Force param: {force_param}")
+            gs.logger.info(f"Strike → APPROACHING (target_strain={force_param * 10:.2f})")
             # Reset contact flags
             self.contact_L = False
             self.contact_R = False
@@ -147,7 +148,6 @@ class SharedState:
             
             # Map force parameter (0-1) to target strain
             self.target_strain = force_param * 10.0
-            print(f"Target strain: {self.target_strain:.2f}")
             
             self.robot.set_control_mode("VELOCITY_CONTROL")
         
@@ -168,16 +168,16 @@ class SharedState:
             
             # Get resistance forces (projected along closing axis)
             force_L, force_R = self.robot.get_resistance_forces()
-            print(f"Resistance Forces: L={force_L:.2f}, R={force_R:.2f}")
+            gs.logger.debug(f"Forces: L={force_L:.1f} R={force_R:.1f}")
             
             # Check for contact
             if not self.contact_L and force_L > contact_threshold:
                 self.contact_L = True
-                print(f"Contact L Detected! Force: {force_L:.2f}")
+                gs.logger.info(f"Contact L (force={force_L:.1f})")
                 
             if not self.contact_R and force_R > contact_threshold:
                 self.contact_R = True
-                print(f"Contact R Detected! Force: {force_R:.2f}")
+                gs.logger.info(f"Contact R (force={force_R:.1f})")
 
             # Build velocity command: positive = closing
             vel_cmd = torch.zeros(4, device=self.env.device)
@@ -187,8 +187,6 @@ class SharedState:
             
             # Transition Condition
             if self.contact_L and self.contact_R:
-                print("Both Contacts Established. Entering PRESSING stage.")
-                
                 self.strike_state = StrikeState.PRESSING
                 self.press_start_time = time.time()
                 
@@ -196,7 +194,7 @@ class SharedState:
                 pos_L = self.robot.left_gripper.get_pos()
                 pos_R = self.robot.right_gripper.get_pos()
                 self.contact_width = torch.norm(pos_L - pos_R).item()
-                print(f"Contact Width: {self.contact_width:.4f}")
+                gs.logger.info(f"Strike → PRESSING (width={self.contact_width:.4f})")
                 
         # --- PRESSING STAGE ---
         elif self.strike_state == StrikeState.PRESSING:
@@ -208,7 +206,7 @@ class SharedState:
 
             # Get current forces
             force_L, force_R = self.robot.get_resistance_forces()
-            print(f"Resistance Forces: L={force_L:.2f}, R={force_R:.2f}")
+            gs.logger.debug(f"Forces: L={force_L:.1f} R={force_R:.1f}")
             
             # Calculate separation and strain
             pos_L = self.robot.left_gripper.get_pos()
@@ -225,14 +223,14 @@ class SharedState:
             # Termination Conditions
             stop_reason = None
             if current_strain >= target_strain:
-                stop_reason = "Target Strain Reached"
+                stop_reason = "Target Strain"
             elif force_L > max_force or force_R > max_force:
-                stop_reason = "Max Force Exceeded"
+                stop_reason = "Max Force"
             elif elapsed_time > pressing_timeout:
                 stop_reason = "Timeout"
                 
             if stop_reason:
-                print(f"Pressing Finished: {stop_reason}. Strain: {current_strain:.4f}")
+                gs.logger.info(f"Strike → RELEASE ({stop_reason}, strain={current_strain:.4f})")
                 self.strike_state = StrikeState.RELEASE
                 # Stop immediately
                 vel_cmd = torch.zeros(4, device=self.env.device)
@@ -292,7 +290,7 @@ class SharedState:
                  self.contact_L = False
                  self.contact_R = False
                  self.contact_width = 0.0
-                 print("Release complete.")
+                 gs.logger.info("Strike → IDLE")
                  return
 
         # --- HOLDING STAGE ---
@@ -319,7 +317,7 @@ class SharedState:
             self.checkpoints = []
             self.contact_width = 0.0
             self.create_reconstructed_mesh()
-            print("Simulation reset.")
+            gs.logger.info("Simulation reset")
 
     async def save_checkpoint(self):
         async with self.lock:
@@ -338,12 +336,12 @@ class SharedState:
                 'qpos': self.qpos.clone()
             }
             self.checkpoints.append(ckpt)
-            print(f"Checkpoint saved. Total checkpoints: {len(self.checkpoints)}")
+            gs.logger.info(f"Checkpoint saved ({len(self.checkpoints)} total)")
 
     async def load_checkpoint(self):
         async with self.lock:
             if not self.checkpoints:
-                print("No checkpoints to undo.")
+                gs.logger.warning("No checkpoints to undo")
                 return
 
             ckpt = self.checkpoints.pop()
@@ -374,7 +372,7 @@ class SharedState:
             self.robot.apply_action(self.qpos)
             
             self.create_reconstructed_mesh()
-            print("Checkpoint loaded (Undo).")
+            gs.logger.info("Checkpoint loaded (undo)")
 
     def _apply_transformation(self, points):
         """Transform points from Genesis space to Unity space (supports Tensor and Numpy)."""
@@ -459,7 +457,7 @@ class SharedState:
             
             # Check if particles is valid
             if len(particles) == 0:
-                 print("Warning: No active particles for reconstruction.")
+                 gs.logger.warning("No active particles for reconstruction")
                  return
 
             self.reconstructed_mesh = pu.particles_to_mesh(
@@ -469,7 +467,7 @@ class SharedState:
             )
             
         except Exception as e:
-            print(f"Error during surface reconstruction: {e}")
+            gs.logger.error(f"Surface reconstruction failed: {e}")
             self.reconstructed_mesh = trimesh.Trimesh()
 
 
@@ -497,7 +495,7 @@ def _prepare_array(arr, dtype):
 
 async def simulation_loop(websocket, state: SharedState):
     """Runs the simulation and sends state updates to the client."""
-    print("Starting simulation loop...")
+    gs.logger.debug("Simulation loop started")
     
     try:
         while True:
@@ -556,14 +554,14 @@ async def simulation_loop(websocket, state: SharedState):
             await asyncio.sleep(1/60)
 
     except websockets.ConnectionClosed:
-        print("Simulation loop stopped: Client disconnected.")
+        gs.logger.debug("Simulation loop: client disconnected")
     except Exception as e:
-        print(f"Error in simulation loop: {e}")
+        gs.logger.error(f"Simulation loop error: {e}")
         traceback.print_exc()
     except asyncio.CancelledError:
-        print("Simulation loop cancelled.")
+        gs.logger.debug("Simulation loop cancelled")
     finally:
-        print("Simulation loop task finished.")
+        gs.logger.debug("Simulation loop finished")
 
 async def viewer_idle_loop(state: SharedState):
     """Keeps the viewer responsive when no client is connected."""
@@ -595,13 +593,13 @@ async def viewer_idle_loop(state: SharedState):
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        print(f"Error in viewer idle loop: {e}")
+        gs.logger.error(f"Viewer idle loop error: {e}")
         traceback.print_exc()
 
 
 async def handle_client(websocket, state: SharedState, path=None):
     """Listens for client messages and updates the shared state."""
-    print("Client connected. Ready to receive commands.")
+    gs.logger.info("Client connected")
     state.is_client_connected = True
     
     producer_task = asyncio.create_task(simulation_loop(websocket, state))
@@ -636,20 +634,20 @@ async def handle_client(websocket, state: SharedState, path=None):
                     pass  # Placeholder for future implementation
 
             except json.JSONDecodeError:
-                print("Invalid JSON received from client.")
+                gs.logger.warning("Invalid JSON from client")
             except Exception as e:
-                print(f"Error processing client message: {e}")
+                gs.logger.error(f"Error processing message: {e}")
     
     finally:
-        print("Cancelling simulation loop...")
+        gs.logger.debug("Cancelling simulation loop")
         producer_task.cancel()
         try:
             await producer_task
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"Error during producer task cancellation: {e}")
-        print("Client disconnected cleanly.")
+            gs.logger.error(f"Task cancellation error: {e}")
+        gs.logger.info("Client disconnected")
         state.is_client_connected = False
 
 
@@ -657,18 +655,19 @@ async def main():
     # Force line buffering for stdout so logs appear immediately (fixes buffering issue)
     sys.stdout.reconfigure(line_buffering=True)
     
+    # Use print before gs.init() is called by build_env()
     print("Building simulation environment...")
     cfg = TeleopOptions()
     cfg.general.show_viewer = True
-    env = build_env(cfg)
+    env = build_env(cfg)  # gs.init() is called inside here
     shared_state = SharedState(env)
     shared_state.robot.set_control_mode("TELEPORT")
 
-    # Perform warm-up reset to ensure JIT/Allocations for reset are done
-    print("Warming up simulation reset...")
+    # gs.logger is now available after build_env()
+    gs.logger.info("Warming up simulation reset...")
     await shared_state.reset_simulation()
 
-    print("Environment ready. Server listening on port 8765.")
+    gs.logger.info("Server ready on port 8765")
     handler = functools.partial(handle_client, state=shared_state)
 
     
@@ -678,7 +677,7 @@ async def main():
     # Register signal handler for SIGINT (Ctrl+C)
     loop = asyncio.get_running_loop()
     def _handle_sigint():
-        print("\nReceived SIGINT (Ctrl+C). Shutting down...")
+        gs.logger.info("SIGINT received, shutting down...")
         stop_event.set()
         
     try:
@@ -693,13 +692,13 @@ async def main():
              # Wait until stop signal is received
              await stop_event.wait()
         finally:
-             print("Cleaning up tasks...")
+             gs.logger.debug("Cleaning up tasks")
              idle_task.cancel()
              try:
                  await idle_task
              except asyncio.CancelledError:
                  pass
-             print("Shutdown complete.")
+             gs.logger.info("Shutdown complete")
 
 
 if __name__ == "__main__":
