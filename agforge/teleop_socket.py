@@ -317,6 +317,11 @@ class SharedState:
             'qpos': self.qpos.clone()
         }
         self.checkpoints.append(ckpt)
+        
+        # Enforce max checkpoints limit
+        if len(self.checkpoints) > 50:
+            self.checkpoints.pop(0)
+
         gs.logger.info(f"Checkpoint saved ({len(self.checkpoints)} total)")
 
     async def reset_simulation(self):
