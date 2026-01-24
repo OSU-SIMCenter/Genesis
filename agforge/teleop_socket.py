@@ -250,26 +250,37 @@ class SharedState:
         # --- RELEASE STAGE ---
         elif self.strike_state == StrikeState.RELEASE:
             release_speed = self.env.cfg.strike.pressing_speed
-            contact_threshold = 10.0
+            contact_threshold = self.env.cfg.strike.contact_force_threshold * 0.2
+            force_balance_gain = self.env.cfg.strike.force_balance_gain
             
-            # ALWAYS apply opening velocity first - grippers need to physically separate
+            # Force balancing
+            force_L, force_R = self.robot.get_resistance_forces()
+            gs.logger.info(f"Forces: L={force_L:.1f} R={force_R:.1f}")
+            imbalance = force_L - force_R
+            correction = imbalance * force_balance_gain
+            
+            # Base velocity is opening (negative)
+            # If Force_L > Force_R (L has higher resistance), correction is positive.
+            # v_L becomes (-Speed - Correction) -> More negative -> Opens faster to relieve force
+            # v_R becomes (-Speed + Correction) -> Less negative -> Opens slower
             v_open = -release_speed
+            v_L = v_open - correction
+            v_R = v_open + correction
+            
             vel_cmd = torch.zeros(4, device=self.env.device)
-            vel_cmd[2] = v_open
-            vel_cmd[3] = v_open
+            vel_cmd[2] = v_L
+            vel_cmd[3] = v_R
             self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
             
             # Check if grippers have separated enough
             pos_L = self.robot.left_gripper.get_pos()
             pos_R = self.robot.right_gripper.get_pos()
             current_width = torch.norm(pos_L - pos_R).item()
-            
-            force_L, force_R = self.robot.get_resistance_forces()
-            gs.logger.info(f"Forces: L={force_L:.1f} R={force_R:.1f}")
 
-            # Exit only if forces low AND grippers have separated
-            min_release_width = self.contact_width * 1.1
-            if force_L < contact_threshold and force_R < contact_threshold and current_width > min_release_width:
+            # Exit only if forces low (grippers separated enough to have no force)
+            
+            # Use abs() to handle negative sticking forces
+            if abs(force_L) < contact_threshold and abs(force_R) < contact_threshold:
                  # Stop velocities
                  vel_cmd = torch.zeros(4, device=self.env.device)
                  self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
