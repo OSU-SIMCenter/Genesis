@@ -3,29 +3,29 @@ import json
 import traceback
 import sys
 import signal
-import websockets
-import logging
-
-# Suppress websockets connection errors (caused by port checks like 'nc')
-logging.getLogger("websockets").setLevel(logging.CRITICAL)
-
-import torch
-import numpy as np
 import functools
-import trimesh
 import struct
 import math
 import time
+from enum import Enum
+
+import websockets
+import logging
+import torch
+import numpy as np
+import trimesh
+import gstaichi as ti
 
 import genesis.utils.particle as pu
 from genesis.utils.misc import ti_to_numpy
-import gstaichi as ti
-
 from options import TeleopOptions
 from agforge_builder import build_env, RobotXMLGenerator
 from environment import AgilityForgeEnv
 
-# Transformation constants (used by both InputMapper and SharedState)
+# Suppress websockets connection errors (caused by port checks like 'nc')
+logging.getLogger("websockets").setLevel(logging.CRITICAL)
+
+# Transformation constants
 TRANSFORM_SCALE = 31.275
 TRANSFORM_HEIGHT_FACTOR = 0.375
 
@@ -75,7 +75,7 @@ class InputMapper:
         return slider_qpos, hinge_qpos
 
 
-from enum import Enum
+
 
 class StrikeState(Enum):
     IDLE = 0
@@ -106,9 +106,7 @@ class SharedState:
         self.contact_R = False
         self.target_strain = 0.5  # Default, updated by client force param
 
-        self.last_update_time = time.time()
         self.press_start_time = 0.0
-        self.press_duration = 4.0
         self.contact_width = 0.0
 
         # Surface reconstruction
@@ -161,7 +159,7 @@ class SharedState:
         if self.strike_state == StrikeState.IDLE:
             return
 
-        dt = self.env.cfg.sim.dt # physics dt, logic update
+
         
         # --- APPROACHING STAGE ---
         if self.strike_state == StrikeState.APPROACHING:
@@ -181,40 +179,10 @@ class SharedState:
                 self.contact_R = True
                 print(f"Contact R Detected! Force: {force_R:.2f}")
 
-            # Calculate Velocity Command
-            # Left Gripper (Index 2): Closing is +Y? 
-            # Wait, let's re-verify direction.
-            # AgilityForgeBuilder: 
-            # Left Gripper: Axis (0, 1, 0). Closing = Moves towards Center (0). Start Y is negative (-start_y).
-            # Center is 0. So it moves from negative Y to 0. Velocity should be +Y. POSITIVE.
-            # Right Gripper: Axis (0, -1, 0). Pos "0 start_y 0". Start Y is positive.
-            # Center is 0. So it moves from positive Y to 0. Velocity should be +Y?
-            # Join Axis (0, -1, 0) means positive q-velocity moves in (0, -1, 0) direction (Negative Y).
-            # From positive Y to 0 is Negative Y direction. So q-velocity should be POSITIVE.
-            # So both should have POSITIVE q-velocity to close.
-            
+            # Build velocity command: positive = closing
             vel_cmd = torch.zeros(4, device=self.env.device)
-            
-            # Keep Slider/Hinge zero velocity (or maintain position? VELOCITY_CONTROL mode zeros others)
-            # Actually VELOCITY_CONTROL mode in apply_velocity sets all?
-            # apply_velocity takes (4,) tensor.
-            
-            # Gripper Velocity
-            v_close = approach_speed
-            
-            if self.contact_L:
-                vel_cmd[2] = 0.0 # Freeze
-            else:
-                vel_cmd[2] = v_close
-                
-            if self.contact_R:
-                vel_cmd[3] = 0.0 # Freeze
-            else:
-                vel_cmd[3] = v_close
-                
-            # Apply Velocity Command
-            # We must be careful not to zero out slider/hinge velocity if they were moving, 
-            # but usually they are static during strike.
+            vel_cmd[2] = 0.0 if self.contact_L else approach_speed
+            vel_cmd[3] = 0.0 if self.contact_R else approach_speed
             self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
             
             # Transition Condition
@@ -253,9 +221,6 @@ class SharedState:
                 current_strain = 0.0
                 
             elapsed_time = time.time() - self.press_start_time
-            
-            # Debug Stats
-            # print(f"Strain: {current_strain:.4f}, FL: {force_L:.1f}, FR: {force_R:.1f}")
 
             # Termination Conditions
             stop_reason = None
@@ -274,28 +239,12 @@ class SharedState:
                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
                 return
 
-            # Force Balancing Control
-            # Force imbalance: Positive if Left is pushing harder (needs to slow down) 
-            # or Right is pushing harder?
-            # Imbalance = L - R
-            # v_L = target - (L-R)*k
-            # v_R = target + (L-R)*k
-            # Check signs:
-            # If L > R (L pushing harder), L should slow down (reduce v_L). 
-            # Correction = (L-R) * k (Positive). v_L = v - corr (Reduced). Correct.
-            # R should speed up (increase v_R). v_R = v + corr (Increased). Correct.
-            
+            # Force balancing: reduce speed on the side with higher force
             imbalance = force_L - force_R
             correction = imbalance * force_balance_gain
             
-            v_L = pressing_speed - correction
-            v_R = pressing_speed + correction
-            
-            # Clamp velocities to be non-negative (don't reverse?) 
-            # or allow reverse for active balancing? 
-            # Usually we don't want to open, just slow down.
-            v_L = max(0.0, v_L)
-            v_R = max(0.0, v_R)
+            v_L = max(0.0, pressing_speed - correction)
+            v_R = max(0.0, pressing_speed + correction)
             
             vel_cmd = torch.zeros(4, device=self.env.device)
             vel_cmd[2] = v_L
@@ -454,15 +403,9 @@ class SharedState:
         return vertices, triangles, points
 
     async def update_reconstructed_mesh(self):
+        """Reconstruct mesh during active strike stages."""
         if not self.recon_enabled or self.strike_state == StrikeState.IDLE:
-             # Only reconstruct when active
-             # Or maybe keep reconstruction active? 
-             # Logic said "if not is_pressing" return. 
-             # Let's reconstruct if we are in APPROACHING or SQUEEZING or HOLDING
-             pass
-        
-        if self.strike_state == StrikeState.IDLE:
-             return
+            return
 
         self.frame_counter += 1
         if self.frame_counter % self.recon_frame_interval != 0:
@@ -519,14 +462,11 @@ class SharedState:
                  print("Warning: No active particles for reconstruction.")
                  return
 
-            # print(f"DEBUG: Reconstructing {len(particles)} particles. Backend: splashsurf (in-process)")
             self.reconstructed_mesh = pu.particles_to_mesh(
                 positions=particles,
                 radius=radius,
                 backend='splashsurf'
             )
-            # t1 = time.time()
-            # print(f"DEBUG: Reconstruction took {t1-t0:.4f}s")
             
         except Exception as e:
             print(f"Error during surface reconstruction: {e}")
@@ -544,9 +484,9 @@ def _prepare_array(arr, dtype):
         arr = arr.to_numpy()
     elif hasattr(arr, 'numpy'):
         try:
-             arr = arr.numpy()
-        except:
-             pass
+            arr = arr.numpy()
+        except Exception:
+            pass
              
     if isinstance(arr, list):
         arr = np.array(arr)
