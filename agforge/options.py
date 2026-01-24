@@ -192,8 +192,8 @@ class AgilityForgeOptions(Options):
     def model_post_init(self, __context: any) -> None:
         # --- Perform all calculations first ---
         self.sim = SimOptions(
-            dt=1.4e-6 * 16,
-            substeps=16,
+            dt=1.4e-6 * 8,
+            substeps=8,
             gravity=(0, 0, 0),
         )
         self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt)
@@ -254,15 +254,15 @@ class TrainingOptions(AgilityForgeOptions):
 
 class StrikeOptions(Options):
     """Parameters for the approaching and pressing stage."""
-    approach_speed: float = 5.e1
-    contact_force_threshold: float = 300.0 # Force threshold to detect contact
+    approach_speed: float = 4.e1
+    contact_force_threshold: float = 150.0 # Force threshold to detect contact
     
     # Pressing Stage
-    pressing_speed: float = 5.e1 # m/s
-    force_balance_gain: float = 0.0 # (m/s) / N. Start with 0.0 for constant velocity testing as requested.
-    target_strain: float = 0.5 # 50% compression
+    pressing_speed: float = 1.e1 # m/s
+    force_balance_gain: float = 1.e-4 # (m/s) / N. Start with 0.0 for constant velocity testing as requested.
+    target_strain: float = 0.1 # 10% compression
     max_force: float = 50000.0 # N
-    pressing_timeout: float = 5.0 # seconds
+    pressing_timeout: float = 15.0 # seconds
     
 class AdaptiveControlConfig(Options):
     """Configuration for adaptive control gains."""
