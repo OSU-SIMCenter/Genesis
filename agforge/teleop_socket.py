@@ -165,7 +165,7 @@ class SharedState:
             
             # Get resistance forces (projected along closing axis)
             force_L, force_R = self.robot.get_resistance_forces()
-            gs.logger.debug(f"Forces: L={force_L:.1f} R={force_R:.1f}")
+            gs.logger.info(f"Forces: L={force_L:.1f} R={force_R:.1f}")
             
             # Check for contact
             if not self.contact_L and force_L > contact_threshold:
@@ -203,7 +203,7 @@ class SharedState:
 
             # Get current forces
             force_L, force_R = self.robot.get_resistance_forces()
-            gs.logger.debug(f"Forces: L={force_L:.1f} R={force_R:.1f}")
+            gs.logger.info(f"Forces: L={force_L:.1f} R={force_R:.1f}")
             
             # Calculate separation and strain
             pos_L = self.robot.left_gripper.get_pos()
@@ -265,6 +265,7 @@ class SharedState:
             current_width = torch.norm(pos_L - pos_R).item()
             
             force_L, force_R = self.robot.get_resistance_forces()
+            gs.logger.info(f"Forces: L={force_L:.1f} R={force_R:.1f}")
 
             # Exit only if forces low AND grippers have separated
             min_release_width = self.contact_width * 1.1
