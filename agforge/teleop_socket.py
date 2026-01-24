@@ -664,8 +664,21 @@ async def main():
     shared_state.robot.set_control_mode("TELEPORT")
 
     # gs.logger is now available after build_env()
-    gs.logger.info("Warming up simulation reset...")
+    gs.logger.info("Warming up simulation...")
     await shared_state.reset_simulation()
+
+    # Warm-up strike to pre-compile velocity control and force reading kernels
+    # This eliminates the JIT compilation pause on the first real strike
+    gs.logger.info("Warming up strike kernels...")
+    shared_state.robot.set_control_mode("VELOCITY_CONTROL")
+    vel_cmd = torch.zeros(4, device=env.device)
+    vel_cmd[2] = 1.0  # Small gripper velocity
+    vel_cmd[3] = 1.0
+    shared_state.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=env.device))
+    env.scene.step()  # Step once to compile the kernels
+    shared_state.robot.get_resistance_forces()  # Compile force reading
+    shared_state.robot.set_control_mode("TELEPORT")
+    await shared_state.reset_simulation()  # Reset back to initial state
 
     gs.logger.info("Server ready on port 8765")
     handler = functools.partial(handle_client, state=shared_state)
