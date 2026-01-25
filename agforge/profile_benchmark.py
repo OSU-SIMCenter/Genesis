@@ -5,6 +5,7 @@ import numpy as np
 import genesis as gs
 import sys
 import os
+import argparse
 
 # Ensure we can import from local directory
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,24 +17,18 @@ from agforge_builder import build_env
 
 def run_benchmark():
     # --- Configuration ---
-    # Customize these ranges as needed
     CONFIG = {
-        # Grid resolutions (cells per unit, roughly). Higher = finer grid.
-        "grid_densities": [100, 200], 
+        # Grid resolutions (cells per unit).
+        "grid_densities": [64, 80], # Faster default
         
-        # Particle size multipliers relative to grid cell size.
-        # size = (1.0 / grid_density) * multiplier
-        # Lower multiplier = smaller particles = MORE particles.
-        "particle_multipliers": [0.25, 0.5, 1.0], 
+        # Particle size multipliers
+        "particle_multipliers": [0.5, 1.0], 
         
         # Total physics substeps per 'Frame'.
-        # We will compare doing these all-at-once (Internal) vs one-by-one (External).
-        "total_substeps_target": 32,
-        
-        # Stepping Modes:
-        # "internal": sim.substeps = total_target. env.step() called once.
-        # "external": sim.substeps = 1. env.step() called total_target times.
-        "stepping_modes": ["internal", "external"],
+        # Visualizer uses 32 loops of 32 substeps = 1024 total.
+        # We will match this exactly.
+        "substeps_per_call": 32, 
+        "manual_loops": 32,
         
         "warmup_frames": 3,
         "measure_frames": 10
@@ -44,8 +39,13 @@ def run_benchmark():
     print(f"Starting Benchmark Sweep...")
     print(json.dumps(CONFIG, indent=2))
     print("-" * 60)
+    
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--visualize", action="store_true", help="Enable viewer to watch the benchmark running")
+    args = parser.parse_args()
 
-    # Import dependencies for Logic/Recon/IO
+    # Import dependencies
     import struct
     import contextlib
     from genesis.utils import particle as pu
@@ -54,39 +54,24 @@ def run_benchmark():
     
     # Helper to mimic SharedState logic
     def mock_reconstruction(env, profiler):
-        # Based on TeleopSocket logic
         with profiler.time("teleop_recon"):
             solver = env.scene.sim.mpm_solver
-            # Sync needed for accurate timing of GPU ops
-            # gs.tools.run_in_thread(ti.sync)
             ti.sync()
             
-            # Access particles (expensive copy to CPU usually)
             if hasattr(solver.particles_render.pos, 'to_numpy'):
                  particles = solver.particles_render.pos.to_numpy()
             else:
                  from genesis.utils.misc import ti_to_numpy
                  particles = ti_to_numpy(solver.particles_render.pos)
 
-            # Ensure particles is numpy CPU (handle Tensor case)
             if hasattr(particles, 'cpu'): particles = particles.cpu()
             if hasattr(particles, 'numpy'): particles = particles.numpy()
 
-            # Slice batch dim
             particles = particles[:, 0]
-            
-            # offset = env.scene.envs_offset[0]
-            # Hardcoding offset to unblock profiling - performance impact is negligible
             offset = np.zeros(3, dtype=np.float32)
-            
             particles = particles + offset
-            
-            # Subsample (simulate production setting)
-            # In teleop this is configurable, let's assume 1.0 for stress testing
-            
             radius = solver.particle_radius
             
-            # Mesh Gen
             mesh = pu.particles_to_mesh(
                 positions=particles,
                 radius=radius,
@@ -96,7 +81,6 @@ def run_benchmark():
 
     def mock_io(mesh, particles, profiler):
         with profiler.time("teleop_io"):
-            # Prepare arrays
             v_flat = np.array(mesh.vertices).flatten().astype(np.float32)
             t_flat = np.array(mesh.faces).flatten().astype(np.int32)
             p_flat = particles.flatten().astype(np.float32)
@@ -115,50 +99,42 @@ def run_benchmark():
             message = struct.pack('<I', len(header_json)) + header_json + binary_body
             return len(message)
 
-    # Generate combinations
     from itertools import product
     combinations = list(product(
         CONFIG["grid_densities"], 
-        CONFIG["particle_multipliers"], 
-        CONFIG["stepping_modes"]
+        CONFIG["particle_multipliers"]
     ))
     
-    total_substeps = CONFIG["total_substeps_target"]
+    # We removed Stepping Mode "Internal/External" because we rely on the Hybrid (Visualizer) approach for correctness.
+    # It is effectively "Internal" with manual loops.
     
-    for grid_res, p_mult, step_mode in combinations:
-        print(f"\n>>> Running Config: Grid={grid_res}, PMult={p_mult}, Mode={step_mode}")
+    for grid_res, p_mult in combinations:
+        print(f"\n>>> Running Config: Grid={grid_res}, PMult={p_mult}")
         
         cfg = TeleopOptions()
-        cfg.general.show_viewer = False 
+        cfg.general.show_viewer = args.visualize 
         cfg.profiling.enabled = True
         
-        # --- Parameter Setup ---
-        # 1. Grid Resolution
+        if args.visualize:
+            cfg.vis.visualize_mpm_grid = True
+            cfg.vis.visualize_mpm_boundary = True
+            cfg.vis.show_world_frame = False
+        
         cfg.robot.base_grid_density = grid_res
         cfg.mpm.grid_density = grid_res
         
-        # 2. Particle Size (Independent of Grid somewhat, but relative to it)
-        # Standard: 1.0/res. scaled by multiplier.
-        # cfg.mpm.particle_size = (1.0 / grid_res) * p_mult 
-        # Note: 'particle_size' in Genesis usually means DIAMETER or RADIUS? 
-        # Reference options.py: particle_size = 0.8 * 0.01 * 64.0 / grid_density
-        # Let's just scale that reference formula.
         base_ref_size = 0.8 * 0.01 * 64.0 / grid_res
         cfg.mpm.particle_size = base_ref_size * p_mult
         
-        # 3. Stepping Mode
-        if step_mode == "internal":
-            cfg.sim.substeps = total_substeps
-            loop_iterations = 1 # One python call, N internal substeps
-        else:
-            cfg.sim.substeps = 1
-            loop_iterations = total_substeps # N python calls, 1 internal substep each
+        # Match Visualizer exactly
+        cfg.sim.substeps = CONFIG["substeps_per_call"] # 32
+        loop_iterations = CONFIG["manual_loops"] # 32
+        
+        # Total Substeps = 32 * 32 = 1024
             
-        # 4. Bounds (Robust)
         dx = 1.0 / grid_res
         mpm_solver_padding = 5 * dx 
         
-        # Force cleanup of bounds (prevent GPU Tensor contamination)
         try:
             b0 = cfg.robot.target_shape_bounds[0]
             b1 = cfg.robot.target_shape_bounds[1]
@@ -168,10 +144,8 @@ def run_benchmark():
             elif not isinstance(b1, np.ndarray): b1 = np.array(b1)
             cfg.robot.target_shape_bounds = (b0, b1)
         except Exception:
-             # Fallback if accessing fails
              pass
 
-        # Recalculate full bounds for safety (same code as before)
         cylinder_height = cfg.robot.cylinder_height
         cylinder_radius = cfg.robot.cylinder_radius
         cylinder_pos = cfg.robot.cylinder_pos
@@ -188,9 +162,7 @@ def run_benchmark():
             profiler = env.scene.profiling_options.profiler
             
             # --- Warmup ---
-            # Teleport grippers to near-contact position so the benchmark measures actual collision physics
-            # Calculated Contact Point is approx 0.0165 joint val.
-            # We teleport to 0.015 (Pre-Contact)
+            print("  > Warmup...", end="", flush=True)
             env.robot.set_control_mode("TELEPORT")
             warmup_pos = torch.zeros(4, device=env.device)
             warmup_pos[2] = 0.015
@@ -198,9 +170,12 @@ def run_benchmark():
             env.robot.apply_action(warmup_pos, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=env.device))
             
             for _ in range(CONFIG["warmup_frames"]):
-                # Run complete "frame" (N substeps)
                 for _ in range(loop_iterations):
                     env.scene.step()
+                    if cfg.general.show_viewer:
+                         if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'): env.scene.sim.mpm_solver.update_render_fields()
+                         else: env.scene.visualizer.update_visual_states()
+            print(" Done.")
             
             # --- Benchmark ---
             profiler.reset()
@@ -209,9 +184,8 @@ def run_benchmark():
             
             start_time = time.time()
             sim_t = 0.0
-            dt = cfg.sim.dt * total_substeps # approx frame dt
+            dt = cfg.sim.dt * (cfg.sim.substeps * loop_iterations)
             
-            # Squeeze Parameters (Matches Visualization)
             press_start = 0.015
             press_end = 0.022
             press_frames = 7
@@ -222,20 +196,20 @@ def run_benchmark():
             env.robot.set_control_mode("PD_CONTROL")
             pos_cmd = torch.zeros(4, device=env.device)
 
+            print("  > Measuring: ", end="", flush=True)
+
             for i in range(measure_frames):
+                print(f"{i+1}..", end="", flush=True)
+                
                 with profiler.time("total_frame"):
                     
-                    # Logic (Once per frame)
                     with profiler.time("teleop_logic"):
                             fL, fR = env.robot.get_resistance_forces()
                             
-                            # Simulate Split Press/Release Motion
                             if i < press_frames:
-                                # PRESS
                                 p = i / (press_frames - 1) if press_frames > 1 else 1.0
                                 curr_target = press_start + (press_end - press_start) * p
                             else:
-                                # RELEASE
                                 rel_i = i - press_frames
                                 p = rel_i / (release_frames)
                                 curr_target = press_end + (release_end - press_end) * p
@@ -244,32 +218,26 @@ def run_benchmark():
                             pos_cmd[3] = curr_target 
                             env.robot.apply_action(pos_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=env.device))
                         
-                        # Physics (Loop based on mode)
-                        # Note: We group the entire physics loop under 'teleop_physics_loop' for clarity
-                        # The internal genesis profiler will capture 'substep' calls inside.
-                        with profiler.time("teleop_physics_loop"):
-                            for _ in range(loop_iterations):
-                                env.scene.step()
-                        
-                        sim_t += dt
-
-                        # Updates
-                        if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'):
-                            env.scene.sim.mpm_solver.update_render_fields()
-                        else:
-                            env.scene.visualizer.update_visual_states()
-                        
-                    # Recon (Once per frame)
-                    mesh, particles = mock_reconstruction(env, profiler)
+                    with profiler.time("teleop_physics_loop"):
+                        for _ in range(loop_iterations):
+                            env.scene.step()
                     
-                    # IO (Once per frame)
+                    sim_t += dt
+
+                    if cfg.general.show_viewer:
+                            if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'):
+                                env.scene.sim.mpm_solver.update_render_fields()
+                            else:
+                                env.scene.visualizer.update_visual_states()
+                        
+                    mesh, particles = mock_reconstruction(env, profiler)
                     bytes_sent = mock_io(mesh, particles, profiler)
                     
+            print(" Done.")
             end_time = time.time()
             total_duration = end_time - start_time
             avg_fps = measure_frames / total_duration
             
-            # Extract Stats
             stats_dict = {}
             for name, stat in profiler.stats.items():
                 stats_dict[name] = {
@@ -283,8 +251,9 @@ def run_benchmark():
                 "config": {
                     "grid_res": grid_res, 
                     "particle_mult": p_mult,
-                    "stepping_mode": step_mode,
-                    "total_substeps": total_substeps
+                    "stepping_mode": "hybrid",
+                    "substeps_per_call": cfg.sim.substeps,
+                    "loop_iterations": loop_iterations
                 },
                 "metrics": {
                     "n_particles": int(n_particles),
