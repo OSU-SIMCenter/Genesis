@@ -127,16 +127,18 @@ def build_env(cfg: AgilityForgeOptions) -> AgilityForgeEnv:
     else:
         print("⚠️ Torch reports CUDA not available. Defaulting to CPU.")
 
-    try:
-        gs.init(backend=backend, logging_level="info", performance_mode=cfg.performance_mode)
-        print(f"Genesis initialized with backend: {backend}")
-    except Exception as e:
-        # If GPU/Metal init specifically fails (and we were trying it), we might want to fallback.
-        if backend in [gs.gpu, gs.metal]:
-             print(f"⚠️ Genesis {backend} init failed ({e}). Attempting fallback to CPU...")
-             gs.init(backend=gs.cpu, logging_level="info", performance_mode=cfg.performance_mode)
-        else:
-             raise e
+    # Only init if not already initialized
+    if not gs._initialized:
+        try:
+            gs.init(backend=backend, logging_level="info", performance_mode=cfg.performance_mode)
+            print(f"Genesis initialized with backend: {backend}")
+        except Exception as e:
+            # If GPU/Metal init specifically fails (and we were trying it), we might want to fallback.
+            if backend in [gs.gpu, gs.metal]:
+                 print(f"⚠️ Genesis {backend} init failed ({e}). Attempting fallback to CPU...")
+                 gs.init(backend=gs.cpu, logging_level="info", performance_mode=cfg.performance_mode)
+            else:
+                 raise e
     
     env = AgilityForgeEnv(cfg)
     
