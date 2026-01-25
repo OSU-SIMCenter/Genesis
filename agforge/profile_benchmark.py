@@ -17,27 +17,31 @@ from agforge_builder import build_env
 
 def run_benchmark():
     # --- Configuration ---
+    
+    # "Atomic" unit of time.
+    BASE_DT = 1.4e-6 
+    
+    # Total "Atomic Steps" for the entire test.
+    # Scaled to 2048 to allow S=1024 to run at least 2 frames (1 Press, 1 Release)
+    TOTAL_ATOMIC_STEPS = 2048 
+    
+    # Target frames for granular configs
+    TARGET_FRAMES = 8 
+    
     CONFIG = {
-        # Grid resolutions (cells per unit).
-        "grid_densities": [64, 80], # Faster default
+        "grid_densities": [64, 128], 
+        "particle_multipliers": [1.0, 0.25], # 1.0=Sparse, 0.25=Dense (1/4 size ~ 64x? No, 8x? particles)
         
-        # Particle size multipliers
-        "particle_multipliers": [0.5, 1.0], 
-        
-        # Total physics substeps per 'Frame'.
-        # Visualizer uses 32 loops of 32 substeps = 1024 total.
-        # We will match this exactly.
-        "substeps_per_call": 32, 
-        "manual_loops": 32,
-        
-        "warmup_frames": 3,
-        "measure_frames": 10
+        # Wide Sweep including typical (32) and extreme (1024)
+        "substeps_sweep": [32, 64, 128, 256, 512, 1024] 
     }
     
     results = []
     
     print(f"Starting Benchmark Sweep...")
     print(json.dumps(CONFIG, indent=2))
+    print(f"Total Atomic Steps: {TOTAL_ATOMIC_STEPS}")
+    print(f"Total Physical Time: {TOTAL_ATOMIC_STEPS * BASE_DT * 1000:.4f} ms")
     print("-" * 60)
     
     import argparse
@@ -99,18 +103,38 @@ def run_benchmark():
             message = struct.pack('<I', len(header_json)) + header_json + binary_body
             return len(message)
 
+    import glob
+
     from itertools import product
-    combinations = list(product(
+    
+    scene_params = list(product(
         CONFIG["grid_densities"], 
-        CONFIG["particle_multipliers"]
+        CONFIG["particle_multipliers"],
+        CONFIG["substeps_sweep"]
     ))
     
-    # We removed Stepping Mode "Internal/External" because we rely on the Hybrid (Visualizer) approach for correctness.
-    # It is effectively "Internal" with manual loops.
-    
-    for grid_res, p_mult in combinations:
-        print(f"\n>>> Running Config: Grid={grid_res}, PMult={p_mult}")
+    for grid_res, p_mult, substeps in scene_params:
         
+        # Check if already run
+        existing_pattern = os.path.join(current_dir, "benchmark_data", f"bench_G{grid_res}_P{p_mult}_{substeps}S_*.json")
+        if glob.glob(existing_pattern):
+            print(f"Skipping config (already exists): G={grid_res}, P={p_mult}, S={substeps}")
+            continue
+
+        # Calculate params for this run
+        total_sim_loops = TOTAL_ATOMIC_STEPS // substeps
+        
+        # Dynamic Frame Logic
+        # If we have very few loops (e.g. 2), we reduce frame count to match.
+        measure_frames = min(TARGET_FRAMES, total_sim_loops)
+        loops_per_frame = total_sim_loops // measure_frames
+        
+        # Calculated dt logic
+        sim_dt = BASE_DT * substeps
+        
+        print(f"\n>>> Config: Grid={grid_res}, PMult={p_mult}, Substeps={substeps}")
+        print(f"    SimDT={sim_dt:.2e}, Loops/Frame={loops_per_frame}, Frames={measure_frames}")
+
         cfg = TeleopOptions()
         cfg.general.show_viewer = args.visualize 
         cfg.profiling.enabled = True
@@ -126,12 +150,10 @@ def run_benchmark():
         base_ref_size = 0.8 * 0.01 * 64.0 / grid_res
         cfg.mpm.particle_size = base_ref_size * p_mult
         
-        # Match Visualizer exactly
-        cfg.sim.substeps = CONFIG["substeps_per_call"] # 32
-        loop_iterations = CONFIG["manual_loops"] # 32
+        # Configure Simulation
+        cfg.sim.dt = sim_dt
+        cfg.sim.substeps = substeps
         
-        # Total Substeps = 32 * 32 = 1024
-            
         dx = 1.0 / grid_res
         mpm_solver_padding = 5 * dx 
         
@@ -169,29 +191,21 @@ def run_benchmark():
             warmup_pos[3] = 0.015
             env.robot.apply_action(warmup_pos, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=env.device))
             
-            for _ in range(CONFIG["warmup_frames"]):
-                for _ in range(loop_iterations):
-                    env.scene.step()
-                    if cfg.general.show_viewer:
-                         if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'): env.scene.sim.mpm_solver.update_render_fields()
-                         else: env.scene.visualizer.update_visual_states()
+            # Warmup: Run 1 loop iteration
+            env.scene.step()
+            if cfg.general.show_viewer:
+                  if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'): env.scene.sim.mpm_solver.update_render_fields()
+                  else: env.scene.visualizer.update_visual_states()
             print(" Done.")
             
             # --- Benchmark ---
             profiler.reset()
             
-            measure_frames = CONFIG["measure_frames"]
-            
             start_time = time.time()
-            sim_t = 0.0
-            dt = cfg.sim.dt * (cfg.sim.substeps * loop_iterations)
             
             press_start = 0.015
             press_end = 0.022
-            press_frames = 7
-            
             release_end = 0.018
-            release_frames = 3
             
             env.robot.set_control_mode("PD_CONTROL")
             pos_cmd = torch.zeros(4, device=env.device)
@@ -201,29 +215,32 @@ def run_benchmark():
             for i in range(measure_frames):
                 print(f"{i+1}..", end="", flush=True)
                 
+                # Fractional Progress (0.0 to 1.0) through the sequence
+                # We split 70% Press, 30% Release
+                progress = i / max(1, measure_frames - 1) if measure_frames > 1 else 0.0
+                
                 with profiler.time("total_frame"):
                     
                     with profiler.time("teleop_logic"):
                             fL, fR = env.robot.get_resistance_forces()
                             
-                            if i < press_frames:
-                                p = i / (press_frames - 1) if press_frames > 1 else 1.0
-                                curr_target = press_start + (press_end - press_start) * p
+                            if progress <= 0.7:
+                                # Press Phase (0.0 to 0.7 remapped to 0.0-1.0)
+                                p_local = progress / 0.7
+                                curr_target = press_start + (press_end - press_start) * p_local
                             else:
-                                rel_i = i - press_frames
-                                p = rel_i / (release_frames)
-                                curr_target = press_end + (release_end - press_end) * p
+                                # Release Phase (0.7 to 1.0 remapped to 0.0-1.0)
+                                p_local = (progress - 0.7) / 0.3
+                                curr_target = press_end + (release_end - press_end) * p_local
                             
                             pos_cmd[2] = curr_target 
                             pos_cmd[3] = curr_target 
                             env.robot.apply_action(pos_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=env.device))
                         
                     with profiler.time("teleop_physics_loop"):
-                        for _ in range(loop_iterations):
+                        for _ in range(loops_per_frame):
                             env.scene.step()
                     
-                    sim_t += dt
-
                     if cfg.general.show_viewer:
                             if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'):
                                 env.scene.sim.mpm_solver.update_render_fields()
@@ -235,8 +252,10 @@ def run_benchmark():
                     
             print(" Done.")
             end_time = time.time()
+            
+            # Total Sequence Duration
             total_duration = end_time - start_time
-            avg_fps = measure_frames / total_duration
+            avg_fps = measure_frames / total_duration if total_duration > 0 else 0
             
             stats_dict = {}
             for name, stat in profiler.stats.items():
@@ -251,13 +270,14 @@ def run_benchmark():
                 "config": {
                     "grid_res": grid_res, 
                     "particle_mult": p_mult,
-                    "stepping_mode": "hybrid",
-                    "substeps_per_call": cfg.sim.substeps,
-                    "loop_iterations": loop_iterations
+                    "substeps": substeps,
+                    "dt": sim_dt,
+                    "loops_per_frame": loops_per_frame,
+                    "measure_frames": measure_frames
                 },
                 "metrics": {
                     "n_particles": int(n_particles),
-                    "avg_frame_time_ms": (total_duration / measure_frames) * 1000.0,
+                    "total_sequence_time_ms": total_duration * 1000.0,
                     "avg_fps": avg_fps,
                 },
                 "cProfile_stats": stats_dict
@@ -265,21 +285,34 @@ def run_benchmark():
             results.append(data_point)
             
             print(f"  > Particles: {n_particles}")
-            print(f"  > FPS: {avg_fps:.2f}")
-            print(f"  > Avg Frame Time: {data_point['metrics']['avg_frame_time_ms']:.2f} ms")
+            print(f"  > Total Simulation Time: {data_point['metrics']['total_sequence_time_ms']:.2f} ms")
             
-            env.scene.destroy()
+            # Incremental Save
+            timestamp = int(time.time())
+            filename = f"bench_G{grid_res}_P{p_mult}_{substeps}S_{timestamp}.json"
+            file_path = os.path.join(current_dir, "benchmark_data", filename)
+            
+            # Ensure directory exists (just in case)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
+            with open(file_path, 'w') as f:
+                json.dump(data_point, f, indent=2)
+                
+            print(f"  -> Saved result to: benchmark_data/{filename}")
             
         except Exception as e:
             print(f"  ERROR: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            if 'env' in locals() and env is not None:
+                if hasattr(env, 'scene') and env.scene is not None:
+                    env.scene.destroy()
 
-    output_path = os.path.join(current_dir, "profiling_results.json")
-    with open(output_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    
-    print(f"\nResults saved to {output_path}")
+    # Legacy: we don't necessarily need the monolithic file anymore, 
+    # but we can print a summary of how many were saved.
+    print(f"\nBenchmark Sweep Complete. {len(results)} results generated.")
+    print(f"Individual results saved to: {os.path.join(current_dir, 'benchmark_data')}")
 
 if __name__ == "__main__":
     run_benchmark()
