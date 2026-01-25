@@ -52,8 +52,12 @@ def run_benchmark():
                  particles = ti_to_numpy(solver.particles_render.pos)[:, 0]
             
             offset = env.scene.envs_offset[0]
-            if hasattr(offset, 'cpu'): offset = offset.cpu().numpy()
-            elif hasattr(offset, 'numpy'): offset = offset.numpy()
+            if isinstance(offset, torch.Tensor):
+                offset = offset.cpu().numpy()
+            elif hasattr(offset, 'to_numpy'):
+                 offset = offset.to_numpy()
+            elif hasattr(offset, 'numpy'):
+                 offset = offset.numpy()
             
             particles = particles + offset
             
@@ -104,6 +108,31 @@ def run_benchmark():
             cfg.mpm.grid_density = res
             cfg.mpm.particle_size = 0.8 * 0.01 * 64.0 / res
             cfg.sim.substeps = substeps
+            
+            # Recalculate bounds with new density (logic from options.py)
+            # Use safer padding (5*dx instead of 3*dx) or just add constant padding
+            dx = 1.0 / res
+            mpm_solver_padding = 5 * dx # Increased from 3*dx
+            
+            # We need to access the derived values that were calculated in model_post_init
+            # But we can just grab the existing bounds and expand them slightly?
+            # Or better, recalculate fully if we have the cylinder params.
+            # cfg.robot.cylinder_pos is available.
+            
+            # Re-implementing logic for safety:
+            cylinder_height = cfg.robot.cylinder_height
+            cylinder_radius = cfg.robot.cylinder_radius
+            cylinder_pos = cfg.robot.cylinder_pos
+            
+            mpm_x_padding_lower = cylinder_height * 0.85
+            mpm_x_padding_upper = cylinder_height * 0.52
+            mpm_yz_padding = cylinder_radius * 1.6
+            
+            mpm_lower_offset = np.array([mpm_x_padding_lower, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
+            mpm_upper_offset = np.array([mpm_x_padding_upper, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
+            
+            cfg.mpm.lower_bound = tuple(cylinder_pos - mpm_lower_offset)
+            cfg.mpm.upper_bound = tuple(cylinder_pos + mpm_upper_offset)
 
             try:
                 env = build_env(cfg)
