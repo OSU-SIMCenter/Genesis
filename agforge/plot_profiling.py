@@ -62,6 +62,15 @@ def parse_stats(stats_dict):
     # This might be missing overheads outside 'substep' inside scene.step()
     # But 'substep' captures the heavy lifting.
     physics_substep = stats_dict.get("substep", {}).get("total", 0)
+    
+    # Fallback: Sum granular physics keys if top-level 'substep' is missing
+    # Note: If running in 'External' mode, 'substep' might be called N times per frame.
+    # The 'total' value in stats is cumulative.
+    if physics_substep == 0:
+        granular_keys = ["mpm_reset_grid_grad", "mpm_compute_F_tmp", "mpm_svd", "mpm_p2g", "mpm_g2p", "substep_post_couple", "couple"]
+        for k in granular_keys:
+             physics_substep += stats_dict.get(k, {}).get("total", 0)
+
     physics_overhead = stats_dict.get("process_input", {}).get("total", 0) + stats_dict.get("rigid_solver_substep", {}).get("total", 0)
     
     # Recalculate physics to be precise:
@@ -84,13 +93,18 @@ def generate_plots():
         print("Error: agforge/profiling_results.json not found.")
         return
 
-    # Extract configs
-    configs = [f"R{d['config']['resolution']}_S{d['config']['substeps']}" for d in data]
+    # Extract configs keys for labels
+    # Format: G{grid}_P{mult}_{mode}
+    configs = []
+    for d in data:
+        c = d["config"]
+        configs.append(f"G{c['grid_res']}_P{c['particle_mult']}_{c['stepping_mode']}")
     
     breakdown_data = [parse_stats(d["cProfile_stats"]) for d in data]
     
     categories = ["Logic", "Physics", "Recon", "IO", "Other"]
     
+    # --- Plot 1: Overall Breakdown ---
     # Prepare data for stacked bar
     bar_data = {cat: [] for cat in categories}
     for item in breakdown_data:
@@ -100,7 +114,7 @@ def generate_plots():
     x = np.arange(len(configs))
     width = 0.5
     
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     
     bottom = np.zeros(len(configs))
     
@@ -109,7 +123,7 @@ def generate_plots():
         ax.bar(x, values, width, bottom=bottom, label=cat)
         bottom += values
         
-    ax.set_ylabel('Time (ms)')
+    ax.set_ylabel('Frame Time (ms)')
     ax.set_title('Profiling Breakdown by Config')
     ax.set_xticks(x)
     ax.set_xticklabels(configs, rotation=45, ha='right')
@@ -119,51 +133,115 @@ def generate_plots():
     plt.savefig("agforge/profiling_breakdown.png")
     print("Generated agforge/profiling_breakdown.png")
     
-    # --- Line Plots for Scaling ---
-    # Filter by substeps to see scaling with Resolution (Particles)
-    substeps_set = sorted(list(set(d['config']['substeps'] for d in data)))
+    # --- Plot 2: Stepping Mode Comparison (Internal vs External) ---
+    # We want to see the overhead of python calls.
+    # Group by (Grid, ParticleMult)
+    # Compare Frame Time for Internal vs External
     
-    fig2, ax2 = plt.subplots(figsize=(10, 6))
+    unique_params = set((d['config']['grid_res'], d['config']['particle_mult']) for d in data)
+    unique_params = sorted(list(unique_params))
     
-    for ss in substeps_set:
-        subset = [d for d in data if d['config']['substeps'] == ss]
-        subset.sort(key=lambda x: x['config']['resolution'])
+    internal_times = []
+    external_times = []
+    labels = []
+    
+    for g, p in unique_params:
+        internal = next((d for d in data if d['config']['grid_res'] == g and d['config']['particle_mult'] == p and d['config']['stepping_mode'] == 'internal'), None)
+        external = next((d for d in data if d['config']['grid_res'] == g and d['config']['particle_mult'] == p and d['config']['stepping_mode'] == 'external'), None)
         
-        n_particles = [d['metrics']['n_particles'] for d in subset]
-        times = [d['metrics']['avg_step_time_ms'] for d in subset]
+        if internal and external:
+            internal_times.append(internal['metrics']['avg_frame_time_ms'])
+            external_times.append(external['metrics']['avg_frame_time_ms'])
+            labels.append(f"G{g}_P{p}")
+            
+    if internal_times:
+        x2 = np.arange(len(labels))
+        width2 = 0.35
         
-        ax2.plot(n_particles, times, marker='o', label=f"Substeps={ss}")
+        fig2, ax2 = plt.subplots(figsize=(10, 6))
+        rects1 = ax2.bar(x2 - width2/2, internal_times, width2, label='Internal (Fused)')
+        rects2 = ax2.bar(x2 + width2/2, external_times, width2, label='External (Split)')
         
-    ax2.set_xlabel('Number of Particles')
-    ax2.set_ylabel('Total Step Time (ms)')
-    ax2.set_title('Performance Scaling with Particle Count')
-    ax2.legend()
-    ax2.grid(True)
+        ax2.set_ylabel('Frame Time (ms)')
+        ax2.set_title('Stepping Overhead: Internal vs External Loop')
+        ax2.set_xticks(x2)
+        ax2.set_xticklabels(labels)
+        ax2.legend()
+        
+        plt.tight_layout()
+        plt.savefig("agforge/stepping_overhead.png")
+        print("Generated agforge/stepping_overhead.png")
+
+    # --- Plot 3: Scaling (Particles vs Time) for Internal Mode ---
+    # Only use 'internal' as baseline
+    internal_data = [d for d in data if d['config']['stepping_mode'] == 'internal']
+    internal_data.sort(key=lambda x: x['metrics']['n_particles'])
     
-    plt.tight_layout()
-    plt.savefig("agforge/scaling_particles.png")
-    print("Generated agforge/scaling_particles.png")
-    
+    if internal_data:
+        n_parts = [d['metrics']['n_particles'] for d in internal_data]
+        times = [d['metrics']['avg_frame_time_ms'] for d in internal_data]
+        labels_pts = [f"G{d['config']['grid_res']}" for d in internal_data]
+        
+        fig3, ax3 = plt.subplots(figsize=(10, 6))
+        ax3.scatter(n_parts, times, color='red')
+        for i, txt in enumerate(labels_pts):
+            ax3.annotate(txt, (n_parts[i], times[i]))
+            
+        ax3.plot(n_parts, times, linestyle='--', color='gray', alpha=0.5)
+        
+        ax3.set_xlabel('Number of Particles')
+        ax3.set_ylabel('Frame Time (ms)')
+        ax3.set_title('Scaling: Frame Time vs Particle Count (Internal Mode)')
+        ax3.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig("agforge/scaling_particles.png")
+        print("Generated agforge/scaling_particles.png")
+
     # --- Text Report ---
     print("\n" + "="*60)
     print(f"{'PERFORMANCE REPORT':^60}")
     print("="*60)
     
     for item, d in zip(breakdown_data, data):
-        cfg_str = f"Resolution: {d['config']['resolution']}, Substeps: {d['config']['substeps']}"
+        c = d['config']
+        cfg_str = f"Grid: {c['grid_res']}, P-Mult: {c['particle_mult']}, Mode: {c['stepping_mode']}"
         metrics = d['metrics']
         raw_stats = d['cProfile_stats']
         
         print(f"\nConfiguration: {cfg_str}")
         print(f"  Particles: {metrics['n_particles']}")
-        print(f"  Total Step Time: {metrics['avg_step_time_ms']:.2f} ms")
+        print(f"  Frame Time: {metrics['avg_frame_time_ms']:.2f} ms")
         print(f"  FPS: {metrics['avg_fps']:.2f}")
         print("-" * 40)
         
         # Calculate percentages
-        total_ms = metrics['avg_step_time_ms']
+        total_ms = metrics['avg_frame_time_ms']
         
-        def print_row(label, val_ms, indent=0):
+        # NOTE: raw_stats count is Total Calls. 
+        # In External mode, step() is called N times per frame.
+        # But we aggregated 'total' time.
+        # item[] contains TOTAL time for the RUN.
+        # We need to divide item[] by 'measure_frames' (which we don't strictly have here, but we calculated avg_frame_time_ms).
+        # Ah, item[] values are raw totals from profiler.
+        # avg_frame_time_ms = total_duration / measure_frames.
+        # So we can just use the item ratios.
+        
+        # But for absolute ms printing?
+        # item['Logic'] is Sum of logic over M frames.
+        # We need (item['Logic'] / item['TotalFrame']) * avg_frame_time_ms?
+        # Or just (item['Logic'] / num_measured_frames).
+        
+        # We can extract num_measured_frames from 'total_frame' count in Internal mode.
+        # In External mode, 'total_frame' count is M.
+        # Wait, in benchmark script:
+        # for _ in range(measure_frames): with profiler.time("total_frame"): ...
+        # So 'total_frame' count is ALWAYS equal to measure_frames.
+        
+        measure_count = raw_stats.get('total_frame', {}).get('count', 1)
+        
+        def print_row(label, total_val_sec, indent=0):
+            val_ms = (total_val_sec / measure_count) * 1000.0
             pct = (val_ms / total_ms) * 100
             print(f"{'  '*indent}├── {label:<20} {val_ms:>8.2f} ms ({pct:>5.1f}%)")
 
@@ -171,51 +249,28 @@ def generate_plots():
         print_row("Logic", item['Logic'], indent=1)
         print_row("Recon", item['Recon'], indent=1)
         print_row("IO", item['IO'], indent=1)
-        print_row("Physics (Total)", item['Physics'], indent=1)
+        print_row("Physics (Dispatch)", item['Physics'], indent=1)
         
-        # Physics Details (if available in raw stats)
-        # These are internal genesis timers
+        # Physics Details
         physics_keys = [
             ("mpm_reset_grid_grad", "Reset Grid"),
-            ("mpm_compute_F_tmp", "F_tmp / SVD"), # SVD often inside here or separate? BaseMPM separates them
+            ("mpm_compute_F_tmp", "F_tmp / SVD"),
             ("mpm_svd", "SVD"),
             ("mpm_p2g", "P2G"),
-            ("mpm_g2p", "G2P", "substep_post_couple"), # G2P is inside post_couple usually
-            ("couple", "Coupling")
+            ("mpm_g2p", "G2P"),
+            ("couple", "Coupling"),
+            ("substep_post_couple", "Post-Couple")
         ]
         
         for key, label in physics_keys:
             if key in raw_stats:
-                val = raw_stats[key]['total'] * 1000 / d['cProfile_stats']['total_frame']['count'] # Per step avg
-                # Wait, raw stats total is sum of all steps. 
-                # breakdown_data values were NOT normalized by count?
-                # parse_stats used total. But breakdown_data was for stacked BAR which compares totals?
-                # Ah, parse_stats uses 'total'. 
-                # But 'avg_step_time_ms' is (Duration / Steps).
-                # raw_stats['total'] is sum over 'measure_steps'.
-                # So we need to divide by measuring steps to get per-step ms.
-                
-                # Correction: The 'item' dict from parse_stats contains TOTAL accumulated time?
-                # Let's check parse_stats implementation ... 
-                # Yes: `logic = stats_dict.get("teleop_logic", {}).get("total", 0)`
-                # So 'item' values are TOTALS for the whole run.
-                pass
+                val = raw_stats[key]['total']
+                print_row(f"↳ {label}", val, indent=2)
 
-        # Re-calc per-step for report
-        n_steps = raw_stats['total_frame']['count']
-        def get_ms(key):
-            return (raw_stats.get(key, {}).get('total', 0) / n_steps) * 1000.0
-
-        print_row("  ↳ Reset Grid", get_ms("mpm_reset_grid_grad"), indent=2)
-        print_row("  ↳ P2G", get_ms("mpm_p2g"), indent=2)
-        print_row("  ↳ SVD", get_ms("mpm_svd"), indent=2)
-        print_row("  ↳ Coupling", get_ms("couple"), indent=2)
-        # G2P is usually in post_couple
-        print_row("  ↳ Post-Couple/G2P", get_ms("substep_post_couple"), indent=2)
-        
         if item['Other'] > 0:
-             # 'Other' in item is total.
-             other_ms = (item['Other'] / n_steps) * 1000.0
-             print_row("Overhead/Other", other_ms, indent=1)
-             
+             print_row("Overhead/Other", item['Other'], indent=1)
+
     print("\n" + "="*60)
+
+if __name__ == "__main__":
+    generate_plots()
