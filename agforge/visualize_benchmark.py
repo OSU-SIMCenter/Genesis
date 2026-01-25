@@ -45,7 +45,7 @@ def run_visualization():
     # 5. Visualization Settings (Grid & Boundary)
     cfg.vis.visualize_mpm_grid = True
     cfg.vis.visualize_mpm_boundary = True
-    cfg.vis.show_world_frame = True
+    cfg.vis.show_world_frame = False
     
     try:
         b0 = cfg.robot.target_shape_bounds[0]
