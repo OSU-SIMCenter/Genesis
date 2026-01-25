@@ -15,20 +15,34 @@ from options import TeleopOptions
 from agforge_builder import build_env
 
 def run_benchmark():
-    # Define parameter ranges for the sweep
-    resolutions = [100, 200] # Reduced for testing speed, user can expand
-    substep_counts = [4, 8]
-
-    # Benchmark config
-    warmup_steps = 5
-    measure_steps = 20
+    # --- Configuration ---
+    # Customize these ranges as needed
+    CONFIG = {
+        # Grid resolutions (cells per unit, roughly). Higher = finer grid.
+        "grid_densities": [100, 200], 
+        
+        # Particle size multipliers relative to grid cell size.
+        # size = (1.0 / grid_density) * multiplier
+        # Lower multiplier = smaller particles = MORE particles.
+        "particle_multipliers": [0.25, 0.5, 1.0], 
+        
+        # Total physics substeps per 'Frame'.
+        # We will compare doing these all-at-once (Internal) vs one-by-one (External).
+        "total_substeps_target": 32,
+        
+        # Stepping Modes:
+        # "internal": sim.substeps = total_target. env.step() called once.
+        # "external": sim.substeps = 1. env.step() called total_target times.
+        "stepping_modes": ["internal", "external"],
+        
+        "warmup_frames": 3,
+        "measure_frames": 10
+    }
     
     results = []
-
+    
     print(f"Starting Benchmark Sweep...")
-    print(f"Resolutions: {resolutions}")
-    print(f"Substeps: {substep_counts}")
-    print(f"Measure Steps: {measure_steps}")
+    print(json.dumps(CONFIG, indent=2))
     print("-" * 60)
 
     # Import dependencies for Logic/Recon/IO
@@ -36,6 +50,7 @@ def run_benchmark():
     import contextlib
     from genesis.utils import particle as pu
     import gstaichi as ti
+    import itertools
     
     # Helper to mimic SharedState logic
     def mock_reconstruction(env, profiler):
@@ -46,7 +61,6 @@ def run_benchmark():
             # gs.tools.run_in_thread(ti.sync)
             ti.sync()
             
-            # Access particles (expensive copy to CPU usually)
             # Access particles (expensive copy to CPU usually)
             if hasattr(solver.particles_render.pos, 'to_numpy'):
                  particles = solver.particles_render.pos.to_numpy()
@@ -101,135 +115,156 @@ def run_benchmark():
             message = struct.pack('<I', len(header_json)) + header_json + binary_body
             return len(message)
 
-    for res in resolutions:
-        for substeps in substep_counts:
-            print(f"\n>>> Running Config: Resolution={res}, Substeps={substeps}")
+    # Generate combinations
+    from itertools import product
+    combinations = list(product(
+        CONFIG["grid_densities"], 
+        CONFIG["particle_multipliers"], 
+        CONFIG["stepping_modes"]
+    ))
+    
+    total_substeps = CONFIG["total_substeps_target"]
+    
+    for grid_res, p_mult, step_mode in combinations:
+        print(f"\n>>> Running Config: Grid={grid_res}, PMult={p_mult}, Mode={step_mode}")
+        
+        cfg = TeleopOptions()
+        cfg.general.show_viewer = False 
+        cfg.profiling.enabled = True
+        
+        # --- Parameter Setup ---
+        # 1. Grid Resolution
+        cfg.robot.base_grid_density = grid_res
+        cfg.mpm.grid_density = grid_res
+        
+        # 2. Particle Size (Independent of Grid somewhat, but relative to it)
+        # Standard: 1.0/res. scaled by multiplier.
+        # cfg.mpm.particle_size = (1.0 / grid_res) * p_mult 
+        # Note: 'particle_size' in Genesis usually means DIAMETER or RADIUS? 
+        # Reference options.py: particle_size = 0.8 * 0.01 * 64.0 / grid_density
+        # Let's just scale that reference formula.
+        base_ref_size = 0.8 * 0.01 * 64.0 / grid_res
+        cfg.mpm.particle_size = base_ref_size * p_mult
+        
+        # 3. Stepping Mode
+        if step_mode == "internal":
+            cfg.sim.substeps = total_substeps
+            loop_iterations = 1 # One python call, N internal substeps
+        else:
+            cfg.sim.substeps = 1
+            loop_iterations = total_substeps # N python calls, 1 internal substep each
             
-            cfg = TeleopOptions()
-            cfg.general.show_viewer = False 
-            cfg.profiling.enabled = True
-            
-            # Force cleanup of bounds (prevent GPU Tensor contamination)
+        # 4. Bounds (Robust)
+        dx = 1.0 / grid_res
+        mpm_solver_padding = 5 * dx 
+        
+        # Force cleanup of bounds (prevent GPU Tensor contamination)
+        try:
             b0 = cfg.robot.target_shape_bounds[0]
             b1 = cfg.robot.target_shape_bounds[1]
             if hasattr(b0, 'cpu'): b0 = b0.cpu().numpy()
             elif not isinstance(b0, np.ndarray): b0 = np.array(b0)
-            
             if hasattr(b1, 'cpu'): b1 = b1.cpu().numpy()
             elif not isinstance(b1, np.ndarray): b1 = np.array(b1)
             cfg.robot.target_shape_bounds = (b0, b1)
-            
-            # Override params
-            cfg.robot.base_grid_density = res
-            cfg.mpm.grid_density = res
-            cfg.mpm.particle_size = 0.8 * 0.01 * 64.0 / res
-            cfg.sim.substeps = substeps
-            
-            # Recalculate bounds with new density (logic from options.py)
-            # Use safer padding (5*dx instead of 3*dx) or just add constant padding
-            dx = 1.0 / res
-            mpm_solver_padding = 5 * dx # Increased from 3*dx
-            
-            # We need to access the derived values that were calculated in model_post_init
-            # But we can just grab the existing bounds and expand them slightly?
-            # Or better, recalculate fully if we have the cylinder params.
-            # cfg.robot.cylinder_pos is available.
-            
-            # Re-implementing logic for safety:
-            cylinder_height = cfg.robot.cylinder_height
-            cylinder_radius = cfg.robot.cylinder_radius
-            cylinder_pos = cfg.robot.cylinder_pos
-            
-            mpm_x_padding_lower = cylinder_height * 0.85
-            mpm_x_padding_upper = cylinder_height * 0.52
-            mpm_yz_padding = cylinder_radius * 1.6
-            
-            mpm_lower_offset = np.array([mpm_x_padding_lower, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
-            mpm_upper_offset = np.array([mpm_x_padding_upper, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
-            
-            cfg.mpm.lower_bound = tuple(cylinder_pos - mpm_lower_offset)
-            cfg.mpm.upper_bound = tuple(cylinder_pos + mpm_upper_offset)
+        except Exception:
+             # Fallback if accessing fails
+             pass
 
-            try:
-                env = build_env(cfg)
-                profiler = env.scene.profiling_options.profiler
-                
-                # --- Warmup ---
-                for _ in range(warmup_steps):
+        # Recalculate full bounds for safety (same code as before)
+        cylinder_height = cfg.robot.cylinder_height
+        cylinder_radius = cfg.robot.cylinder_radius
+        cylinder_pos = cfg.robot.cylinder_pos
+        mpm_x_padding_lower = cylinder_height * 0.85
+        mpm_x_padding_upper = cylinder_height * 0.52
+        mpm_yz_padding = cylinder_radius * 1.6
+        mpm_lower_offset = np.array([mpm_x_padding_lower, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
+        mpm_upper_offset = np.array([mpm_x_padding_upper, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
+        cfg.mpm.lower_bound = tuple(cylinder_pos - mpm_lower_offset)
+        cfg.mpm.upper_bound = tuple(cylinder_pos + mpm_upper_offset)
+
+        try:
+            env = build_env(cfg)
+            profiler = env.scene.profiling_options.profiler
+            
+            # --- Warmup ---
+            for _ in range(CONFIG["warmup_frames"]):
+                # Run complete "frame" (N substeps)
+                for _ in range(loop_iterations):
                     env.scene.step()
-                
-                # --- Benchmark ---
-                profiler.reset()
-                
-                start_time = time.time()
-                for _ in range(measure_steps):
-                    with profiler.time("total_frame"):
-                        # 1. Logic / Forces
-                        with profiler.time("teleop_logic"):
-                            # Mimic getting forces
-                            fL, fR = env.robot.get_resistance_forces()
-                            # Mimic simple logic
-                            force_param = 0.5
-                            target_strain = force_param * 10
+            
+            # --- Benchmark ---
+            profiler.reset()
+            
+            measure_frames = CONFIG["measure_frames"]
+            
+            start_time = time.time()
+            for _ in range(measure_frames):
+                with profiler.time("total_frame"):
+                    
+                    # Logic (Once per frame)
+                    with profiler.time("teleop_logic"):
+                         fL, fR = env.robot.get_resistance_forces()
+                    
+                    # Physics (Loop based on mode)
+                    # Note: We group the entire physics loop under 'teleop_physics_loop' for clarity
+                    # The internal genesis profiler will capture 'substep' calls inside.
+                    with profiler.time("teleop_physics_loop"):
+                        for _ in range(loop_iterations):
+                            env.scene.step()
+                    
+                    # Updates
+                    if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'):
+                        env.scene.sim.mpm_solver.update_render_fields()
+                    else:
+                        env.scene.visualizer.update_visual_states()
                         
-                        # 2. Physics
-                        # env.scene.step() handles its own internal profiling
-                        env.scene.step()
-                        
-                        # 3. Render Fields Update
-                        if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'):
-                            env.scene.sim.mpm_solver.update_render_fields()
-                        else:
-                            env.scene.visualizer.update_visual_states()
-                            
-                        # 4. Reconstruction
-                        mesh, particles = mock_reconstruction(env, profiler)
-                        
-                        # 5. IO
-                        bytes_sent = mock_io(mesh, particles, profiler)
-                        
-                end_time = time.time()
-                total_duration = end_time - start_time
-                avg_fps = measure_steps / total_duration
-                
-                # Extract Stats
-                # stats is Dict[str, ProfileStats]
-                # We want to serialize this. ProfileStats object is not JSON serializable.
-                # We need to convert it.
-                stats_dict = {}
-                for name, stat in profiler.stats.items():
-                    stats_dict[name] = {
-                        "count": stat.count,
-                        "total": stat.total,
-                        "mean": stat.mean,
-                        "min": stat.min,
-                        "max": stat.max,
-                        "std": stat.std
-                    }
-                
-                n_particles = env.scene.sim.mpm_solver.n_particles
-                
-                data_point = {
-                    "config": {"resolution": res, "substeps": substeps},
-                    "metrics": {
-                        "n_particles": int(n_particles),
-                        "avg_step_time_ms": (total_duration / measure_steps) * 1000.0,
-                        "avg_fps": avg_fps,
-                    },
-                    "cProfile_stats": stats_dict # Detailed breakdown
+                    # Recon (Once per frame)
+                    mesh, particles = mock_reconstruction(env, profiler)
+                    
+                    # IO (Once per frame)
+                    bytes_sent = mock_io(mesh, particles, profiler)
+                    
+            end_time = time.time()
+            total_duration = end_time - start_time
+            avg_fps = measure_frames / total_duration
+            
+            # Extract Stats
+            stats_dict = {}
+            for name, stat in profiler.stats.items():
+                stats_dict[name] = {
+                    "count": stat.count,
+                    "total": stat.total
                 }
-                results.append(data_point)
-                
-                print(f"  > Particles: {n_particles}")
-                print(f"  > FPS: {avg_fps:.2f}")
-                print(f"  > Avg Step Time: {data_point['metrics']['avg_step_time_ms']:.2f} ms")
-                
-                env.scene.destroy()
-                
-            except Exception as e:
-                print(f"  ERROR: {e}")
-                import traceback
-                traceback.print_exc()
+            
+            n_particles = env.scene.sim.mpm_solver.n_particles
+            
+            data_point = {
+                "config": {
+                    "grid_res": grid_res, 
+                    "particle_mult": p_mult,
+                    "stepping_mode": step_mode,
+                    "total_substeps": total_substeps
+                },
+                "metrics": {
+                    "n_particles": int(n_particles),
+                    "avg_frame_time_ms": (total_duration / measure_frames) * 1000.0,
+                    "avg_fps": avg_fps,
+                },
+                "cProfile_stats": stats_dict
+            }
+            results.append(data_point)
+            
+            print(f"  > Particles: {n_particles}")
+            print(f"  > FPS: {avg_fps:.2f}")
+            print(f"  > Avg Frame Time: {data_point['metrics']['avg_frame_time_ms']:.2f} ms")
+            
+            env.scene.destroy()
+            
+        except Exception as e:
+            print(f"  ERROR: {e}")
+            import traceback
+            traceback.print_exc()
 
     output_path = os.path.join(current_dir, "profiling_results.json")
     with open(output_path, 'w') as f:
