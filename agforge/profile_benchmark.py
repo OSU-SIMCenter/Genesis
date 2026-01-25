@@ -188,6 +188,15 @@ def run_benchmark():
             profiler = env.scene.profiling_options.profiler
             
             # --- Warmup ---
+            # Teleport grippers to near-contact position so the benchmark measures actual collision physics
+            # Calculated Contact Point is approx 0.0165 joint val.
+            # We teleport to 0.015 (Pre-Contact)
+            env.robot.set_control_mode("TELEPORT")
+            warmup_pos = torch.zeros(4, device=env.device)
+            warmup_pos[2] = 0.015
+            warmup_pos[3] = 0.015
+            env.robot.apply_action(warmup_pos, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=env.device))
+            
             for _ in range(CONFIG["warmup_frames"]):
                 # Run complete "frame" (N substeps)
                 for _ in range(loop_iterations):
@@ -199,25 +208,56 @@ def run_benchmark():
             measure_frames = CONFIG["measure_frames"]
             
             start_time = time.time()
-            for _ in range(measure_frames):
+            sim_t = 0.0
+            dt = cfg.sim.dt * total_substeps # approx frame dt
+            
+            # Squeeze Parameters (Matches Visualization)
+            press_start = 0.015
+            press_end = 0.022
+            press_frames = 7
+            
+            release_end = 0.018
+            release_frames = 3
+            
+            env.robot.set_control_mode("PD_CONTROL")
+            pos_cmd = torch.zeros(4, device=env.device)
+
+            for i in range(measure_frames):
                 with profiler.time("total_frame"):
                     
                     # Logic (Once per frame)
                     with profiler.time("teleop_logic"):
-                         fL, fR = env.robot.get_resistance_forces()
-                    
-                    # Physics (Loop based on mode)
-                    # Note: We group the entire physics loop under 'teleop_physics_loop' for clarity
-                    # The internal genesis profiler will capture 'substep' calls inside.
-                    with profiler.time("teleop_physics_loop"):
-                        for _ in range(loop_iterations):
-                            env.scene.step()
-                    
-                    # Updates
-                    if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'):
-                        env.scene.sim.mpm_solver.update_render_fields()
-                    else:
-                        env.scene.visualizer.update_visual_states()
+                            fL, fR = env.robot.get_resistance_forces()
+                            
+                            # Simulate Split Press/Release Motion
+                            if i < press_frames:
+                                # PRESS
+                                p = i / (press_frames - 1) if press_frames > 1 else 1.0
+                                curr_target = press_start + (press_end - press_start) * p
+                            else:
+                                # RELEASE
+                                rel_i = i - press_frames
+                                p = rel_i / (release_frames)
+                                curr_target = press_end + (release_end - press_end) * p
+                            
+                            pos_cmd[2] = curr_target 
+                            pos_cmd[3] = curr_target 
+                            env.robot.apply_action(pos_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=env.device))
+                        
+                        # Physics (Loop based on mode)
+                        # Note: We group the entire physics loop under 'teleop_physics_loop' for clarity
+                        # The internal genesis profiler will capture 'substep' calls inside.
+                        with profiler.time("teleop_physics_loop"):
+                            for _ in range(loop_iterations):
+                                env.scene.step()
+                        
+                        sim_t += dt
+
+                        # Updates
+                        if hasattr(env.scene.sim.mpm_solver, 'update_render_fields'):
+                            env.scene.sim.mpm_solver.update_render_fields()
+                        else:
+                            env.scene.visualizer.update_visual_states()
                         
                     # Recon (Once per frame)
                     mesh, particles = mock_reconstruction(env, profiler)
