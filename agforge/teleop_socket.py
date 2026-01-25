@@ -14,6 +14,7 @@ import logging
 import torch
 import numpy as np
 import trimesh
+import contextlib
 import gstaichi as ti
 import genesis as gs
 
@@ -536,7 +537,8 @@ async def simulation_loop(websocket, state: SharedState):
 
 
             # 2. Logic Update (State Machine)
-            await state.update_strike_logic()
+            with state.env.scene.profiling_options.profiler.time("teleop_logic"):
+                await state.update_strike_logic()
             
             # 3. Apply Actions based on State
             if state.strike_state == StrikeState.IDLE or state.strike_state == StrikeState.HOLDING:
@@ -552,6 +554,7 @@ async def simulation_loop(websocket, state: SharedState):
                 state.env.scene.sim.coupler.clear_link_coupling_forces()
             
             # 4. Physics Step
+            # env.scene.step() profiled internally by genesis
             state.env.scene.step()
             
             # Update render fields for particle access
@@ -560,30 +563,33 @@ async def simulation_loop(websocket, state: SharedState):
             else:
                 state.env.scene.visualizer.update_visual_states()
 
-            await state.update_reconstructed_mesh()
-            vertices, triangles, particles = await state.get_reconstructed_mesh_and_particles()
+            with state.env.scene.profiling_options.profiler.time("teleop_recon"):
+                await state.update_reconstructed_mesh()
+                vertices, triangles, particles = await state.get_reconstructed_mesh_and_particles()
             
-            # Prepare binary message
-            v_flat, v_count = _prepare_array(vertices, np.float32)
-            t_flat, t_count = _prepare_array(triangles, np.int32)
-            p_flat, p_count = _prepare_array(particles, np.float32)
-            
-            header = {
-                "steps": [0],
-                "Pressure": 0,
-                "StressField": -1,
-                "is_pressing": state.strike_state != StrikeState.IDLE,
-                "counts": {
-                    "vertices": v_count,
-                    "faces": t_count,
-                    "particles": p_count
+            with state.env.scene.profiling_options.profiler.time("teleop_io"):
+                # Prepare binary message
+                v_flat, v_count = _prepare_array(vertices, np.float32)
+                t_flat, t_count = _prepare_array(triangles, np.int32)
+                p_flat, p_count = _prepare_array(particles, np.float32)
+                
+                header = {
+                    "steps": [0],
+                    "Pressure": 0,
+                    "StressField": -1,
+                    "is_pressing": state.strike_state != StrikeState.IDLE,
+                    "counts": {
+                        "vertices": v_count,
+                        "faces": t_count,
+                        "particles": p_count
+                    }
                 }
-            }
-            header_json = json.dumps(header).encode('utf-8')
-            binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes()
-            message = struct.pack('<I', len(header_json)) + header_json + binary_body
+                header_json = json.dumps(header).encode('utf-8')
+                binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes()
+                message = struct.pack('<I', len(header_json)) + header_json + binary_body
+                
+                await websocket.send(message)
             
-            await websocket.send(message)
             await asyncio.sleep(1/60)
 
     except websockets.ConnectionClosed:
@@ -745,6 +751,7 @@ async def main():
              except asyncio.CancelledError:
                  pass
              gs.logger.info("Shutdown complete")
+             shared_state.env.scene.profiling_options.profiler.print()
 
 
 if __name__ == "__main__":
