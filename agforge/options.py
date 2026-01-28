@@ -263,6 +263,8 @@ class StrikeOptions(Options):
     target_strain: float = 0.1 # 10% compression
     max_force: float = 50000.0 # N
     pressing_timeout: float = 15.0 # seconds
+    approaching_timeout: float = 10.0 # seconds
+    release_timeout: float = 10.0 # seconds
     
 class AdaptiveControlConfig(Options):
     """Configuration for adaptive control gains."""
