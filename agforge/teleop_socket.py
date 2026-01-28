@@ -23,6 +23,7 @@ from genesis.utils.misc import ti_to_numpy
 from options import TeleopOptions
 from agforge_builder import build_env, RobotXMLGenerator
 from environment import AgilityForgeEnv
+from reconstruction import SurfaceReconstructor
 
 # Suppress websockets connection errors (caused by port checks like 'nc')
 logging.getLogger("websockets").setLevel(logging.CRITICAL)
@@ -116,13 +117,8 @@ class SharedState:
         self.new_input_received = False
 
         # Surface reconstruction
-        self.reconstructed_mesh = trimesh.Trimesh()
-        self.recon_enabled = True
-        self.recon_frame_interval = 2
-        self.recon_particle_fraction = 1.0
-        self.frame_counter = 0
-
-        self.create_reconstructed_mesh()
+        self.reconstructor = SurfaceReconstructor(env)
+        self.reconstructor.create_reconstructed_mesh()
 
         # Checkpoint storage
         self.checkpoints = []
@@ -396,7 +392,8 @@ class SharedState:
             self.contact_R = False
             self.checkpoints = []
             self.contact_width = 0.0
-            self.create_reconstructed_mesh()
+            # Reset sampling cache
+            self.reconstructor.reset()
             
             # Save initial state as first checkpoint
             self._save_checkpoint_impl()
@@ -446,7 +443,7 @@ class SharedState:
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
             
-            self.create_reconstructed_mesh()
+            self.reconstructor.create_reconstructed_mesh()
             gs.logger.info(f"Undo complete ({len(self.checkpoints)} checkpoints remaining)")
 
     def _apply_transformation(self, points):
@@ -471,81 +468,18 @@ class SharedState:
         points = self._apply_transformation(
             self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
         )
-        vertices = self._apply_transformation(self.reconstructed_mesh.vertices)
-        triangles = self.reconstructed_mesh.faces
+        vertices = self._apply_transformation(self.reconstructor.reconstructed_mesh.vertices)
+        triangles = self.reconstructor.reconstructed_mesh.faces
         return vertices, triangles, points
 
     async def update_reconstructed_mesh(self):
         """Reconstruct mesh during active strike stages."""
         # Only reconstruct during PRESSING and RELEASE to save performance
         allowed_stages = (StrikeState.PRESSING, StrikeState.RELEASE)
-        if not self.recon_enabled or self.strike_state not in allowed_stages:
-            return
-
-        self.frame_counter += 1
-        if self.frame_counter % self.recon_frame_interval != 0:
-            return
-
-        self.create_reconstructed_mesh()
-    
-
-
-    def create_reconstructed_mesh(self):
-        """Reconstruct surface mesh from active particles using splashsurf."""
-        solver = self.env.scene.sim.mpm_solver
-        
-        # Get environment offset
-        # Get particle positions and active mask
-        # Explicit synchronization for Metal backend
-        ti.sync()
-        
-        try:
-            t0 = time.time()
-            if hasattr(solver.particles_render.pos, 'to_numpy'):
-                 particles = solver.particles_render.pos.to_numpy()[:, 0]
-            else:
-                 particles = ti_to_numpy(solver.particles_render.pos)[:, 0]
+        should_reconstruct = self.strike_state in allowed_stages
+        self.reconstructor.update(should_reconstruct)
             
-            # Get environment offset
-            offset = self.env.scene.envs_offset[0]
-            
-            # Ensure it is on CPU and float32
-            if hasattr(offset, 'cpu'):
-                offset = offset.cpu().numpy()
-            elif hasattr(offset, 'numpy'):
-                offset = offset.numpy()
-                
-            particles = particles + offset
-            
-            if hasattr(solver.particles_render.active, 'to_numpy'):
-                active = solver.particles_render.active.to_numpy()[:, 0].astype(bool)
-            else:
-                active = ti_to_numpy(solver.particles_render.active)[:, 0].astype(bool)
-                
-            particles = particles[active]
-            
-            # Subsample if needed
-            if self.recon_particle_fraction < 1.0:
-                num_particles = int(len(particles) * self.recon_particle_fraction)
-                indices = np.random.choice(len(particles), num_particles, replace=False)
-                particles = particles[indices]
 
-            radius = solver.particle_radius
-            
-            # Check if particles is valid
-            if len(particles) == 0:
-                 gs.logger.warning("No active particles for reconstruction")
-                 return
-
-            self.reconstructed_mesh = pu.particles_to_mesh(
-                positions=particles,
-                radius=radius,
-                backend='splashsurf'
-            )
-            
-        except Exception as e:
-            gs.logger.error(f"Surface reconstruction failed: {e}")
-            self.reconstructed_mesh = trimesh.Trimesh()
 
 
 def _prepare_array(arr, dtype):
@@ -604,7 +538,6 @@ async def simulation_loop(websocket, state: SharedState):
             # Clear accumulators (Before stepping, but after logic/reading!)
             # Logic (step N) reads forces from Step N-1.
             # Then we clear accumulator.
-            # Then Step N calculates new forces.
             # Then Step N calculates new forces.
             with state.env.scene.profiling_options.profiler.time("teleop_clear_force") if state.env.scene.profiling_options.configs.teleop.clear_force else contextlib.suppress():
                 if hasattr(state.env.scene.sim.coupler, 'clear_link_coupling_forces'):
