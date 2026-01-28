@@ -471,7 +471,9 @@ class SharedState:
 
     async def update_reconstructed_mesh(self):
         """Reconstruct mesh during active strike stages."""
-        if not self.recon_enabled or self.strike_state == StrikeState.IDLE:
+        # Only reconstruct during PRESSING and RELEASE to save performance
+        allowed_stages = (StrikeState.PRESSING, StrikeState.RELEASE)
+        if not self.recon_enabled or self.strike_state not in allowed_stages:
             return
 
         self.frame_counter += 1
