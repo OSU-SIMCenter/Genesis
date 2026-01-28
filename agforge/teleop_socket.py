@@ -110,6 +110,10 @@ class SharedState:
 
         self.stage_start_time = 0.0
         self.contact_width = 0.0
+        
+        # Stepping control
+        self.stabilization_steps = 0
+        self.new_input_received = False
 
         # Surface reconstruction
         self.reconstructed_mesh = trimesh.Trimesh()
@@ -142,11 +146,12 @@ class SharedState:
                 return
             
             gs.logger.info(f"Strike → APPROACHING (target_strain={force_param * 10:.2f})")
-            # Reset contact flags
+            # Reset contact flags and stabilization
             self.contact_L = False
             self.contact_R = False
             self.strike_state = StrikeState.APPROACHING
             self.stage_start_time = time.time()
+            self.stabilization_steps = 0
             
             # Map force parameter (0-1) to target strain
             self.target_strain = force_param * 10.0
@@ -335,6 +340,7 @@ class SharedState:
                  self.contact_L = False
                  self.contact_R = False
                  self.contact_width = 0.0
+                 self.stabilization_steps = self.env.cfg.strike.post_release_steps # Allow settling after teleport
                  gs.logger.info("Strike → IDLE")
                  
                  # Save checkpoint after strike completes (not before)
@@ -570,6 +576,17 @@ async def simulation_loop(websocket, state: SharedState):
     
     try:
         while True:
+            # Determine if we need to step
+            is_active = (state.strike_state != StrikeState.IDLE)
+            needs_stabilization = (state.stabilization_steps > 0)
+            has_input = state.new_input_received
+            
+            should_step = is_active or needs_stabilization or has_input
+            
+            if not should_step:
+                await asyncio.sleep(0.001)
+                continue
+
             # 1. Clear accumulators
 
 
@@ -632,6 +649,11 @@ async def simulation_loop(websocket, state: SharedState):
                 await websocket.send(message)
             
             await asyncio.sleep(1/60)
+            
+            # Post-step cleanup
+            state.new_input_received = False
+            if state.stabilization_steps > 0:
+                state.stabilization_steps -= 1
 
     except websockets.ConnectionClosed:
         gs.logger.debug("Simulation loop: client disconnected")
@@ -704,6 +726,7 @@ async def handle_client(websocket, state: SharedState, path=None):
                         qpos[0, 0] = slider_qpos
                         qpos[0, 1] = hinge_qpos
                         await state.set_qpos(qpos)
+                        state.new_input_received = True
 
                 elif packet.get("request") == "strike":
                     if state.strike_state == StrikeState.IDLE:

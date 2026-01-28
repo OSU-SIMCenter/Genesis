@@ -265,6 +265,7 @@ class StrikeOptions(Options):
     pressing_timeout: float = 15.0 # seconds
     approaching_timeout: float = 10.0 # seconds
     release_timeout: float = 10.0 # seconds
+    post_release_steps: int = 10 # steps
     
 class AdaptiveControlConfig(Options):
     """Configuration for adaptive control gains."""
