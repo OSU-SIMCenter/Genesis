@@ -108,7 +108,7 @@ class SharedState:
         self.contact_R = False
         self.target_strain = 0.5  # Default, updated by client force param
 
-        self.press_start_time = 0.0
+        self.stage_start_time = 0.0
         self.contact_width = 0.0
 
         # Surface reconstruction
@@ -146,6 +146,7 @@ class SharedState:
             self.contact_L = False
             self.contact_R = False
             self.strike_state = StrikeState.APPROACHING
+            self.stage_start_time = time.time()
             
             # Map force parameter (0-1) to target strain
             self.target_strain = force_param * 10.0
@@ -163,6 +164,17 @@ class SharedState:
         if self.strike_state == StrikeState.APPROACHING:
             approach_speed = self.env.cfg.strike.approach_speed
             contact_threshold = self.env.cfg.strike.contact_force_threshold
+            approaching_timeout = self.env.cfg.strike.approaching_timeout
+            
+            # Check for timeout
+            if time.time() - self.stage_start_time > approaching_timeout:
+                 gs.logger.warning(f"Strike APPROACHING timed out ({approaching_timeout}s)")
+                 self.strike_state = StrikeState.RELEASE
+                 self.stage_start_time = time.time()
+                 # Stop immediately
+                 vel_cmd = torch.zeros(4, device=self.env.device)
+                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+                 return
             
             # Get resistance forces (projected along closing axis)
             force_L, force_R = self.robot.get_resistance_forces()
@@ -186,7 +198,7 @@ class SharedState:
             # Transition Condition
             if self.contact_L and self.contact_R:
                 self.strike_state = StrikeState.PRESSING
-                self.press_start_time = time.time()
+                self.stage_start_time = time.time()
                 
                 # Record initial separation
                 pos_L = self.robot.left_gripper.get_pos()
@@ -216,7 +228,7 @@ class SharedState:
             else:
                 current_strain = 0.0
                 
-            elapsed_time = time.time() - self.press_start_time
+            elapsed_time = time.time() - self.stage_start_time
 
             # Termination Conditions
             stop_reason = None
@@ -230,6 +242,7 @@ class SharedState:
             if stop_reason:
                 gs.logger.info(f"Strike → RELEASE ({stop_reason}, strain={current_strain:.4f})")
                 self.strike_state = StrikeState.RELEASE
+                self.stage_start_time = time.time()
                 # Stop immediately
                 vel_cmd = torch.zeros(4, device=self.env.device)
                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
@@ -253,6 +266,28 @@ class SharedState:
             release_speed = self.env.cfg.strike.pressing_speed
             contact_threshold = self.env.cfg.strike.contact_force_threshold * 0.2
             force_balance_gain = self.env.cfg.strike.force_balance_gain
+            release_timeout = self.env.cfg.strike.release_timeout
+            
+            # Check for timeout
+            if time.time() - self.stage_start_time > release_timeout:
+                 gs.logger.warning(f"Strike RELEASE timed out ({release_timeout}s) - Forcing reset")
+                 # Force reset to IDLE similar to completion
+                 vel_cmd = torch.zeros(4, device=self.env.device)
+                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+                 
+                 current_qpos = self.qpos.clone()
+                 current_qpos[:, 2] = self.gripper_open_pos
+                 current_qpos[:, 3] = self.gripper_open_pos
+                 self.robot.set_control_mode("TELEPORT")
+                 self.qpos = current_qpos
+                 self.robot.apply_action(current_qpos)
+                 
+                 self.strike_state = StrikeState.IDLE
+                 self.contact_L = False
+                 self.contact_R = False
+                 self.contact_width = 0.0
+                 await self.save_checkpoint()
+                 return
             
             # Force balancing
             force_L, force_R = self.robot.get_resistance_forces()
