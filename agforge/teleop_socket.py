@@ -341,7 +341,7 @@ class SharedState:
                  self.contact_R = False
                  self.contact_width = 0.0
                  self.stabilization_steps = self.env.cfg.strike.post_release_steps # Allow settling after teleport
-                 gs.logger.info("Strike → IDLE")
+                 gs.logger.info(f"Strike → IDLE (Stabilizing for {self.stabilization_steps} steps)")
                  
                  # Save checkpoint after strike completes (not before)
                  # Note: This is outside the normal async flow, but update_strike_logic
@@ -586,7 +586,7 @@ async def simulation_loop(websocket, state: SharedState):
             if not should_step:
                 await asyncio.sleep(0.001)
                 continue
-
+            
             # 1. Clear accumulators
 
 
@@ -654,6 +654,8 @@ async def simulation_loop(websocket, state: SharedState):
             state.new_input_received = False
             if state.stabilization_steps > 0:
                 state.stabilization_steps -= 1
+                if state.stabilization_steps == 0:
+                    gs.logger.info("Stabilization complete")
 
     except websockets.ConnectionClosed:
         gs.logger.debug("Simulation loop: client disconnected")
