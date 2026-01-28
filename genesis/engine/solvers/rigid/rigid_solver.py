@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Literal
 import quadrants as qd
 import numpy as np
 import torch
+import contextlib
 
 import genesis as gs
 import genesis.utils.array_class as array_class
@@ -883,6 +884,8 @@ class RigidSolver(KinematicSolver):
         # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
 
+        profiler = self.sim.scene.profiling_options.profiler
+
         if self._requires_grad and f == 0:
             kernel_save_adjoint_cache(
                 f=f,
@@ -892,62 +895,68 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
-        kernel_step_1(
-            self.links_state,
-            self.links_info,
-            self.joints_state,
-            self.joints_info,
-            self.dofs_state,
-            self.dofs_info,
-            self.geoms_state,
-            self.geoms_info,
-            self.entities_state,
-            self.entities_info,
-            self._rigid_global_info,
-            self._static_rigid_sim_config,
-            self.constraint_solver.contact_island.contact_island_state,
-            self._is_forward_pos_updated,
-            self._is_forward_vel_updated,
-            self._is_backward,
-        )
-
-        if isinstance(self.sim.coupler, SAPCoupler):
-            update_qvel(
-                self.dofs_state,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
-                self._is_backward,
-            )
-        else:
-            self._func_constraint_force()
-            kernel_step_2(
+        config = self.sim.scene.profiling_options.configs.rigid
+        with profiler.time("rigid_step_1") if config.step_1 else contextlib.suppress():
+            kernel_step_1(
+                self.links_state,
+                self.links_info,
+                self.joints_state,
+                self.joints_info,
                 self.dofs_state,
                 self.dofs_info,
-                self.links_info,
-                self.links_state,
-                self.joints_info,
-                self.joints_state,
+                self.geoms_state,
+                self.geoms_info,
                 self.entities_state,
                 self.entities_info,
-                self.geoms_info,
-                self.geoms_state,
-                self.collider._collider_state,
                 self._rigid_global_info,
                 self._static_rigid_sim_config,
                 self.constraint_solver.contact_island.contact_island_state,
+                self._is_forward_pos_updated,
+                self._is_forward_vel_updated,
                 self._is_backward,
-                self._errno,
             )
-            self._is_forward_pos_updated = not self._enable_mujoco_compatibility
-            self._is_forward_vel_updated = not self._enable_mujoco_compatibility
-            if self._requires_grad:
-                kernel_save_adjoint_cache(
-                    f + 1,
+
+        with profiler.time("rigid_constraints") if config.constraints else contextlib.suppress():
+            if isinstance(self.sim.coupler, SAPCoupler):
+                update_qvel(
                     self.dofs_state,
                     self._rigid_global_info,
-                    self._rigid_adjoint_cache,
                     self._static_rigid_sim_config,
+                    self._is_backward,
                 )
+            else:
+                self._func_constraint_force()
+
+        with profiler.time("rigid_step_2") if config.step_2 else contextlib.suppress():
+            if not isinstance(self.sim.coupler, SAPCoupler):
+                kernel_step_2(
+                    self.dofs_state,
+                    self.dofs_info,
+                    self.links_info,
+                    self.links_state,
+                    self.joints_info,
+                    self.joints_state,
+                    self.entities_state,
+                    self.entities_info,
+                    self.geoms_info,
+                    self.geoms_state,
+                    self.collider._collider_state,
+                    self._rigid_global_info,
+                    self._static_rigid_sim_config,
+                    self.constraint_solver.contact_island.contact_island_state,
+                    self._is_backward,
+                    self._errno,
+                )
+                self._is_forward_pos_updated = not self._enable_mujoco_compatibility
+                self._is_forward_vel_updated = not self._enable_mujoco_compatibility
+                if self._requires_grad:
+                    kernel_save_adjoint_cache(
+                        f + 1,
+                        self.dofs_state,
+                        self._rigid_global_info,
+                        self._rigid_adjoint_cache,
+                        self._static_rigid_sim_config,
+                    )
 
     def get_error_envs_mask(self):
         return qd_to_torch(self._errno) > 0
@@ -1350,36 +1359,39 @@ class RigidSolver(KinematicSolver):
         if not self.is_active:
             return
 
-        if isinstance(self.sim.coupler, SAPCoupler):
-            update_qacc_from_qvel_delta(
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=self._is_backward,
-            )
-            kernel_step_2(
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                links_info=self.links_info,
-                links_state=self.links_state,
-                joints_info=self.joints_info,
-                joints_state=self.joints_state,
-                entities_state=self.entities_state,
-                entities_info=self.entities_info,
-                geoms_info=self.geoms_info,
-                geoms_state=self.geoms_state,
-                collider_state=self.collider._collider_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-                is_backward=self._is_backward,
-                errno=self._errno,
-            )
-        elif isinstance(self.sim.coupler, IPCCoupler):
-            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
-            # Collision exclusion for IPC-coupled links is handled in the collider at build time.
-            if self.sim.coupler.has_any_rigid_coupling:
-                self.substep(f)
+        profiler = self.sim.scene.profiling_options.profiler
+        config = self.sim.scene.profiling_options.configs.rigid
+        with profiler.time("rigid_post_couple") if config.post_couple else contextlib.suppress():
+            if isinstance(self.sim.coupler, SAPCoupler):
+                update_qacc_from_qvel_delta(
+                    dofs_state=self.dofs_state,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=self._is_backward,
+                )
+                kernel_step_2(
+                    dofs_state=self.dofs_state,
+                    dofs_info=self.dofs_info,
+                    links_info=self.links_info,
+                    links_state=self.links_state,
+                    joints_info=self.joints_info,
+                    joints_state=self.joints_state,
+                    entities_state=self.entities_state,
+                    entities_info=self.entities_info,
+                    geoms_info=self.geoms_info,
+                    geoms_state=self.geoms_state,
+                    collider_state=self.collider._collider_state,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+                    is_backward=self._is_backward,
+                    errno=self._errno,
+                )
+            elif isinstance(self.sim.coupler, IPCCoupler):
+                # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
+                # Collision exclusion for IPC-coupled links is handled in the collider at build time.
+                if self.sim.coupler.has_any_rigid_coupling:
+                    self.substep(f)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- render -----------------------------------------

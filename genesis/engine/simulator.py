@@ -272,6 +272,7 @@ class Simulator(RBC):
 
     def step(self, in_backward=False):
         profiler = self.scene.profiling_options.profiler
+        config = self.scene.profiling_options.configs.simulator
         # Check errno at the very beginning of the step.
         # This will trigger GPU sync, but it is not a big deal at the point, since we are going to enqueue very large
         # kernel right away. Moreover, if computations are still not done at this point, then the queue will just
@@ -281,26 +282,26 @@ class Simulator(RBC):
 
         if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
             for _ in range(self._substeps):
-                with profiler.time("rigid_solver_substep") if True else contextlib.suppress():
+                with profiler.time("rigid_solver_substep") if config.rigid_solver_substep else contextlib.suppress():
                     self.rigid_solver.substep(self.cur_substep_local)
                 self._cur_substep_global += 1
         else:
-            with profiler.time("process_input") if True else contextlib.suppress():
+            with profiler.time("process_input") if config.process_input else contextlib.suppress():
                 self.process_input(in_backward=in_backward)
             for _ in range(self._substeps):
-                with profiler.time("substep") if False else contextlib.suppress():
+                with profiler.time("substep") if config.substep else contextlib.suppress():
                     self.substep(self.cur_substep_local)
 
                 self._cur_substep_global += 1
                 if self.cur_substep_local == 0 and not in_backward:
-                    with profiler.time("save_ckpt") if True else contextlib.suppress():
+                    with profiler.time("save_ckpt") if config.save_ckpt else contextlib.suppress():
                         self.save_ckpt()
 
         if self.rigid_solver.is_active:
-            with profiler.time("clear_external_force") if True else contextlib.suppress():
+            with profiler.time("clear_external_force") if config.clear_external_force else contextlib.suppress():
                 self.rigid_solver.clear_external_force()
 
-        with profiler.time("sensor_manager_step") if True else contextlib.suppress():
+        with profiler.time("sensor_manager_step") if config.sensor_manager_step else contextlib.suppress():
             self._sensor_manager.step()
 
     def _step_grad(self):
@@ -327,13 +328,14 @@ class Simulator(RBC):
 
     def substep(self, f):
         profiler = self.scene.profiling_options.profiler
-        with profiler.time("preprocess") if True else contextlib.suppress():
+        config = self.scene.profiling_options.configs.simulator
+        with profiler.time("preprocess") if config.preprocess else contextlib.suppress():
             self._coupler.preprocess(f)
-        with profiler.time("substep_pre_couple") if False else contextlib.suppress():
+        with profiler.time("substep_pre_couple") if config.substep_pre_couple else contextlib.suppress():
             self.substep_pre_coupling(f)
-        with profiler.time("couple") if True else contextlib.suppress():
+        with profiler.time("couple") if config.couple else contextlib.suppress():
             self._coupler.couple(f)
-        with profiler.time("substep_post_couple") if True else contextlib.suppress():
+        with profiler.time("substep_post_couple") if config.substep_post_couple else contextlib.suppress():
             self.substep_post_coupling(f)
 
     def sub_step_grad(self, f):

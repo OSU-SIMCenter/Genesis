@@ -33,7 +33,40 @@ class ProfilingOptions(Options):
                 fps_tracker: bool = True
                 recorder_manager: bool = True
             step: Step = Step()
+        
+        class Simulator(Options):
+            """Simulator profiling configurations."""
+            preprocess: bool = True
+            substep_pre_couple: bool = True
+            substep: bool = True
+            couple: bool = True
+            substep_post_couple: bool = True
+            process_input: bool = True
+            save_ckpt: bool = True
+            clear_external_force: bool = True
+            sensor_manager_step: bool = True
+            rigid_solver_substep: bool = True
+
+        class Rigid(Options):
+            """Rigid solver profiling configurations."""
+            step_1: bool = True
+            constraints: bool = True
+            step_2: bool = True
+            post_couple: bool = True
+
+        class Teleop(Options):
+            """Teleop socket profiling configurations."""
+            logic: bool = True
+            action: bool = True
+            clear_force: bool = True
+            recon: bool = True
+            io: bool = True
+            render_update: bool = True
+
         scene: Scene = Scene()
+        simulator: Simulator = Simulator()
+        rigid: Rigid = Rigid()
+        teleop: Teleop = Teleop()
     configs: Configs = Configs()
 
     def __init__(self, **data):
