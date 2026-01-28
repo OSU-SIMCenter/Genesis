@@ -537,37 +537,41 @@ async def simulation_loop(websocket, state: SharedState):
 
 
             # 2. Logic Update (State Machine)
-            with state.env.scene.profiling_options.profiler.time("teleop_logic"):
+            with state.env.scene.profiling_options.profiler.time("teleop_logic") if state.env.scene.profiling_options.configs.teleop.logic else contextlib.suppress():
                 await state.update_strike_logic()
             
             # 3. Apply Actions based on State
             if state.strike_state == StrikeState.IDLE or state.strike_state == StrikeState.HOLDING:
                 # Standard Teleoperation / Holding
-                qpos = await state.get_qpos()
-                state.robot.apply_action(qpos)
+                with state.env.scene.profiling_options.profiler.time("teleop_action") if state.env.scene.profiling_options.configs.teleop.action else contextlib.suppress():
+                    qpos = await state.get_qpos()
+                    state.robot.apply_action(qpos)
             
             # Clear accumulators (Before stepping, but after logic/reading!)
             # Logic (step N) reads forces from Step N-1.
             # Then we clear accumulator.
             # Then Step N calculates new forces.
-            if hasattr(state.env.scene.sim.coupler, 'clear_link_coupling_forces'):
-                state.env.scene.sim.coupler.clear_link_coupling_forces()
+            # Then Step N calculates new forces.
+            with state.env.scene.profiling_options.profiler.time("teleop_clear_force") if state.env.scene.profiling_options.configs.teleop.clear_force else contextlib.suppress():
+                if hasattr(state.env.scene.sim.coupler, 'clear_link_coupling_forces'):
+                    state.env.scene.sim.coupler.clear_link_coupling_forces()
             
             # 4. Physics Step
             # env.scene.step() profiled internally by genesis
             state.env.scene.step()
             
             # Update render fields for particle access
-            if hasattr(state.env.scene.sim.mpm_solver, 'update_render_fields'):
-                state.env.scene.sim.mpm_solver.update_render_fields()
-            else:
-                state.env.scene.visualizer.update_visual_states()
+            with state.env.scene.profiling_options.profiler.time("teleop_render_update") if state.env.scene.profiling_options.configs.teleop.render_update else contextlib.suppress():
+                if hasattr(state.env.scene.sim.mpm_solver, 'update_render_fields'):
+                    state.env.scene.sim.mpm_solver.update_render_fields()
+                else:
+                    state.env.scene.visualizer.update_visual_states()
 
-            with state.env.scene.profiling_options.profiler.time("teleop_recon"):
+            with state.env.scene.profiling_options.profiler.time("teleop_recon") if state.env.scene.profiling_options.configs.teleop.recon else contextlib.suppress():
                 await state.update_reconstructed_mesh()
                 vertices, triangles, particles = await state.get_reconstructed_mesh_and_particles()
             
-            with state.env.scene.profiling_options.profiler.time("teleop_io"):
+            with state.env.scene.profiling_options.profiler.time("teleop_io") if state.env.scene.profiling_options.configs.teleop.io else contextlib.suppress():
                 # Prepare binary message
                 v_flat, v_count = _prepare_array(vertices, np.float32)
                 t_flat, t_count = _prepare_array(triangles, np.int32)
