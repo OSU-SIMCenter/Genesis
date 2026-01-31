@@ -151,18 +151,22 @@ async def run_benchmark():
                 max_steps = 5000 
                 
                 while controller.strike_state != StrikeState.IDLE and step_count < max_steps:
-                    # Logic + Physics + Render
-                    await controller.step_simulation()
-                    
-                    # Reconstruction
-                    await controller.update_and_get_recon_data()
-                    
-                    # Update Viewer Context explicitly if visualizing
-                    if args.visualize and env.scene.visualizer:
-                         if hasattr(env.scene.visualizer, 'render'):
-                             env.scene.visualizer.render()
-                         elif hasattr(env.scene.visualizer, 'viewer') and hasattr(env.scene.visualizer.viewer, 'render'):
-                             env.scene.visualizer.viewer.render()
+                    # Root Frame
+                    with profiler.time("teleop_step"):
+                        # Logic + Physics + Render
+                        await controller.step_simulation()
+                        
+                        # Reconstruction
+                        with profiler.time("teleop_recon"): # Manual because socket does it outside
+                            await controller.update_and_get_recon_data()
+                        
+                        # Update Viewer Context explicitly if visualizing
+                        with profiler.time("teleop_render_update"): # Additional render overhead
+                            if args.visualize and env.scene.visualizer:
+                                 if hasattr(env.scene.visualizer, 'render'):
+                                     env.scene.visualizer.render()
+                                 elif hasattr(env.scene.visualizer, 'viewer') and hasattr(env.scene.visualizer.viewer, 'render'):
+                                     env.scene.visualizer.viewer.render()
                     
                     step_count += 1
                     
