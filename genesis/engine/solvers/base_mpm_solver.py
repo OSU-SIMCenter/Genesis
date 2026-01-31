@@ -547,7 +547,11 @@ class BaseMPMSolver(Solver):
 
             # FIXME: Use existing errno mechanism for this.
             with profiler.time("mpm_check_valid") if True else contextlib.suppress():
-                if not self._is_state_valid(f):
+                is_valid = True
+                with profiler.time("mpm_check_valid_sync") if True else contextlib.suppress():
+                    is_valid = self._is_state_valid(f)
+                
+                if not is_valid:
                     gs.raise_exception(
                         "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
                     )

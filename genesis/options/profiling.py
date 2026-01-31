@@ -49,6 +49,9 @@ class ProfilingOptions(Options):
             """Rigid solver profiling configurations."""
             step_1: bool = True
             constraints: bool = True
+            constraints_detect: bool = True
+            constraints_add: bool = True
+            constraints_solve: bool = True
             step_2: bool = True
             post_couple: bool = True
 
@@ -62,10 +65,15 @@ class ProfilingOptions(Options):
             logic_check_stop: bool = True
             logic_calc_cmd: bool = True
             logic_apply_vel: bool = True
+            logic_update_state: bool = True
+            logic_prep: bool = True
 
             action: bool = True
             clear_force: bool = True
             recon: bool = True
+            recon_mesh: bool = True
+            recon_update_skinning: bool = True
+            recon_check_rebind: bool = True
             io: bool = True
             render_update: bool = True
 
