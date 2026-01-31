@@ -1,62 +1,148 @@
 [workspace]
 name = "genesis-world"
-# Standard Conda channel for Python and system tools
 channels = ["conda-forge"]
-# Supports Windows, Linux, Apple Silicon Mac
 platforms = ["win-64", "linux-64", "osx-arm64"]
 version = "0.1.0"
 
 [tasks]
 build = "python build.py --target=local"
-# Task to fix the pysplashsurf package structure issue (idempotent)
+# Fixes pysplashsurf 0.14.x directory structure bug where nested folder shadows .so extension
 fix-splashsurf = "python -c \"import pathlib, sysconfig; p = pathlib.Path(sysconfig.get_path('purelib')) / 'pysplashsurf' / 'pysplashsurf'; print(f'Checking {p}...'); p.rename(p.with_name('pysplashsurf_hidden')) if p.exists() else print('Already fixed')\""
 
 [system-requirements]
-# Required for modern Linux wheels (like pymeshlab)
+# Required for modern Linux wheels (pymeshlab, etc.)
 libc = { family = "glibc", version = "2.35" }
 
 [dependencies]
-python = "3.12.*"
+# Python 3.13 has ~5% interpreter speedup over 3.12
+python = "3.13.*"
 
-[pypi-dependencies]
-# Editable project install
-genesis-world = { path = ".", editable = true }
-
-# --- Feature: CUDA (GPU) ---
-[feature.cuda.pypi-options]
-# Switch url to cu128 or cu126 for better driver compatibility
-extra-index-urls = ["https://download.pytorch.org/whl/cu130"]
-# "unsafe-best-match": Correctly mixes CUDA wheels (from URL) with standard packages (from PyPI)
+# =============================================================================
+# GLOBAL PYPI OPTIONS
+# =============================================================================
+[pypi-options]
+# unsafe-best-match: allows forcing newer package versions even if dependencies
+# claim incompatibility. Enables performance upgrades across all environments.
 index-strategy = "unsafe-best-match"
 
-[feature.cuda.pypi-dependencies]
-torch = "*"
-torchvision = "*"
+[pypi-dependencies]
+genesis-world = { path = ".", editable = true }
 
-# --- Feature: CPU-Only ---
+# =============================================================================
+# GLOBAL PERFORMANCE OVERRIDES (all platforms)
+# =============================================================================
+# These are high-impact performance upgrades applied to all environments.
+
+# --- Core Numerical (HIGHEST IMPACT) ---
+# NumPy 2.x has major SIMD rewrites. On macOS ARM64, uses Apple Accelerate framework.
+numpy = ">=2.2"
+# SciPy 1.15+ has better BLAS dispatch. On macOS ARM64, uses vecLib.
+scipy = ">=1.15"
+# Genesis uses pybind11 heavily for C++ bindings — newer = less overhead
+pybind11 = ">=2.13"
+
+# --- Validation/Serialization ---
+# Pydantic 2.11+ has up to 2x faster schema builds, 2.12 has validation perf gains
+pydantic = ">=2.12"
+
+# --- Image/Video Processing ---
+pillow = ">=11.1"                   # SIMD encode/decode, faster PNG export
+opencv-python-headless = ">=4.13"   # Replaces opencv-python: no GUI/X11 bloat
+scikit-image = ">=0.25"             # Faster marching cubes for SDF visualization
+
+# --- Mesh/Geometry Processing ---
+trimesh = ">=4.6"
+vtk = ">=9.5"                       # Native ARM64 support, rendering improvements
+fast-simplification = ">=0.1.13"
+libigl = ">=2.6"                    # Uses nanobind (faster than pybind11)
+pymeshlab = ">=2023.12"             # Latest mesh processing optimizations
+
+# --- Physics Simulation ---
+mujoco = ">=3.4"                    # ARM64 optimizations, latest solver improvements
+
+# --- JIT/Compilation ---
+numba = ">=0.61"                    # LLVM backend, ARM64 NEON vectorization
+
+# --- Data Loading/Serialization ---
+orjson = ">=3.10"                   # ~10x faster JSON parsing for config/assets
+
+# --- Spatial/Collision ---
+rtree = ">=1.3"                     # Faster spatial indexing for ray casting
+coacd = ">=1.0"                     # Convex decomposition improvements
+
+# =============================================================================
+# FEATURE: CUDA (Linux/Windows GPU)
+# =============================================================================
+[feature.cuda.pypi-options]
+# Nightly cu130 wheels — latest CUDA 13.0 with Zstandard compression and optimizations
+extra-index-urls = ["https://download.pytorch.org/whl/nightly/cu130"]
+
+[feature.cuda.pypi-dependencies]
+torch = ">=2.9.2"
+torchvision = "*"
+torchaudio = "*"
+
+# Triton: GPU kernel compiler for torch.compile — can give 2-3x speedup
+# Linux-only (no Windows wheels exist)
+[feature.cuda.target.linux-64.pypi-dependencies]
+triton = ">=3.2"
+
+# =============================================================================
+# FEATURE: macOS MPS (Apple Silicon GPU)
+# =============================================================================
+[feature.mps.pypi-options]
+# "cpu" index provides macOS ARM64 wheels with MPS (Metal) backend included
+extra-index-urls = ["https://download.pytorch.org/whl/nightly/cpu"]
+
+[feature.mps.pypi-dependencies]
+torch = ">=2.9.2"
+torchvision = "*"
+torchaudio = "*"
+
+# Apple Silicon specific packages (macOS ARM64 only)
+[feature.mps.target.osx-arm64.pypi-dependencies]
+# MLX: Apple's native ML framework, designed for M-series — can outperform MPS
+mlx = ">=0.23"
+# CoreML Tools: enables Neural Engine access (16+ TOPS on M-series chips)
+coremltools = ">=8.2"
+
+# =============================================================================
+# FEATURE: CPU-Only (fallback for systems without GPU)
+# =============================================================================
 [feature.cpu.pypi-options]
 extra-index-urls = ["https://download.pytorch.org/whl/nightly/cpu"]
 
 [feature.cpu.pypi-dependencies]
 torch = ">=2.9.2"
 torchvision = "*"
+torchaudio = "*"
 
+# =============================================================================
+# FEATURE: AGF Server
+# =============================================================================
 [feature.agf-server.pypi-dependencies]
 websockets = "*"
 pint = "*"
 
-# --- Feature: Build Tools ---
+# =============================================================================
+# FEATURE: Build Tools
+# =============================================================================
 [feature.build.dependencies]
 nuitka = ">=2.4"
 pyinstaller = "*"
-# Using standard pixi channels for tools
+
 [feature.build.target.linux-64.dependencies]
 patchelf = "*"
 ccache = "*"
 
-[feature.build.target.win-64.dependencies]
-
-
+# =============================================================================
+# ENVIRONMENTS
+# =============================================================================
+# Usage:
+#   pixi run -e default <cmd>   # Linux/Windows with NVIDIA GPU
+#   pixi run -e macos <cmd>     # macOS Apple Silicon
+#   pixi run -e cpu-only <cmd>  # No GPU / fallback
 [environments]
 default = ["cuda", "agf-server", "build"]
+macos = ["mps", "agf-server", "build"]
 cpu-only = ["cpu", "agf-server", "build"]
