@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy>=1.26.4"]
+requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy>=2.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,13 +12,13 @@ dependencies = [
     "psutil",
     "quadrants==0.4.4",
     "pydantic>=2.11.0",
-    "numpy>=1.26.4",
+    "numpy>=2.0",
     "frozendict",
-    "trimesh",
+    "trimesh>=4.5",
     "libigl",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
-    "mujoco>=3.2.5",
+    "mujoco>=3.3",
     "moviepy>=2.0.0",
     # Used by `pyrender` to manage onscreen graphical windows
     # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
@@ -30,7 +30,7 @@ dependencies = [
     # Used by `pyrender` to write low-level OpenGL rendering pipeline
     "PyOpenGL>=3.1.4",
     # Use by `pyrender` to compile low-level OpenGL rendering pipeline
-    "numba",
+    "numba>=0.60",
     # Use by `Mesh.remesh`, which is involve in `PBDTetEntity.sample`
     "pymeshlab",
     # Optional `trimesh` dependency for loading `.dae` mesh files
@@ -42,14 +42,15 @@ dependencies = [
     # Used for some advanced mesh processing such as `skeletonization`
     "PyGEL3D",
     # Used to convert VTK output to numpy when converting volume to particles for PBS
-    "vtk",
+    "vtk>=9.4",
     # Used here and there to load and export images
     # * 11.0 dramatically improves performance when exporting images to PNG
     "Pillow>11.0",
     # Use to display camera images and export images
-    "opencv-python",
+    # * headless version is smaller and faster (no GUI/X11 dependencies)
+    "opencv-python-headless",
     # Use by `RigidGeom.visualize_sdf` to render SDF as level 0 marching cubes
-    "scikit-image",
+    "scikit-image>=0.24",
     # Convex decomposition library
     "coacd",
     # Ray casting used in mesh to height field conversion
@@ -63,7 +64,7 @@ dependencies = [
     # Native batch renderer specifically designed for Genesis
     "gs-madrona==0.0.7.post2; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
     # Used for mesh simplification
-    "fast_simplification>=0.1.12",
+    "fast_simplification>=0.1.13",
     # Surface reconstruction library for particle data from SPH simulations
     # NOTE: This package (0.14.*) has a directory structure issue where 'pysplashsurf/pysplashsurf'
     # shadows the 'pysplashsurf.abi3.so' extension. Ideally, use 'fix-splashsurf' task to patch it.
@@ -87,14 +88,14 @@ dev = [
     "ipython",
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_ISLAND'.
-    "mujoco>=3.3.6,<3.4.0",
+    "mujoco>=3.3.6,<3.5.0",
     # Used internally by 'MPLPlotter'
     # * 3.7.0: introduces Button blitting and 'outside' keyword legend location
     "matplotlib>=3.7.0",
     # Used internally by 'VideoFileWriter'
     "av",
     # Used for validating polar decomposition in unit tests
-    "scipy",
+    "scipy>=1.14",
     # Used for code formatting during commits
     "pre_commit",
 ]
@@ -118,7 +119,7 @@ docs = [
     "sphinx_design",
 ]
 render = [
-    "pybind11[global]",
+    "pybind11[global]>=2.13",
     "open3d",
 ]
 usd = [
@@ -195,8 +196,3 @@ markers = [
     "slow: tests that are slow to run (> 100s).",
 ]
 log_cli_level = "WARNING"
-
-[tool.uv]
-# uv respects the build-system and project tables
-# PyTorch must be installed separately before Genesis due to platform-specific builds
-# See README.md for installation instructions with different PyTorch backends
