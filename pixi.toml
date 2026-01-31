@@ -136,6 +136,13 @@ patchelf = "*"
 ccache = "*"
 
 # =============================================================================
+# FEATURE: Viz Tools (Debugging/Dev)
+# =============================================================================
+[feature.viz-tools.pypi-dependencies]
+rerun-sdk = "*"
+polyscope = "*"
+
+# =============================================================================
 # ENVIRONMENTS
 # =============================================================================
 # Usage:
@@ -143,6 +150,6 @@ ccache = "*"
 #   pixi run -e macos <cmd>     # macOS Apple Silicon
 #   pixi run -e cpu-only <cmd>  # No GPU / fallback
 [environments]
-default = ["cuda", "agf-server", "build"]
-macos = ["mps", "agf-server", "build"]
-cpu-only = ["cpu", "agf-server", "build"]
+default = ["cuda", "agf-server", "build", "viz-tools"]
+macos = ["mps", "agf-server", "build", "viz-tools"]
+cpu-only = ["cpu", "agf-server", "build", "viz-tools"]
