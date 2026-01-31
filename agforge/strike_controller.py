@@ -162,11 +162,12 @@ class StrikeController:
                     
             # --- PRESSING STAGE ---
             elif self.strike_state == StrikeState.PRESSING:
-                pressing_speed = self.env.cfg.strike.pressing_speed
-                target_strain = self.target_strain
-                max_force = self.env.cfg.strike.max_force
-                pressing_timeout = self.env.cfg.strike.pressing_timeout
-                force_balance_gain = self.env.cfg.strike.force_balance_gain
+                with self._profile("logic_prep"):
+                    pressing_speed = self.env.cfg.strike.pressing_speed
+                    target_strain = self.target_strain
+                    max_force = self.env.cfg.strike.max_force
+                    pressing_timeout = self.env.cfg.strike.pressing_timeout
+                    force_balance_gain = self.env.cfg.strike.force_balance_gain
 
                 with self._profile("logic_get_resistance"):
                     force_L, force_R = self.robot.get_resistance_forces()
@@ -176,12 +177,13 @@ class StrikeController:
                     pos_R = self.robot.right_gripper.get_pos()
                     current_width = torch.norm(pos_L - pos_R).item()
                 
-                if self.contact_width > 1e-6:
-                    current_strain = (self.contact_width - current_width) / self.contact_width
-                else:
-                    current_strain = 0.0
+                with self._profile("logic_update_state"):
+                    if self.contact_width > 1e-6:
+                        current_strain = (self.contact_width - current_width) / self.contact_width
+                    else:
+                        current_strain = 0.0
                     
-                elapsed_time = time.time() - self.stage_start_time
+                    elapsed_time = time.time() - self.stage_start_time
 
                 with self._profile("logic_check_stop"):
                     stop_reason = None
@@ -193,11 +195,12 @@ class StrikeController:
                         stop_reason = "Timeout"
                     
                     if stop_reason:
-                        gs.logger.info(f"Strike -> RELEASE ({stop_reason}, strain={current_strain:.4f})")
-                        self.strike_state = StrikeState.RELEASE
-                        self.stage_start_time = time.time()
-                        self._stop_motors()
-                        return
+                        with self._profile("logic_update_state"):
+                            gs.logger.info(f"Strike -> RELEASE ({stop_reason}, strain={current_strain:.4f})")
+                            self.strike_state = StrikeState.RELEASE
+                            self.stage_start_time = time.time()
+                            self._stop_motors()
+                            return
 
                 with self._profile("logic_calc_cmd"):
                     imbalance = force_L - force_R

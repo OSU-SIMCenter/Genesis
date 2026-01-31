@@ -1003,6 +1003,9 @@ class RigidSolver(KinematicSolver):
         return collision_pairs
 
     def _func_constraint_force(self):
+        profiler = self.sim.scene.profiling_options.profiler
+        config = self.sim.scene.profiling_options.configs.rigid
+
         if not self._disable_constraint:
             if self._use_contact_island:
                 self.constraint_solver.clear()
@@ -1010,15 +1013,18 @@ class RigidSolver(KinematicSolver):
                 self.constraint_solver.add_equality_constraints()
 
         if self._enable_collision:
-            self.collider.detection()
+            with profiler.time("rigid_constraints_detect") if config.constraints_detect else contextlib.suppress():
+                self.collider.detection()
 
         if not self._disable_constraint:
-            if self._use_contact_island:
-                self.constraint_solver.add_constraints()
-            else:
-                self.constraint_solver.add_inequality_constraints()
+            with profiler.time("rigid_constraints_add") if config.constraints_add else contextlib.suppress():
+                if self._use_contact_island:
+                    self.constraint_solver.add_constraints()
+                else:
+                    self.constraint_solver.add_inequality_constraints()
 
-            self.constraint_solver.resolve()
+            with profiler.time("rigid_constraints_solve") if config.constraints_solve else contextlib.suppress():
+                self.constraint_solver.resolve()
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(

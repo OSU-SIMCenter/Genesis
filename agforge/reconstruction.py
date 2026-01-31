@@ -6,6 +6,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.particle as pu
 from genesis.utils.misc import ti_to_numpy
+import contextlib
 from enum import Enum
 from typing import Optional
 
@@ -154,6 +155,7 @@ class SurfaceReconstructor:
         args:
             should_reconstruct: External condition (e.g. is striking)
         """
+        profiler = self.env.scene.profiling_options.profiler
         # FIX #1: Always increment global frame
         self._global_frame += 1
         
@@ -168,13 +170,20 @@ class SurfaceReconstructor:
 
             # FIX #7: Check if rebind needed periodically
             if self._global_frame % self._rebind_check_interval == 0:
-                if self._should_rebind():
+                should_rebind = False
+                with profiler.time("recon_check_rebind") if True else contextlib.suppress():
+                    should_rebind = self._should_rebind()
+
+                if should_rebind:
                     gs.logger.info("Large drift detected, rebinding mesh to particles...")
-                    self.create_reconstructed_mesh()
-                    self.init_skinning()
+                    with profiler.time("recon_mesh") if True else contextlib.suppress():
+                        self.create_reconstructed_mesh()
+                    with profiler.time("recon_update_skinning") if True else contextlib.suppress():
+                        self.init_skinning()
                     return
             
-            self.update_skinning()
+            with profiler.time("recon_update_skinning") if True else contextlib.suppress():
+                self.update_skinning()
             return
 
         # Fallback to full reconstruction if not skinned or explicitly requested
@@ -185,7 +194,8 @@ class SurfaceReconstructor:
         if self.frame_counter % self.recon_frame_interval != 0:
             return
 
-        self.create_reconstructed_mesh()
+        with profiler.time("recon_mesh") if True else contextlib.suppress():
+            self.create_reconstructed_mesh()
 
     def _should_rebind(self) -> bool:
         """
