@@ -7,68 +7,38 @@ import functools
 import struct
 import math
 import time
-from enum import Enum
 
 import websockets
 import logging
 import torch
 import numpy as np
-import trimesh
-import contextlib
-import gstaichi as ti
+
 import genesis as gs
 
-import genesis.utils.particle as pu
-from genesis.utils.misc import ti_to_numpy
 from options import TeleopOptions
-from agforge_builder import build_env, RobotXMLGenerator
-from environment import AgilityForgeEnv
-from reconstruction import SurfaceReconstructor
+from agforge_builder import build_env
+from strike_controller import StrikeController, StrikeState
 
-# Suppress websockets connection errors (caused by port checks like 'nc')
+# Suppress websockets connection errors
 logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
-# Transformation constants
+# Transformation constants (Matches StrikeController's internal logic, but kept here for InputMapper if needed)
 TRANSFORM_SCALE = 31.275
 TRANSFORM_HEIGHT_FACTOR = 0.375
-
 
 class InputMapper:
     """
     Maps client (Unity) coordinates to Genesis robot qpos.
-    
-    Unity positions are calculated automatically from the transformation parameters
-    (scale, cylinder_height) that are also used in _apply_transformation.
     """
     def __init__(self, cylinder_height: float,
                  genesis_billet_end: float = -0.0383,
-                 unity_base_offset: float = -0.59): # 0.57, 1.16
-        """
-        Args:
-            cylinder_height: Height of the cylinder in Genesis (meters)
-            genesis_billet_end: Genesis x-position of the fixed end of the billet
-            unity_base_offset: Base offset for Unity billet end position
-        """
-        # Genesis positions
+                 unity_base_offset: float = -0.59):
         self.genesis_end = genesis_billet_end
         self.genesis_start = genesis_billet_end + cylinder_height
-        
-        # Unity positions (calculated from transformation parameters)
-        self.unity_end = -0.14 #unity_base_offset + (TRANSFORM_HEIGHT_FACTOR * cylinder_height * TRANSFORM_SCALE)
-        # unity_billet_length = cylinder_height * TRANSFORM_SCALE
-        self.unity_start = 1.04 #self.unity_end + unity_billet_length
+        self.unity_end = -0.14 
+        self.unity_start = 1.04 
     
     def map_client_to_qpos(self, translation: float, rotation: float):
-        """
-        Map client inputs to robot qpos values.
-        
-        Args:
-            translation: Client translation input (Unity x position)
-            rotation: Client rotation input (degrees)
-            
-        Returns:
-            tuple: (slider_qpos, hinge_qpos)
-        """
         x = translation
         x1, y1 = self.unity_end, self.genesis_end
         x2, y2 = self.unity_start, self.genesis_start
@@ -76,456 +46,6 @@ class InputMapper:
         
         hinge_qpos = math.radians(rotation)
         return slider_qpos, hinge_qpos
-
-
-
-
-class StrikeState(Enum):
-    IDLE = 0
-    APPROACHING = 1
-    HOLDING = 2
-    PRESSING = 3
-    RELEASE = 4
-
-class SharedState:
-    def __init__(self, env: AgilityForgeEnv):
-        self.env = env
-        self.robot = env.robot
-        self.qpos = self.robot.entity.get_dofs_position()
-        self.dof_limits = self.robot.entity.get_dofs_limit()
-        self.lock = asyncio.Lock()
-        
-        # Input mapper configured with cylinder height from the environment
-        self.input_mapper = InputMapper(cylinder_height=env.cfg.robot.cylinder_height)
-
-        # Dynamically get gripper limits
-        xml_generator = RobotXMLGenerator(robot_cfg=env.cfg.robot)
-        self.gripper_closed_pos = xml_generator.gripper_slide_range[1]
-        self.gripper_open_pos = xml_generator.gripper_slide_range[0]
-
-        # Strike Logic State
-        self.strike_state = StrikeState.IDLE
-        self.contact_L = False
-        self.contact_R = False
-        self.target_strain = 0.5  # Default, updated by client force param
-
-        self.stage_start_time = 0.0
-        self.contact_width = 0.0
-        
-        # Stepping control
-        self.stabilization_steps = 0
-        self.new_input_received = False
-
-        # Surface reconstruction
-        self.reconstructor = SurfaceReconstructor(env)
-        self.reconstructor.create_reconstructed_mesh()
-
-        # Checkpoint storage
-        self.checkpoints = []
-        
-        # Connection state for idle loop coordination
-        self.is_client_connected = False
-        
-        # Pre-compute transformation constants (Optimization)
-        self.unity_translation = -(self.env.cfg.robot.cylinder_pos + np.array([-TRANSFORM_HEIGHT_FACTOR * self.env.cfg.robot.cylinder_height, 0, 0]))
-        self.unity_scale = np.array((TRANSFORM_SCALE,) * 3)
-        self.unity_translation_tensor = torch.tensor(self.unity_translation, dtype=torch.float32, device=self.env.device).view(1, 3)
-        self.unity_scale_tensor = torch.tensor((TRANSFORM_SCALE,) * 3, dtype=torch.float32, device=self.env.device).view(1, 3)
-
-    async def set_qpos(self, new_qpos):
-        async with self.lock:
-            # Only clamp slider/hinge, grippers managed by logic if striking
-            new_qpos[:, :2] = torch.clamp(new_qpos[:, :2], self.dof_limits[0][:2], self.dof_limits[1][:2])
-            self.qpos = new_qpos
-
-    async def get_qpos(self):
-        async with self.lock:
-            return self.qpos.clone()
-
-    async def trigger_strike(self, force_param):
-        async with self.lock:
-            if self.strike_state != StrikeState.IDLE:
-                return
-            
-            gs.logger.info(f"Strike → APPROACHING (target_strain={force_param * 10:.2f})")
-            # Reset contact flags and stabilization
-            self.contact_L = False
-            self.contact_R = False
-            self.strike_state = StrikeState.APPROACHING
-            self.stage_start_time = time.time()
-            self.stabilization_steps = 0
-            
-            # Map force parameter (0-1) to target strain
-            self.target_strain = force_param * 10.0
-            
-            self.robot.set_control_mode("VELOCITY_CONTROL")
-
-    async def update_strike_logic(self):
-        """Called every simulation step to handle strike state machine."""
-        if self.strike_state == StrikeState.IDLE:
-            return
-
-
-        
-        # --- APPROACHING STAGE ---
-        if self.strike_state == StrikeState.APPROACHING:
-            approach_speed = self.env.cfg.strike.approach_speed
-            contact_threshold = self.env.cfg.strike.contact_force_threshold
-            approaching_timeout = self.env.cfg.strike.approaching_timeout
-            
-            # Check for timeout
-            if time.time() - self.stage_start_time > approaching_timeout:
-                 gs.logger.warning(f"Strike APPROACHING timed out ({approaching_timeout}s)")
-                 self.strike_state = StrikeState.RELEASE
-                 self.stage_start_time = time.time()
-                 # Stop immediately
-                 vel_cmd = torch.zeros(4, device=self.env.device)
-                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
-                 return
-            
-            # Get resistance forces (projected along closing axis)
-            force_L, force_R = self.robot.get_resistance_forces()
-            gs.logger.info(f"Forces: L={force_L:.1f} R={force_R:.1f}")
-            
-            # Check for contact
-            if not self.contact_L and force_L > contact_threshold:
-                self.contact_L = True
-                gs.logger.info(f"Contact L (force={force_L:.1f})")
-                
-            if not self.contact_R and force_R > contact_threshold:
-                self.contact_R = True
-                gs.logger.info(f"Contact R (force={force_R:.1f})")
-
-            # Build velocity command: positive = closing
-            vel_cmd = torch.zeros(4, device=self.env.device)
-            vel_cmd[2] = 0.0 if self.contact_L else approach_speed
-            vel_cmd[3] = 0.0 if self.contact_R else approach_speed
-            self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
-            
-            # Transition Condition
-            if self.contact_L and self.contact_R:
-                self.strike_state = StrikeState.PRESSING
-                self.stage_start_time = time.time()
-                
-                # Record initial separation
-                pos_L = self.robot.left_gripper.get_pos()
-                pos_R = self.robot.right_gripper.get_pos()
-                self.contact_width = torch.norm(pos_L - pos_R).item()
-                gs.logger.info(f"Strike → PRESSING (width={self.contact_width:.4f})")
-                
-        # --- PRESSING STAGE ---
-        elif self.strike_state == StrikeState.PRESSING:
-            pressing_speed = self.env.cfg.strike.pressing_speed
-            target_strain = self.target_strain  # Use client-provided target strain
-            max_force = self.env.cfg.strike.max_force
-            pressing_timeout = self.env.cfg.strike.pressing_timeout
-            force_balance_gain = self.env.cfg.strike.force_balance_gain
-
-            # Get current forces
-            force_L, force_R = self.robot.get_resistance_forces()
-            gs.logger.info(f"Forces: L={force_L:.1f} R={force_R:.1f}")
-            
-            # Calculate separation and strain
-            pos_L = self.robot.left_gripper.get_pos()
-            pos_R = self.robot.right_gripper.get_pos()
-            current_width = torch.norm(pos_L - pos_R).item()
-            
-            if self.contact_width > 1e-6:
-                current_strain = (self.contact_width - current_width) / self.contact_width
-            else:
-                current_strain = 0.0
-                
-            elapsed_time = time.time() - self.stage_start_time
-
-            # Termination Conditions
-            stop_reason = None
-            if current_strain >= target_strain:
-                stop_reason = "Target Strain"
-            elif force_L > max_force or force_R > max_force:
-                stop_reason = "Max Force"
-            elif elapsed_time > pressing_timeout:
-                stop_reason = "Timeout"
-                
-            if stop_reason:
-                gs.logger.info(f"Strike → RELEASE ({stop_reason}, strain={current_strain:.4f})")
-                self.strike_state = StrikeState.RELEASE
-                self.stage_start_time = time.time()
-                # Stop immediately
-                vel_cmd = torch.zeros(4, device=self.env.device)
-                self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
-                return
-
-            # Force balancing: reduce speed on the side with higher force
-            imbalance = force_L - force_R
-            correction = imbalance * force_balance_gain
-            
-            v_L = max(0.0, pressing_speed - correction)
-            v_R = max(0.0, pressing_speed + correction)
-            
-            vel_cmd = torch.zeros(4, device=self.env.device)
-            vel_cmd[2] = v_L
-            vel_cmd[3] = v_R
-            
-            self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
-
-        # --- RELEASE STAGE ---
-        elif self.strike_state == StrikeState.RELEASE:
-            release_speed = self.env.cfg.strike.pressing_speed
-            contact_threshold = self.env.cfg.strike.contact_force_threshold * 0.2
-            force_balance_gain = self.env.cfg.strike.force_balance_gain
-            release_timeout = self.env.cfg.strike.release_timeout
-            
-            # Check for timeout
-            if time.time() - self.stage_start_time > release_timeout:
-                 gs.logger.warning(f"Strike RELEASE timed out ({release_timeout}s) - Forcing reset")
-                 # Force reset to IDLE similar to completion
-                 vel_cmd = torch.zeros(4, device=self.env.device)
-                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
-                 
-                 current_qpos = self.qpos.clone()
-                 current_qpos[:, 2] = self.gripper_open_pos
-                 current_qpos[:, 3] = self.gripper_open_pos
-                 self.robot.set_control_mode("TELEPORT")
-                 self.qpos = current_qpos
-                 self.robot.apply_action(current_qpos)
-                 
-                 self.strike_state = StrikeState.IDLE
-                 self.contact_L = False
-                 self.contact_R = False
-                 self.contact_width = 0.0
-                 await self.save_checkpoint()
-                 return
-            
-            # Force balancing
-            force_L, force_R = self.robot.get_resistance_forces()
-            gs.logger.info(f"Forces: L={force_L:.1f} R={force_R:.1f}")
-            imbalance = force_L - force_R
-            correction = imbalance * force_balance_gain
-            
-            # Base velocity is opening (negative)
-            # If Force_L > Force_R (L has higher resistance), correction is positive.
-            # v_L becomes (-Speed - Correction) -> More negative -> Opens faster to relieve force
-            # v_R becomes (-Speed + Correction) -> Less negative -> Opens slower
-            v_open = -release_speed
-            v_L = v_open - correction
-            v_R = v_open + correction
-            
-            vel_cmd = torch.zeros(4, device=self.env.device)
-            vel_cmd[2] = v_L
-            vel_cmd[3] = v_R
-            self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
-            
-            # Check if grippers have separated enough
-            pos_L = self.robot.left_gripper.get_pos()
-            pos_R = self.robot.right_gripper.get_pos()
-            current_width = torch.norm(pos_L - pos_R).item()
-
-            # Exit only if forces low (grippers separated enough to have no force)
-            
-            # Use abs() to handle negative sticking forces
-            if abs(force_L) < contact_threshold and abs(force_R) < contact_threshold:
-                 # Stop velocities
-                 vel_cmd = torch.zeros(4, device=self.env.device)
-                 self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
-                 
-                 # Teleport to open (use direct qpos access to avoid lock issues)
-                 current_qpos = self.qpos.clone()
-                 current_qpos[:, 2] = self.gripper_open_pos
-                 current_qpos[:, 3] = self.gripper_open_pos
-                 
-                 self.robot.set_control_mode("TELEPORT")
-                 self.qpos = current_qpos
-                 self.robot.apply_action(current_qpos)
-                 
-                 # Reset state
-                 self.strike_state = StrikeState.IDLE
-                 self.contact_L = False
-                 self.contact_R = False
-                 self.contact_width = 0.0
-                 self.stabilization_steps = self.env.cfg.strike.post_release_steps # Allow settling after teleport
-                 gs.logger.info(f"Strike → IDLE (Stabilizing for {self.stabilization_steps} steps)")
-                 
-                 # Save checkpoint after strike completes (not before)
-                 # Note: This is outside the normal async flow, but update_strike_logic
-                 # is already awaited from simulation_loop
-                 await self.save_checkpoint()
-                 return
-
-        # --- HOLDING STAGE ---
-        elif self.strike_state == StrikeState.HOLDING:
-            # Just maintain position (handled by standard loop using self.qpos)
-            pass 
-
-    def _save_checkpoint_impl(self):
-        """Internal helper to save checkpoint without lock (caller must hold lock)."""
-        # Genesis SimState
-        sim_state = self.env.scene.sim.get_state()
-        sim_state.serializable()
-        
-        # Clear queried states in simulator to prevent memory leak
-        # Simulator appends to _queried_states on every get_state()
-        if hasattr(self.env.scene.sim, '_queried_states'):
-            self.env.scene.sim._queried_states.clear()
-
-        ckpt = {
-            'sim_state': sim_state,
-            'strike_state': self.strike_state,
-            'qpos': self.qpos.clone(),
-            'recon_state': self.reconstructor.get_state()  # FIX: Save complete mesh+skinning state
-        }
-        self.checkpoints.append(ckpt)
-        
-        # Enforce max checkpoints limit
-        if len(self.checkpoints) > 50:
-            self.checkpoints.pop(0)
-
-        gs.logger.info(f"Checkpoint saved ({len(self.checkpoints)} total)")
-
-    async def reset_simulation(self):
-        async with self.lock:
-            # Full reset
-            self.env.reset()
-
-            # --- Synchronization for Visualization ---
-            ti.sync()
-            if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
-                self.env.scene.sim.mpm_solver.update_render_fields()
-            else:
-                self.env.scene.visualizer.update_visual_states()
-
-            self.qpos = self.robot.entity.get_dofs_position()
-            self.strike_state = StrikeState.IDLE
-            self.contact_L = False
-            self.contact_R = False
-            self.checkpoints = []
-            self.contact_width = 0.0
-            # Reset sampling cache and init skinning
-            self.reconstructor.reset()
-            
-            # Generate the high-quality base mesh ONCE
-            gs.logger.info("Initializing surface skinning...")
-            self.reconstructor.create_reconstructed_mesh()
-            self.reconstructor.init_skinning()
-            
-            # Save initial state as first checkpoint
-            self._save_checkpoint_impl()
-            
-            gs.logger.info("Simulation reset")
-
-    async def save_checkpoint(self):
-        async with self.lock:
-            self._save_checkpoint_impl()
-
-    async def load_checkpoint(self):
-        """Undo to previous state. Since checkpoints are saved AFTER strikes,
-        we need to pop the current state (discard) and load the previous one."""
-        async with self.lock:
-            if len(self.checkpoints) < 2:
-                gs.logger.warning("No previous checkpoint to undo to")
-                return
-
-            # Pop current state (discard - it's the current state)
-            self.checkpoints.pop()
-            
-            # Peek at previous state (don't pop - we want to keep it as current)
-            ckpt = self.checkpoints[-1]
-            
-            # Restore SimState (MPM particles, etc.)
-            self.env.scene.sim.reset(ckpt['sim_state'])
-
-            # --- Synchronization for Visualization ---
-            ti.sync()
-            if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
-                self.env.scene.sim.mpm_solver.update_render_fields()
-            else:
-                self.env.scene.visualizer.update_visual_states()
-            
-            # Reset to IDLE state (don't restore strike_state - that would repeat the strike)
-            self.strike_state = StrikeState.IDLE
-            self.contact_L = False
-            self.contact_R = False
-            self.contact_width = 0.0
-            
-            # Restore base position but reset grippers to open
-            self.qpos = ckpt['qpos'].clone()
-            self.qpos[:, 2] = self.gripper_open_pos
-            self.qpos[:, 3] = self.gripper_open_pos
-            
-            # Apply the restored position
-            self.robot.set_control_mode("TELEPORT")
-            self.robot.apply_action(self.qpos)
-            
-            self.robot.apply_action(self.qpos)
-            
-            self.robot.apply_action(self.qpos)
-            
-            # FIX: Restore full reconstruction state (instant, no rebuild needed)
-            if 'recon_state' in ckpt:
-                self.reconstructor.set_state(ckpt['recon_state'])
-            else:
-                # Fallback for old checkpoints (shouldn't happen in session, but for safety)
-                self.reconstructor.reset()
-                self.reconstructor.create_reconstructed_mesh()
-                if self.strike_state in [StrikeState.PRESSING, StrikeState.RELEASE]:
-                     self.reconstructor.init_skinning()
-                 
-            gs.logger.info(f"Undo complete ({len(self.checkpoints)} checkpoints remaining)")
-
-    def _apply_transformation(self, points):
-        """
-        Transform points from Genesis space to Unity space (supports Tensor and Numpy).
-        Uses pre-computed constants for performance.
-        """
-        if isinstance(points, torch.Tensor):
-            # In-place operations where possible or optimized tensor math
-            # points is usually (N, 3)
-            # We must be careful not to modify the input tensor if it's cached/shared, so we clone/create new.
-            # But 'points + translation' creates a new tensor anyway.
-            
-            points = points + self.unity_translation_tensor
-            points = points * self.unity_scale_tensor
-            points[:, 0] *= -1  # Flip x-axis
-        else: 
-            # Numpy path for CPU mesh vertices
-            points = points + self.unity_translation.reshape(1, 3)
-            points = points * self.unity_scale.reshape(1, 3)
-            points[:, 0] *= -1
-            
-        return points
-
-    async def update_and_get_recon_data(self):
-        """
-        Updates reconstruction/skinning if needed, and returns transformed mesh/particles.
-        Implements intelligent caching strategy:
-        - If reconstructing/skinning: Use CACHED particles (guarantees consistency with mesh).
-        - If NOT reconstructing (e.g. Approach): Use LIVE particles (visualize movement).
-        """
-        allowed_stages = (StrikeState.PRESSING, StrikeState.RELEASE)
-        should_reconstruct = self.strike_state in allowed_stages
-        
-        # 1. Update Reconstruction (if needed)
-        # Note: reconstructor.update handles intervals and skinning internally
-        if should_reconstruct:
-            self.reconstructor.update(should_reconstruct)
-            # Use cached particles (guaranteed to match mesh)
-            particles = self.reconstructor.get_active_particle_cache()
-            
-            # Fallback (rare)
-            if particles is None:
-                 particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
-        else:
-            # Not reconstructing: Use LIVE particles to show movement
-            # (e.g. approaching, or idle deformation)
-            particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
-
-        # 2. Transform Data (optimized)
-        points = self._apply_transformation(particles)
-        vertices = self._apply_transformation(self.reconstructor.reconstructed_mesh.vertices)
-        triangles = self.reconstructor.reconstructed_mesh.faces
-        
-        return vertices, triangles, points
-            
-
 
 
 def _prepare_array(arr, dtype):
@@ -550,7 +70,7 @@ def _prepare_array(arr, dtype):
     return flat, len(flat)
 
 
-async def simulation_loop(websocket, state: SharedState):
+async def simulation_loop(websocket, state: StrikeController):
     """Runs the simulation and sends state updates to the client."""
     gs.logger.debug("Simulation loop started")
     
@@ -559,7 +79,9 @@ async def simulation_loop(websocket, state: SharedState):
             # Determine if we need to step
             is_active = (state.strike_state != StrikeState.IDLE)
             needs_stabilization = (state.stabilization_steps > 0)
-            has_input = state.new_input_received
+            
+            # Helper dynamic attribute for manual inputs (socket only)
+            has_input = getattr(state, 'new_input_received', False)
             
             should_step = is_active or needs_stabilization or has_input
             
@@ -567,44 +89,14 @@ async def simulation_loop(websocket, state: SharedState):
                 await asyncio.sleep(0.001)
                 continue
             
-            # 1. Clear accumulators
-
-
-            # 2. Logic Update (State Machine)
-            with state.env.scene.profiling_options.profiler.time("teleop_logic") if state.env.scene.profiling_options.configs.teleop.logic else contextlib.suppress():
-                await state.update_strike_logic()
+            # 1. atomic step (Logic + Physics + Render)
+            await state.step_simulation()
             
-            # 3. Apply Actions based on State
-            if state.strike_state == StrikeState.IDLE or state.strike_state == StrikeState.HOLDING:
-                # Standard Teleoperation / Holding
-                with state.env.scene.profiling_options.profiler.time("teleop_action") if state.env.scene.profiling_options.configs.teleop.action else contextlib.suppress():
-                    qpos = await state.get_qpos()
-                    state.robot.apply_action(qpos)
-            
-            # Clear accumulators (Before stepping, but after logic/reading!)
-            # Logic (step N) reads forces from Step N-1.
-            # Then we clear accumulator.
-            # Then Step N calculates new forces.
-            with state.env.scene.profiling_options.profiler.time("teleop_clear_force") if state.env.scene.profiling_options.configs.teleop.clear_force else contextlib.suppress():
-                if hasattr(state.env.scene.sim.coupler, 'clear_link_coupling_forces'):
-                    state.env.scene.sim.coupler.clear_link_coupling_forces()
-            
-            # 4. Physics Step
-            # env.scene.step() profiled internally by genesis
-            state.env.scene.step()
-            
-            # Update render fields for particle access
-            with state.env.scene.profiling_options.profiler.time("teleop_render_update") if state.env.scene.profiling_options.configs.teleop.render_update else contextlib.suppress():
-                if hasattr(state.env.scene.sim.mpm_solver, 'update_render_fields'):
-                    state.env.scene.sim.mpm_solver.update_render_fields()
-                else:
-                    state.env.scene.visualizer.update_visual_states()
-
-            with state.env.scene.profiling_options.profiler.time("teleop_recon") if state.env.scene.profiling_options.configs.teleop.recon else contextlib.suppress():
+            # 2. Reconstruction & IO
+            # Note: state.env.scene.profiling_options is accessible
+            with state._profile("teleop_io"):
                 vertices, triangles, particles = await state.update_and_get_recon_data()
-            
-            with state.env.scene.profiling_options.profiler.time("teleop_io") if state.env.scene.profiling_options.configs.teleop.io else contextlib.suppress():
-                # Prepare binary message
+                
                 v_flat, v_count = _prepare_array(vertices, np.float32)
                 t_flat, t_count = _prepare_array(triangles, np.int32)
                 p_flat, p_count = _prepare_array(particles, np.float32)
@@ -628,8 +120,10 @@ async def simulation_loop(websocket, state: SharedState):
             
             await asyncio.sleep(1/60)
             
-            # Post-step cleanup
-            state.new_input_received = False
+            # Cleanup
+            if hasattr(state, 'new_input_received'):
+                state.new_input_received = False
+            
             if state.stabilization_steps > 0:
                 state.stabilization_steps -= 1
                 if state.stabilization_steps == 0:
@@ -645,19 +139,18 @@ async def simulation_loop(websocket, state: SharedState):
     finally:
         gs.logger.debug("Simulation loop finished")
 
-async def viewer_idle_loop(state: SharedState):
+async def viewer_idle_loop(state: StrikeController):
     """Keeps the viewer responsive when no client is connected."""
     try:
         while True:
-            if not state.is_client_connected:
-                # If no client, we must step the viewer manually to keep window responsive
+            # Helper dynamic attribute
+            is_connected = getattr(state, 'is_client_connected', False)
+            
+            if not is_connected:
                 if hasattr(state.env.scene, 'visualizer') and state.env.scene.visualizer:
                      vis = state.env.scene.visualizer
-                     
-                     # Try standard render which should poll events
                      if hasattr(vis, 'render'):
                          vis.render()
-                     # Fallback/Additional: Pump Pyglet events if accessible
                      elif hasattr(vis, 'viewer'):
                          try:
                              if hasattr(vis.viewer, 'dispatch_events'):
@@ -667,11 +160,9 @@ async def viewer_idle_loop(state: SharedState):
                          except Exception:
                              pass
                      else:
-                         # Last resort: just update states (unlikely to poll events)
                          vis.update_visual_states()
             
-            # Sleep a bit to yield to other tasks
-            await asyncio.sleep(0.02) # Slightly faster poll (50Hz)
+            await asyncio.sleep(0.02)
     except asyncio.CancelledError:
         pass
     except Exception as e:
@@ -679,11 +170,15 @@ async def viewer_idle_loop(state: SharedState):
         traceback.print_exc()
 
 
-async def handle_client(websocket, state: SharedState, path=None):
+async def handle_client(websocket, state: StrikeController, path=None):
     """Listens for client messages and updates the shared state."""
     gs.logger.info("Client connected")
     state.is_client_connected = True
     
+    # Input mapper is specific to this socket interface
+    if not hasattr(state, 'input_mapper'):
+        state.input_mapper = InputMapper(cylinder_height=state.env.cfg.robot.cylinder_height)
+
     producer_task = asyncio.create_task(simulation_loop(websocket, state))
 
     try:
@@ -713,9 +208,6 @@ async def handle_client(websocket, state: SharedState, path=None):
                          force = packet.get("force", 0.5)
                          await state.trigger_strike(force)
 
-                elif packet.get("request") == "temperature":
-                    pass  # Placeholder for future implementation
-
             except json.JSONDecodeError:
                 gs.logger.warning("Invalid JSON from client")
             except Exception as e:
@@ -735,42 +227,38 @@ async def handle_client(websocket, state: SharedState, path=None):
 
 
 async def main():
-    # Force line buffering for stdout so logs appear immediately (fixes buffering issue)
     sys.stdout.reconfigure(line_buffering=True)
     
-    # Use print before gs.init() is called by build_env()
     print("Building simulation environment...")
     cfg = TeleopOptions()
     cfg.general.show_viewer = True
-    env = build_env(cfg)  # gs.init() is called inside here
-    shared_state = SharedState(env)
+    env = build_env(cfg)
+    
+    # Instantiate the new controller
+    shared_state = StrikeController(env)
     shared_state.robot.set_control_mode("TELEPORT")
+    
+    # Add dynamic attributes needed for socket loop
+    shared_state.new_input_received = False
+    shared_state.is_client_connected = False
 
-    # gs.logger is now available after build_env()
     gs.logger.info("Warming up simulation...")
     await shared_state.reset_simulation()
 
-    # Warm-up strike to pre-compile velocity control and force reading kernels
-    # This eliminates the JIT compilation pause on the first real strike
     gs.logger.info("Warming up strike kernels...")
     shared_state.robot.set_control_mode("VELOCITY_CONTROL")
     vel_cmd = torch.zeros(4, device=env.device)
-    vel_cmd[2] = 1.0  # Small gripper velocity
-    vel_cmd[3] = 1.0
+    vel_cmd[2] = 1.0; vel_cmd[3] = 1.0
     shared_state.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=env.device))
-    env.scene.step()  # Step once to compile the kernels
-    shared_state.robot.get_resistance_forces()  # Compile force reading
+    env.scene.step()
+    shared_state.robot.get_resistance_forces()
     shared_state.robot.set_control_mode("TELEPORT")
-    await shared_state.reset_simulation()  # Reset back to initial state
+    await shared_state.reset_simulation()
 
     gs.logger.info("Server ready on port 8765")
     handler = functools.partial(handle_client, state=shared_state)
-
     
-    # Create an event to signal shutdown
     stop_event = asyncio.Event()
-
-    # Register signal handler for SIGINT (Ctrl+C)
     loop = asyncio.get_running_loop()
     def _handle_sigint():
         gs.logger.info("SIGINT received, shutting down...")
@@ -782,10 +270,8 @@ async def main():
         pass
 
     async with websockets.serve(handler, "localhost", 8765):
-        # Start idle loop to keep window fresh when no client
         idle_task = asyncio.create_task(viewer_idle_loop(shared_state))
         try:
-             # Wait until stop signal is received
              await stop_event.wait()
         finally:
              gs.logger.debug("Cleaning up tasks")
@@ -797,17 +283,5 @@ async def main():
              gs.logger.info("Shutdown complete")
              shared_state.env.scene.profiling_options.profiler.print()
 
-
 if __name__ == "__main__":
-    # Required for 'spawn' method to work correctly on Windows and compiled Linux,
-    # preventing infinite recursive spawning of the application.
-    import multiprocessing
-    multiprocessing.freeze_support()
-    # Increase recursion depth for Pyglet on macOS
-    sys.setrecursionlimit(3000)
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        # Clean exit on Ctrl+C (especially for Windows where signal handlers don't work)
-        pass
-
+    asyncio.run(main())
