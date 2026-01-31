@@ -57,6 +57,8 @@ class ProfilingOptions(Options):
         class Teleop(Options):
             """Teleop socket profiling configurations."""
             logic: bool = True
+            logic_step: bool = True
+            logic_idle: bool = True
             logic_get_resistance: bool = True
             logic_get_pos: bool = True
             logic_check_stop: bool = True
