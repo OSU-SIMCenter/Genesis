@@ -93,13 +93,14 @@ class StrikeController:
             if self.strike_state != StrikeState.IDLE:
                 return
             
-            gs.logger.info(f"Strike -> APPROACHING (target_strain={force_param * 10:.2f})")
+            # Use param directly as strain (e.g. 0.05 for 5%)
+            gs.logger.info(f"Strike -> APPROACHING (target_strain={force_param:.4f})")
             self.contact_L = False
             self.contact_R = False
             self.strike_state = StrikeState.APPROACHING
             self.stage_start_time = time.time()
             self.stabilization_steps = 0
-            self.target_strain = force_param * 10.0
+            self.target_strain = force_param
             self.robot.set_control_mode("VELOCITY_CONTROL")
 
     async def update_logic(self):
@@ -286,7 +287,10 @@ class StrikeController:
                 self.env.scene.visualizer.update_visual_states()
 
     def _profile(self, name):
-        if self.env.scene.profiling_options.configs.teleop.get(name.replace("teleop_", ""), False):
+        # Fix for Pydantic model access
+        teleop_opts = self.env.scene.profiling_options.configs.teleop
+        opt_name = name.replace("teleop_", "")
+        if getattr(teleop_opts, opt_name, False):
             return self.env.scene.profiling_options.profiler.time(name)
         return contextlib.suppress()
 
