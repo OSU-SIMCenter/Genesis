@@ -57,6 +57,12 @@ class StrikeController:
         
         # Transformation constants for Unity (visualization)
         self._init_transforms()
+        
+        # Optimization: Pre-allocated tensors
+        self._vel_cmd = torch.zeros(4, device=self.env.device)
+        self._last_vel_cmd = torch.zeros(4, device=self.env.device)
+        self._dofs_idx_local = torch.tensor([0, 1, 2, 3], device=self.env.device)
+        self._force_next_apply = True
 
     def _init_gripper_limits(self):
         # We can re-use the XML generator logic or just hardcode if standard.
@@ -134,12 +140,12 @@ class StrikeController:
                 self.contact_R = True
 
             with self._profile("logic_calc_cmd"):
-                vel_cmd = torch.zeros(4, device=self.env.device)
-                vel_cmd[2] = 0.0 if self.contact_L else approach_speed
-                vel_cmd[3] = 0.0 if self.contact_R else approach_speed
+                self._vel_cmd.zero_()
+                self._vel_cmd[2] = 0.0 if self.contact_L else approach_speed
+                self._vel_cmd[3] = 0.0 if self.contact_R else approach_speed
             
             with self._profile("logic_apply_vel"):
-                self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+                self._apply_vel_dedup()
             
             if self.contact_L and self.contact_R:
                 self.strike_state = StrikeState.PRESSING
@@ -198,12 +204,12 @@ class StrikeController:
                 v_L = max(0.0, pressing_speed - correction)
                 v_R = max(0.0, pressing_speed + correction)
                 
-                vel_cmd = torch.zeros(4, device=self.env.device)
-                vel_cmd[2] = v_L
-                vel_cmd[3] = v_R
+                self._vel_cmd.zero_()
+                self._vel_cmd[2] = v_L
+                self._vel_cmd[3] = v_R
             
             with self._profile("logic_apply_vel"):
-                self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+                self._apply_vel_dedup()
 
         # --- RELEASE STAGE ---
         elif self.strike_state == StrikeState.RELEASE:
@@ -229,12 +235,12 @@ class StrikeController:
                 v_L = v_open - correction
                 v_R = v_open + correction
                 
-                vel_cmd = torch.zeros(4, device=self.env.device)
-                vel_cmd[2] = v_L
-                vel_cmd[3] = v_R
+                self._vel_cmd.zero_()
+                self._vel_cmd[2] = v_L
+                self._vel_cmd[3] = v_R
             
             with self._profile("logic_apply_vel"):
-                self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+                self._apply_vel_dedup()
             
             if abs(force_L) < contact_threshold and abs(force_R) < contact_threshold:
                  self._force_idle_reset()
@@ -249,11 +255,24 @@ class StrikeController:
             pass 
 
     def _stop_motors(self):
-        vel_cmd = torch.zeros(4, device=self.env.device)
-        self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+        self._vel_cmd.zero_()
+        self._apply_vel_dedup()
+
+    def _apply_vel_dedup(self):
+        """
+        Applies velocity only if the command has changed from the last step.
+        Reduces overhead of repeated identical calls (e.g. during APPROACHING).
+        """
+        if not self._force_next_apply and torch.equal(self._vel_cmd, self._last_vel_cmd):
+            return
+
+        self.robot.apply_velocity(self._vel_cmd, dofs_idx_local=self._dofs_idx_local)
+        self._last_vel_cmd.copy_(self._vel_cmd)
+        self._force_next_apply = False
 
     def _force_idle_reset(self):
          self._stop_motors()
+         self._force_next_apply = True
          
          current_qpos = self.qpos.clone()
          current_qpos[:, 2] = self.gripper_open_pos
