@@ -125,6 +125,12 @@ class SharedState:
         
         # Connection state for idle loop coordination
         self.is_client_connected = False
+        
+        # Pre-compute transformation constants (Optimization)
+        self.unity_translation = -(self.env.cfg.robot.cylinder_pos + np.array([-TRANSFORM_HEIGHT_FACTOR * self.env.cfg.robot.cylinder_height, 0, 0]))
+        self.unity_scale = np.array((TRANSFORM_SCALE,) * 3)
+        self.unity_translation_tensor = torch.tensor(self.unity_translation, dtype=torch.float32, device=self.env.device).view(1, 3)
+        self.unity_scale_tensor = torch.tensor((TRANSFORM_SCALE,) * 3, dtype=torch.float32, device=self.env.device).view(1, 3)
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
@@ -364,7 +370,8 @@ class SharedState:
         ckpt = {
             'sim_state': sim_state,
             'strike_state': self.strike_state,
-            'qpos': self.qpos.clone()
+            'qpos': self.qpos.clone(),
+            'recon_state': self.reconstructor.get_state()  # FIX: Save complete mesh+skinning state
         }
         self.checkpoints.append(ckpt)
         
@@ -450,54 +457,73 @@ class SharedState:
             
             self.robot.apply_action(self.qpos)
             
-            # Restore visual mesh state (re-skin if needed)
-            # Since we jump back in time, particles move. Skinning update will fix vertices.
-            # But if we want to be safe, we could force an update.
-            # However, init_skinning relies on the base mesh being valid. 
-            # If the base mesh hasn't changed (topology constant), we are fine.
-            self.reconstructor.update(True)
+            self.robot.apply_action(self.qpos)
+            
+            # FIX: Restore full reconstruction state (instant, no rebuild needed)
+            if 'recon_state' in ckpt:
+                self.reconstructor.set_state(ckpt['recon_state'])
+            else:
+                # Fallback for old checkpoints (shouldn't happen in session, but for safety)
+                self.reconstructor.reset()
+                self.reconstructor.create_reconstructed_mesh()
+                if self.strike_state in [StrikeState.PRESSING, StrikeState.RELEASE]:
+                     self.reconstructor.init_skinning()
+                 
             gs.logger.info(f"Undo complete ({len(self.checkpoints)} checkpoints remaining)")
 
     def _apply_transformation(self, points):
-        """Transform points from Genesis space to Unity space (supports Tensor and Numpy)."""
-        cfg = self.env.cfg.robot
-        translation = -(cfg.cylinder_pos + np.array([-TRANSFORM_HEIGHT_FACTOR * cfg.cylinder_height, 0, 0]))
-        scale = (TRANSFORM_SCALE,) * 3
-        
+        """
+        Transform points from Genesis space to Unity space (supports Tensor and Numpy).
+        Uses pre-computed constants for performance.
+        """
         if isinstance(points, torch.Tensor):
-            points = points + torch.tensor(translation, dtype=torch.float32, device=points.device).view(1, 3)
-            points = points * torch.tensor(scale, dtype=torch.float32, device=points.device).view(1, 3)
+            # In-place operations where possible or optimized tensor math
+            # points is usually (N, 3)
+            # We must be careful not to modify the input tensor if it's cached/shared, so we clone/create new.
+            # But 'points + translation' creates a new tensor anyway.
+            
+            points = points + self.unity_translation_tensor
+            points = points * self.unity_scale_tensor
             points[:, 0] *= -1  # Flip x-axis
-        else: # Numpy path for CPU mesh vertices
-            points = points + translation.reshape(1, 3)
-            points = points * np.array(scale).reshape(1, 3)
+        else: 
+            # Numpy path for CPU mesh vertices
+            points = points + self.unity_translation.reshape(1, 3)
+            points = points * self.unity_scale.reshape(1, 3)
             points[:, 0] *= -1
             
         return points
 
-    async def get_reconstructed_mesh_and_particles(self):
-        """Return transformed mesh vertices, triangles, and particle positions."""
-        points = self._apply_transformation(
-            self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
-        )
-        vertices = self._apply_transformation(self.reconstructor.reconstructed_mesh.vertices)
-        triangles = self.reconstructor.reconstructed_mesh.faces
-        return vertices, triangles, points
-
-    async def update_reconstructed_mesh(self):
-        """Reconstruct mesh during active strike stages."""
-        # Update skinning every frame if enabled, otherwise reconstruct based on stage
-        # The reconstructor.update() method handles the logic internally now:
-        # If skinning_enabled -> update_skinning() (fast)
-        # Else -> create_reconstructed_mesh() (slow, only if allowed)
-        
+    async def update_and_get_recon_data(self):
+        """
+        Updates reconstruction/skinning if needed, and returns transformed mesh/particles.
+        Implements intelligent caching strategy:
+        - If reconstructing/skinning: Use CACHED particles (guarantees consistency with mesh).
+        - If NOT reconstructing (e.g. Approach): Use LIVE particles (visualize movement).
+        """
         allowed_stages = (StrikeState.PRESSING, StrikeState.RELEASE)
         should_reconstruct = self.strike_state in allowed_stages
         
-        # We only update if in the allowed stages, even for skinning
-        # The user specifically requested this optimization.
+        # 1. Update Reconstruction (if needed)
+        # Note: reconstructor.update handles intervals and skinning internally
         if should_reconstruct:
             self.reconstructor.update(should_reconstruct)
+            # Use cached particles (guaranteed to match mesh)
+            particles = self.reconstructor.get_active_particle_cache()
+            
+            # Fallback (rare)
+            if particles is None:
+                 particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+        else:
+            # Not reconstructing: Use LIVE particles to show movement
+            # (e.g. approaching, or idle deformation)
+            particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+
+        # 2. Transform Data (optimized)
+        points = self._apply_transformation(particles)
+        vertices = self._apply_transformation(self.reconstructor.reconstructed_mesh.vertices)
+        triangles = self.reconstructor.reconstructed_mesh.faces
+        
+        return vertices, triangles, points
             
 
 
@@ -575,8 +601,7 @@ async def simulation_loop(websocket, state: SharedState):
                     state.env.scene.visualizer.update_visual_states()
 
             with state.env.scene.profiling_options.profiler.time("teleop_recon") if state.env.scene.profiling_options.configs.teleop.recon else contextlib.suppress():
-                await state.update_reconstructed_mesh()
-                vertices, triangles, particles = await state.get_reconstructed_mesh_and_particles()
+                vertices, triangles, particles = await state.update_and_get_recon_data()
             
             with state.env.scene.profiling_options.profiler.time("teleop_io") if state.env.scene.profiling_options.configs.teleop.io else contextlib.suppress():
                 # Prepare binary message

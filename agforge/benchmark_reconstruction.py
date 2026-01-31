@@ -41,9 +41,9 @@ def run_reconstruction_benchmark():
 
     configs = [
         {"name": "Full_Reconstruction", "skinning": False, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
-        {"name": "Downsampled_Recon", "skinning": False, "fraction": 0.5, "offset": [0.0, 0.0, 0.04]},
-        {"name": "Full_Skinning", "skinning": True, "fraction": 1.0, "offset": [0.0, 0.0, 0.08]},
-        {"name": "Downsampled_Skinning", "skinning": True, "fraction": 0.5, "offset": [0.0, 0.0, 0.12]},
+        # {"name": "Downsampled_Recon", "skinning": False, "fraction": 0.5, "offset": [0.0, 0.0, 0.04]},
+        {"name": "Full_Skinning", "skinning": True, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]}, # Adjusted offset
+        # {"name": "Downsampled_Skinning", "skinning": True, "fraction": 0.5, "offset": [0.0, 0.0, 0.12]},
     ]
     
     results = {}
@@ -149,7 +149,30 @@ def run_reconstruction_benchmark():
                                 vertex_positions=mesh.vertices + offset,
                                 vertex_normals=mesh.vertex_normals,
                                 triangle_indices=mesh.faces, 
-                                albedo_factor=[0.39, 0.78, 1.0]
+                                albedo_factor=[0.39, 0.78, 1.0, 0.5]
+                            )
+                        )
+                    
+                    # Log particles (visualize only, use cache if available)
+                    # Use the cache from reconstruction to avoid re-fetching
+                    particles = reconstructor.get_active_particle_cache()
+                    if particles is None:
+                        # Fallback if cache is empty (e.g. skinning skipped)
+                        particles = reconstructor._get_active_particles(use_cache=False)
+
+                    if particles is not None and len(particles) > 0:
+                        # Convert to numpy if tensor
+                        if isinstance(particles, torch.Tensor):
+                            p_np = particles.cpu().numpy()
+                        else:
+                            p_np = particles
+                            
+                        rr.log(
+                            f"visuals/{name}/particles",
+                            rr.Points3D(
+                                p_np + offset,
+                                radii=0.0002,
+                                colors=[0.8, 0.2, 0.2]
                             )
                         )
                 

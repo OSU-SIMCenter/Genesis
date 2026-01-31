@@ -23,7 +23,7 @@ class SurfaceReconstructor:
         self.reconstructed_mesh = trimesh.Trimesh()
         self.recon_enabled = True
         self.recon_frame_interval = 2
-        self.recon_particle_fraction = 0.5
+        self.recon_particle_fraction = 1.0 # 0.5
         self.frame_counter = 0
         
         # Sampling configuration
@@ -66,6 +66,64 @@ class SurfaceReconstructor:
         # Rebind check interval
         self._rebind_check_interval = 30
 
+    def get_state(self):
+        """Returns a snapshot of the current mesh and skinning state (for checkpoints)."""
+        state = {
+            'mesh': self.reconstructed_mesh.copy(),
+            'skinning_enabled': self.skinning_enabled,
+            'recon_enabled': self.recon_enabled,
+            'frame_counter': self.frame_counter,
+            'global_frame': self._global_frame,
+            'recon_particle_fraction': self.recon_particle_fraction,
+            'main_particle_indices': self.main_particle_indices.copy() if self.main_particle_indices is not None else None,
+            'last_total_particles': self.last_total_particles,
+        }
+        
+        # Save skinning tensors if active
+        if self.skinning_enabled:
+            state.update({
+                'bind_indices': self.bind_indices.clone() if self.bind_indices is not None else None,
+                'bind_weights': self.bind_weights.clone() if self.bind_weights is not None else None,
+                'bind_offsets': self.bind_offsets.clone() if self.bind_offsets is not None else None,
+                'smoothing_matrix': self.smoothing_matrix.clone() if self.smoothing_matrix is not None else None,
+                'use_dense_smoothing': self._use_dense_smoothing,
+                'cached_particle_radius': self._cached_particle_radius
+            })
+            
+        return state
+
+    def set_state(self, state):
+        """Restores the reconstructor state from a checkpoint."""
+        if state is None:
+            return
+
+        self.reconstructed_mesh = state['mesh']
+        self.skinning_enabled = state['skinning_enabled']
+        self.recon_enabled = state['recon_enabled']
+        self.frame_counter = state['frame_counter']
+        # Do NOT restore global_frame, as that tracks time passage for the server?
+        # Actually, if we undo simulation time, we SHOULD undo global_frame to match the sim state.
+        self._global_frame = state['global_frame']
+        
+        self.recon_particle_fraction = state.get('recon_particle_fraction', 1.0)
+        self.main_particle_indices = state['main_particle_indices']
+        self.last_total_particles = state['last_total_particles']
+        
+        if self.skinning_enabled:
+            self.bind_indices = state['bind_indices']
+            self.bind_weights = state['bind_weights']
+            self.bind_offsets = state['bind_offsets']
+            self.smoothing_matrix = state['smoothing_matrix']
+            self._use_dense_smoothing = state['use_dense_smoothing']
+            self._cached_particle_radius = state['cached_particle_radius']
+        else:
+            self._invalidate_skinning()
+            
+        # Clear particle cache to ensure next fetch gets valid data for this restored time
+        self._cached_particles = None
+        self._cached_frame = -1
+
+
     def reset(self):
         """Resets the reconstructor state and sampling cache."""
         self.reconstructed_mesh = trimesh.Trimesh()
@@ -104,6 +162,10 @@ class SurfaceReconstructor:
 
         # If skinning active, update positions
         if self.skinning_enabled:
+            # FIX #10: Respect frame interval for skinning too (Performance)
+            if self._global_frame % self.recon_frame_interval != 0:
+                return
+
             # FIX #7: Check if rebind needed periodically
             if self._global_frame % self._rebind_check_interval == 0:
                 if self._should_rebind():
@@ -361,14 +423,21 @@ class SurfaceReconstructor:
             gs.logger.error(f"Skinning update failed: {e}")
             self._invalidate_skinning()
 
-    def _get_active_particles(self, use_cache: bool = True):
+    def _get_active_particles(self, use_cache: bool = True, apply_subsampling: bool = True):
         """Helper to fetch particles with consistent logic and caching."""
         # FIX #1: Use global frame counter
         current_frame = self._global_frame
         
         # Cache check
         if use_cache and self._cached_frame == current_frame and self._cached_particles is not None:
-            return self._cached_particles
+             # If cached particles are already subsampled, we return them.
+             # If we need RAW particles but cache has SUBSAMPLED, we must re-fetch.
+             # Current design: cache stores SUBSAMPLED particles (ready for skinning/rendering).
+             # So if apply_subsampling=False, we cannot use the Default Cache safely if it's already subsampled.
+             if apply_subsampling:
+                return self._cached_particles
+             else:
+                pass # Force fetch for raw particles
 
         solver = self.env.scene.sim.mpm_solver
         ti.sync()
@@ -393,7 +462,7 @@ class SurfaceReconstructor:
             particles = particles[active]
             
             # Apply subsampling if indices are set
-            if self.main_particle_indices is not None and len(self.main_particle_indices) > 0:
+            if apply_subsampling and self.main_particle_indices is not None and len(self.main_particle_indices) > 0:
                 # FIX #5: Properly handle particle count change
                 if np.max(self.main_particle_indices) < len(particles):
                     particles = particles[self.main_particle_indices]
@@ -407,9 +476,10 @@ class SurfaceReconstructor:
                     # Return None to force reinitialization
                     return None
             
-            # Update cache
-            self._cached_particles = particles
-            self._cached_frame = current_frame
+            # Update cache ONLY if we are doing the standard subsampled fetch
+            if apply_subsampling:
+                self._cached_particles = particles
+                self._cached_frame = current_frame
             
             return particles
 
@@ -417,30 +487,25 @@ class SurfaceReconstructor:
             gs.logger.error(f"Failed to get particles: {e}")
             return None
 
+    def get_active_particle_cache(self):
+        """Returns the most recently cached active particles (for visualization)."""
+        return self._cached_particles
+
+
     def create_reconstructed_mesh(self):
         """Reconstruct surface mesh from active particles using splashsurf."""
+        # FIX: Define solver for radius access
         solver = self.env.scene.sim.mpm_solver
-        ti.sync()
+        
+        # FIX: Use centralized fetcher but get RAW particles for sampling logic
+        # We handle subsampling manually below to define the indices
+        particles = self._get_active_particles(use_cache=False, apply_subsampling=False)
         
         try:
-            if hasattr(solver.particles_render.pos, 'to_numpy'):
-                particles = solver.particles_render.pos.to_numpy()[:, 0]
-            else:
-                particles = ti_to_numpy(solver.particles_render.pos)[:, 0]
-            
-            offset = self.env.scene.envs_offset[0]
-            if hasattr(offset, 'cpu'):
-                offset = offset.cpu().numpy()
-            elif hasattr(offset, 'numpy'):
-                offset = offset.numpy()
-            particles = particles + offset
-            
-            if hasattr(solver.particles_render.active, 'to_numpy'):
-                active = solver.particles_render.active.to_numpy()[:, 0].astype(bool)
-            else:
-                active = ti_to_numpy(solver.particles_render.active)[:, 0].astype(bool)
-            particles = particles[active]
-            
+            if particles is None:
+                gs.logger.warning("No active particles for reconstruction")
+                return
+
             # Subsampling logic
             if self.recon_particle_fraction < 1.0:
                 num_keep = int(len(particles) * self.recon_particle_fraction)
@@ -479,6 +544,11 @@ class SurfaceReconstructor:
                         self._invalidate_skinning()
                         
                     particles = particles[self.main_particle_indices]
+
+            # FIX: Manually update cache since we skipped it in _get_active_particles
+            # This ensures visualization (e.g. Rerun) receives the subsampled particles used for this frame.
+            self._cached_particles = particles
+            self._cached_frame = self._global_frame
 
             # Radius scaling
             base_radius = solver.particle_radius
