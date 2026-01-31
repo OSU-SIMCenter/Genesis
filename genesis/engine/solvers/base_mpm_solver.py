@@ -13,6 +13,7 @@ from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState
 from genesis.options.solvers import MPMOptions
 from genesis.utils.misc import DeprecationError
+import contextlib
 
 from .base_solver import Solver
 
@@ -498,22 +499,23 @@ class BaseMPMSolver(Solver):
 
     def substep_pre_coupling(self, f):
         profiler = self.sim.scene.profiling_options.profiler
-        with profiler.time("mpm_reset_grid_grad") if True else contextlib.suppress():
-            self.reset_grid_and_grad(f)
-        with profiler.time("mpm_compute_F_tmp") if True else contextlib.suppress():
-            self.compute_F_tmp(f)
-        with profiler.time("mpm_svd") if True else contextlib.suppress():
-            self.svd(f)
-        with profiler.time("mpm_p2g") if True else contextlib.suppress():
-            self.p2g(
-                f,
-                self.sim.coupler.rigid_solver.geoms_state,
-                self.sim.coupler.rigid_solver.geoms_info,
-                self.sim.coupler.rigid_solver.links_state,
-                self.sim.coupler.rigid_solver._rigid_global_info,
-                self.sim.coupler.rigid_solver.sdf._sdf_info,
-                self.sim.coupler.rigid_solver.collider._collider_static_config,
-            )
+        with profiler.time("mpm_pre_couple_ops") if True else contextlib.suppress():
+            with profiler.time("mpm_reset_grid_grad") if True else contextlib.suppress():
+                self.reset_grid_and_grad(f)
+            with profiler.time("mpm_compute_F_tmp") if True else contextlib.suppress():
+                self.compute_F_tmp(f)
+            with profiler.time("mpm_svd") if True else contextlib.suppress():
+                self.svd(f)
+            with profiler.time("mpm_p2g") if True else contextlib.suppress():
+                self.p2g(
+                    f,
+                    self.sim.coupler.rigid_solver.geoms_state,
+                    self.sim.coupler.rigid_solver.geoms_info,
+                    self.sim.coupler.rigid_solver.links_state,
+                    self.sim.coupler.rigid_solver._rigid_global_info,
+                    self.sim.coupler.rigid_solver.sdf._sdf_info,
+                    self.sim.coupler.rigid_solver.collider._collider_static_config,
+                )
 
     def substep_pre_coupling_grad(self, f):
         self.p2g.grad(
@@ -540,13 +542,15 @@ class BaseMPMSolver(Solver):
 
             # Apply particle constraints after g2p
             if self._constraints_initialized:
-                self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
+                with profiler.time("mpm_apply_constraints") if True else contextlib.suppress():
+                    self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
             # FIXME: Use existing errno mechanism for this.
-            if not self._is_state_valid(f):
-                gs.raise_exception(
-                    "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
-                )
+            with profiler.time("mpm_check_valid") if True else contextlib.suppress():
+                if not self._is_state_valid(f):
+                    gs.raise_exception(
+                        "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
+                    )
 
     def substep_post_coupling_grad(self, f):
         self.g2p.grad(
