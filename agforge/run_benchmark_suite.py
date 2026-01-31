@@ -174,9 +174,17 @@ async def run_benchmark():
                 
                 print(f"    Done: {step_count} steps in {duration:.2f}s ({fps:.1f} FPS)")
                 
-                # Detailed Profiler Output
-                print("\n    --- Detailed Profiling Stats ---")
-                profiler.print(show_stats=True)
+                # Detailed Profiler Output (Rich Table)
+                print("\n    --- Detailed Profiling Stats (Rich Table - Full) ---")
+                profiler.rich_table(min_pct=0.0)
+                
+                # Detailed Profiler Output (ASCII Tree)
+                print("\n    --- Detailed Profiling Hierarchy (ASCII Tree - Full) ---")
+                profiler.print_tree(min_pct=0.0)
+                
+                # Detailed Profiler Output (Flat Hot Spots)
+                print("\n    --- Profiling Hot-Spots (Flat - Sorted by Self Time) ---")
+                profiler.print_flat(sort_by="self", min_pct=0.0)
                 print("    --------------------------------\n")
 
                 # Collect Metrics
@@ -194,24 +202,28 @@ async def run_benchmark():
                     "profiler": {}
                 }
                 
-                # Extract profiler stats
+                # Extract profiler stats (backward compatibility map)
                 for name, stat in profiler.stats.items():
                     run_data["profiler"][name] = {
                         "count": stat.count,
                         "total": stat.total,
-                        "mean": stat.mean,     # Added mean
-                        "std": stat.std,       # Added std
-                        "min": stat.min,       # Added min
-                        "max": stat.max,       # Added max
-                        "avg": stat.mean       # Keep avg for compatibility
+                        "mean": stat.mean,  
+                        "std": stat.std,    
+                        "min": stat.min,    
+                        "max": stat.max,    
+                        "avg": stat.mean
                     }
                     
                 results.append(run_data)
                 
-                # Incremental Save
+                # Incremental Save - Standard JSON
                 fname = f"result_{hard_cfg['name']}_{soft_cfg['name']}_{run_data['timestamp']}.json"
                 with open(os.path.join(results_dir, fname), "w") as f:
                     json.dump(run_data, f, indent=2)
+
+                # Save Speedscope Profile
+                profile_fname = f"profile_{hard_cfg['name']}_{soft_cfg['name']}_{run_data['timestamp']}.speedscope.json"
+                profiler.save_speedscope(os.path.join(results_dir, profile_fname))
 
         except Exception as e:
             print(f"Error running config {hard_cfg}: {e}")

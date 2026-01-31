@@ -1,301 +1,672 @@
 # profiler.py
 """
-Unified profiler for timing code sections and functions.
+Hierarchical profiler for timing code sections and functions.
 
-Provides both manual section timing and function decorators with optional
-detailed cProfile integration. Tracks individual iterations and computes
-statistics (mean, std, min, max).
+Features:
+- Hierarchical call stack tracking (manual instrumentation)
+- Export to Speedscope JSON format (flame graphs, timeline)
+- Console visualization with Aggregation (ASCII Tree, Rich Table)
+- Flat "Hot Spot" analysis
+- Filtering of negligible steps
+- Browser visualization (Auto-open interactve Flame Graphs / Speedscope)
 """
 
 import time
-import cProfile
-import pstats
-import io
+import json
 import math
+import sys
+import tempfile
+import webbrowser
+import os
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict
 from functools import wraps
-from typing import List, Dict
+from pathlib import Path
 
+# ─────────────────────────────────────────────────────────────
+# DATA STRUCTURES
+# ─────────────────────────────────────────────────────────────
+
+@dataclass
+class ProfileEvent:
+    name: str
+    start: float
+    end: float = 0.0
+    children: List['ProfileEvent'] = field(default_factory=list)
 
 class ProfileStats:
-    """Statistics for a profiled section."""
+    """Statistics for a profiled section (Backward Compatibility)."""
     
     def __init__(self):
-        self.times: List[float] = []
+        self._times: List[float] = []
     
     def add_time(self, elapsed: float):
         """Add a timing measurement."""
-        self.times.append(elapsed)
+        self._times.append(elapsed)
     
     @property
     def count(self) -> int:
-        """Number of calls."""
-        return len(self.times)
+        return len(self._times)
     
     @property
     def total(self) -> float:
-        """Total time across all calls."""
-        return sum(self.times)
+        return sum(self._times)
     
     @property
     def mean(self) -> float:
-        """Mean time per call."""
-        return sum(self.times) / len(self.times) if self.times else 0.0
+        return sum(self._times) / len(self._times) if self._times else 0.0
     
     @property
     def std(self) -> float:
-        """Standard deviation of times."""
-        if len(self.times) < 2:
+        if len(self._times) < 2:
             return 0.0
-        
         mean_val = self.mean
-        variance = sum((t - mean_val) ** 2 for t in self.times) / (len(self.times) - 1)
+        variance = sum((t - mean_val) ** 2 for t in self._times) / (len(self._times) - 1)
         return math.sqrt(variance)
     
     @property
     def min(self) -> float:
-        """Minimum time."""
-        return min(self.times) if self.times else 0.0
+        return min(self._times) if self._times else 0.0
     
     @property
     def max(self) -> float:
-        """Maximum time."""
-        return max(self.times) if self.times else 0.0
+        return max(self._times) if self._times else 0.0
 
 
 class Profiler:
-    """Profiler for timing code sections with minimal overhead."""
+    """Hierarchical profiler with advanced visualization and export."""
     
     def __init__(self, enabled=True):
-        """
-        Initialize profiler.
-        
-        Args:
-            enabled: Whether profiling is enabled (default: True)
-        """
         self.enabled = enabled
-        self.stats: Dict[str, ProfileStats] = {}
-    
-    @contextmanager
-    def time(self, name):
-        """
-        Time a section of code.
-        
-        Args:
-            name: Name for this timed section
-            
-        Example:
-            with profiler.time("data_loading"):
-                data = load_data()
-        """
-        if not self.enabled:
-            yield
-            return
-        
-        start = time.perf_counter()
-        try:
-            yield
-        finally:
-            elapsed = time.perf_counter() - start
-            
-            # Store individual timing
-            if name not in self.stats:
-                self.stats[name] = ProfileStats()
-            self.stats[name].add_time(elapsed)
-    
-    def print(self, show_stats=True):
-        """
-        Print timing summary sorted by total time (descending).
-        
-        Args:
-            show_stats: Show detailed statistics (mean, std, min, max) (default: True)
-        """
-        if not self.enabled or not self.stats:
-            return
-        
-        total_time = sum(s.total for s in self.stats.values())
-        
-        print(f"\nTotal: {total_time:.4f}s")
-        
-        if show_stats:
-            # Print header
-            print(f"{'Section':<30} {'Calls':>7} {'Total':>10} {'Mean':>10} {'Std':>10} {'Min':>10} {'Max':>10} {'%':>6}")
-            print("-" * 105)
-            
-            # Print each section sorted by total time
-            for name, stat in sorted(self.stats.items(), key=lambda x: x[1].total, reverse=True):
-                pct = (stat.total / total_time * 100) if total_time > 0 else 0
-                print(f"{name:<30} {stat.count:>7} "
-                      f"{stat.total:>9.4f}s {stat.mean:>9.4f}s {stat.std:>9.4f}s "
-                      f"{stat.min:>9.4f}s {stat.max:>9.4f}s {pct:>5.1f}%")
-        else:
-            # Simple output without statistics
-            for name, stat in sorted(self.stats.items(), key=lambda x: x[1].total, reverse=True):
-                pct = (stat.total / total_time * 100) if total_time > 0 else 0
-                if stat.count > 1:
-                    print(f"  {name:<30} {stat.total:>9.4f}s ({stat.count} calls)  ({pct:.1f}%)")
-                else:
-                    print(f"  {name:<30} {stat.total:>9.4f}s  ({pct:.1f}%)")
+        self._reset_internal_state()
+
+    def _reset_internal_state(self):
+        self.root = ProfileEvent("root", time.perf_counter())
+        self.stack = [self.root]
+        self._cached_stats = None # Cache for flat stats
     
     def reset(self):
         """Clear all timing data."""
-        self.stats.clear()
-    
-    @property
-    def times(self) -> Dict[str, float]:
-        """
-        Backward compatibility: Return dict of section names to total times.
+        self._reset_internal_state()
+
+    @contextmanager
+    def time(self, name: str):
+        """Profile a section of code."""
+        if not self.enabled:
+            yield
+            return
+
+        start_t = time.perf_counter()
+        event = ProfileEvent(name, start_t)
         
-        Returns:
-            Dictionary mapping section names to total times
+        # Add to current parent
+        if self.stack:
+            self.stack[-1].children.append(event)
+        
+        self.stack.append(event)
+        try:
+            yield
+        finally:
+            end_t = time.perf_counter()
+            event.end = end_t
+            if self.stack:
+                self.stack.pop()
+            
+            # Invalidate stats cache since we added data
+            self._cached_stats = None
+
+    def stop(self):
+        """Ensure root is closed (useful before printing/exporting)."""
+        if self.root.end == 0.0:
+            self.root.end = time.perf_counter()
+
+    @property
+    def stats(self) -> Dict[str, ProfileStats]:
+        """Aggregates the hierarchical tree into flat statistics (For Backward Compatibility)."""
+        if self._cached_stats is not None:
+            return self._cached_stats
+            
+        aggregated = {}
+
+        def traverse(node: ProfileEvent):
+            # Skip the artificial root
+            if node.name != "root":
+                if node.name not in aggregated:
+                    aggregated[node.name] = ProfileStats()
+                aggregated[node.name].add_time(node.end - node.start)
+            
+            for child in node.children:
+                traverse(child)
+
+        traverse(self.root)
+        self._cached_stats = aggregated
+        return aggregated
+
+    # ─────────────────────────────────────────────────────────────
+    # TERMINAL VISUALIZATION
+    # ─────────────────────────────────────────────────────────────
+
+    @dataclass
+    class _AggNode:
+        name: str
+        total: float = 0.0
+        self_time: float = 0.0
+        count: int = 0
+        children: Dict[str, '_AggNode'] = field(default_factory=dict)
+
+    def _aggregate_tree(self):
+        """Aggregate raw timeline events into a cleaner call tree."""
+        root_agg = self._AggNode("root")
+        
+        # We need to compute total time differently since it's aggregated
+        root_agg.total = self.root.end - self.root.start
+
+        def recurse(raw_node: ProfileEvent, agg_node: '_AggNode'):
+            dur = raw_node.end - raw_node.start
+            children_dur = sum(c.end - c.start for c in raw_node.children)
+            self_dur = dur - children_dur
+            
+            agg_node.total += dur
+            agg_node.self_time += self_dur
+            agg_node.count += 1
+            
+            for child in raw_node.children:
+                if child.name not in agg_node.children:
+                    agg_node.children[child.name] = self._AggNode(child.name)
+                recurse(child, agg_node.children[child.name])
+
+        for child in self.root.children:
+            if child.name not in root_agg.children:
+                root_agg.children[child.name] = self._AggNode(child.name)
+            recurse(child, root_agg.children[child.name])
+            
+        return root_agg
+
+    def _process_children_for_display(self, node: '_AggNode', min_pct: float, grand_total: float):
         """
-        return {name: stat.total for name, stat in self.stats.items()}
+        Sorts children and groups small ones into 'Others'.
+        Returns list of nodes to display.
+        """
+        sorted_children = sorted(node.children.values(), key=lambda c: c.total, reverse=True)
+        
+        if min_pct <= 0 or grand_total <= 0:
+            return sorted_children
 
+        kept = []
+        others = self._AggNode(name="(Others)")
+        
+        for c in sorted_children:
+            pct = (c.total / grand_total) * 100
+            if pct >= min_pct:
+                kept.append(c)
+            else:
+                others.total += c.total
+                others.self_time += c.self_time 
+                others.count += c.count
 
-# Global profiler instance for use with decorator
+        if others.count > 0:
+            others.name = f"(Others: {others.count})"
+            kept.append(others)
+            
+        return kept
+
+    def print(self, show_stats=True):
+        """
+        Backward compatible print. Prefers rich_table if available.
+        """
+        if not self.enabled: return
+        self.stop()
+        
+        try:
+            import rich
+            self.rich_table()
+            return
+        except ImportError:
+            pass
+            
+        # Fallback
+        self.print_flat(sort_by="total")
+
+    def _get_console(self):
+        try:
+            from rich.console import Console
+            return Console(), True
+        except ImportError:
+            return None, False
+
+    def print_flat(self, sort_by="self", min_pct=0.0):
+        """
+        Print a flat list of 'Elementary Steps' (aggregated self-time).
+        sort_by: 'self' (default, shows hot spots) or 'total'.
+        """
+        if not self.enabled: return
+        self.stop()
+        
+        console, use_rich = self._get_console()
+        
+        # Flatten by name
+        flat_stats: Dict[str, Profiler._AggNode] = {}
+        
+        root_agg = self._aggregate_tree()
+        total_time = root_agg.total
+        
+        def collect(node: Profiler._AggNode):
+            if node.name not in flat_stats:
+                flat_stats[node.name] = self._AggNode(node.name)
+            
+            # Aggregate stats across the tree for same-named functions
+            target = flat_stats[node.name]
+            target.total += node.total
+            target.self_time += node.self_time
+            target.count += node.count
+            
+            for child in node.children.values():
+                collect(child)
+        
+        # Collect from children of root
+        for child in root_agg.children.values():
+            collect(child)
+            
+        # Sort
+        items = list(flat_stats.values())
+        if sort_by == "self":
+            items.sort(key=lambda x: x.self_time, reverse=True)
+            value_getter = lambda x: x.self_time
+            title = "Profile Results (Flat - Sorted by Unprofiled Time)"
+        else:
+            items.sort(key=lambda x: x.total, reverse=True)
+            value_getter = lambda x: x.total
+            title = "Profile Results (Flat - Sorted by Total Time)"
+            
+        print(f"\n--- {title} ---")
+        if use_rich:
+            print(f"{'Section':<30} {'Calls':>7} {'Total':>10} {'Unprofiled':>10} {'% Unprof':>8}   {'Graph'}")
+            print("-" * 105)
+        else:
+            print(f"{'Section':<30} {'Calls':>7} {'Total':>10} {'Unprofiled':>10} {'% Unprof':>8}   {'Graph'}")
+            print("-" * 105)
+        
+        # Softened Heatmap (Red -> Orange -> Yellow -> Green)
+        # Using standard Rich colors or safe hexes
+        colors_heat = ["red", "orange1", "dark_orange", "gold1", "yellow", "chartreuse1", "green3", "green"]
+        
+        # Determine max value for relative scaling
+        max_val = 0.0
+        if items:
+            max_val = value_getter(items[0]) # Items are already sorted descending
+
+        for node in items:
+            val = value_getter(node)
+            pct = (val / total_time * 100) if total_time > 0 else 0
+            
+            if pct < min_pct: continue
+            
+            # Simple ASCII bar
+            bar_len = 20
+            filled = int(pct / 100 * bar_len)
+            bar_str = "█" * filled + "░" * (bar_len - filled)
+            
+            if use_rich:
+                # Color based on relative heat (val / max_val)
+                # Max value = 1.0 -> Index 0
+                # Low value = 0.0 -> Index len-1
+                if max_val > 0:
+                    relative = val / max_val
+                else:
+                    relative = 0
+                
+                # Invert logic: 1.0 is Hot (index 0), 0.0 is Cold (index last)
+                idx = int((1.0 - relative) * (len(colors_heat) - 1))
+                idx = max(0, min(len(colors_heat) - 1, idx))
+                
+                color = colors_heat[idx]
+                
+                # IMPORTANT: highlight=False to disable auto-number coloring (blue/gray issues)
+                console.print(f"[{color}]{node.name:<30} {node.count:>7} "
+                      f"{node.total*1000:>9.1f}ms {node.self_time*1000:>9.1f}ms {pct:>7.1f}%   {bar_str}[/]", 
+                      highlight=False)
+            else:
+                 print(f"{node.name:<30} {node.count:>7} "
+                      f"{node.total*1000:>9.1f}ms {node.self_time*1000:>9.1f}ms {pct:>7.1f}%   {bar_str}")
+        print("---------------------------------------------------------------------------------------------------------\n")
+
+    def print_tree(self, min_pct=0.0):
+        """Simple terminal tree with ASCII bars (Aggregated)."""
+        if not self.enabled: return
+        self.stop()
+        
+        console, use_rich = self._get_console()
+
+        root_agg = self._aggregate_tree()
+        total_time = root_agg.total
+        
+        print("\n--- Profile Tree (Aggregated) ---")
+        
+        # Consistent color cycle by depth
+        colors = ["bold cyan", "green", "yellow", "magenta", "blue"]
+        
+        def walk(node: '_AggNode', prefix: str, is_last: bool, depth: int):
+            pct = (node.total / total_time * 100) if total_time > 0 else 0
+            
+            # Local Breakdown (Subsections vs Unprofiled)
+            if node.total > 0 and node.children:
+                children_sum = sum(c.total for c in node.children.values())
+                child_pct_local = (children_sum / node.total) * 100
+                self_pct_local = (node.self_time / node.total) * 100
+                
+                # Format exactly as 100.0% even if float math is slightly off
+                # Update terminology: Children -> Subsections, Self -> Unprofiled
+                breakdown = f" [Subsections: {child_pct_local:.1f}% + Unprofiled: {self_pct_local:.1f}%]"
+            else:
+                breakdown = ""
+
+            # Connector
+            connector = "└── " if is_last else "├── "
+            
+            # Info string
+            # Update terminology: self -> unprofiled
+            self_info = f" [unprofiled: {node.self_time*1000:.1f}ms]" if node.children else ""
+            count_info = f" ({node.count}x)" if node.count > 1 else ""
+            
+            # Bar 
+            bar_len = 30
+            filled = int(pct / 100 * bar_len)
+            bar_str = "█" * filled + "░" * (bar_len - filled)
+            
+            # Color
+            if use_rich:
+                color = colors[depth % len(colors)]
+                # Reset prefix and connector to dim, color the name and info
+                console.print(f"[dim]{prefix}{connector}[/][{color}]{node.name}{count_info}: {node.total*1000:.1f}ms ({pct:.1f}%){self_info}[dim]{breakdown}[/][/]", highlight=False)
+                
+                # Bar Line
+                bar_prefix = prefix + ("    " if is_last else "│   ")
+                console.print(f"[dim]{bar_prefix}    [/][{color}]{bar_str}[/]", highlight=False)
+            else:
+                print(f"{prefix}{connector}{node.name}{count_info}: {node.total*1000:.1f}ms ({pct:.1f}%){self_info}{breakdown}")
+                bar_prefix = prefix + ("    " if is_last else "│   ")
+                print(f"{bar_prefix}    {bar_str}")
+            
+            # Prepare children
+            children = self._process_children_for_display(node, min_pct, total_time)
+            
+            # New prefix for children
+            if use_rich:
+                # We need clean string for prefix logic, stripped of colors
+                child_prefix = prefix + ("    " if is_last else "│   ")
+            else:
+                child_prefix = bar_prefix # same as above
+
+            for i, child in enumerate(children):
+                walk(child, child_prefix, i == len(children) - 1, depth + 1)
+
+        # Children of root
+        children = self._process_children_for_display(root_agg, min_pct, total_time)
+        for i, child in enumerate(children):
+            walk(child, "", i == len(children) - 1, 0)
+            
+        print("---------------------------------\n")
+
+    def rich_table(self, min_pct=0.0):
+        """Rich library table view (Aggregated)."""
+        if not self.enabled: return
+        try:
+            from rich.console import Console
+            from rich.table import Table
+        except ImportError:
+            # Fallback
+            self.print_tree(min_pct)
+            return
+
+        self.stop()
+        root_agg = self._aggregate_tree()
+        total_time = root_agg.total
+        
+        table = Table(title=f"Profile Results (Aggregated, >{min_pct}%)")
+        table.add_column("Section", style="cyan")
+        table.add_column("Calls", justify="right")
+        table.add_column("Total", justify="right")
+        table.add_column("Unprofiled", justify="right") # Renamed from Self
+        table.add_column("%", justify="right")
+        table.add_column("Visualization", width=30)
+        
+        # Colors depth cycle
+        colors = ["bold cyan", "green", "yellow", "magenta", "blue"]
+
+        def build_table(node: '_AggNode', depth):
+            pct = (node.total / total_time * 100) if total_time > 0 else 0
+            bar = "█" * int(pct / 3)
+            
+            # Indentation with guides
+            indent = "[dim]│   [/]" * depth
+            
+            # Color name by depth
+            style_name = colors[depth % len(colors)]
+            
+            # We strip 'bold' for the bar color usually, but keeping it simple: just use the color name
+            # e.g. "bold cyan" -> "cyan"
+            color_only = style_name.replace("bold ", "")
+            
+            # Local Breakdown
+            breakdown = ""
+            if node.total > 0 and node.children:
+                 children_sum = sum(c.total for c in node.children.values())
+                 child_pct_local = (children_sum / node.total) * 100
+                 if child_pct_local > 1.0: # Only show if significant children
+                     # Update terminology: Ch -> Sub
+                     breakdown = f" [dim](Sub:{child_pct_local:.0f}%)[/]"
+
+            # Apply color to all columns
+            table.add_row(
+                f"{indent}[{style_name}]{node.name}[/]{breakdown}",
+                f"[{style_name}]{node.count}[/]",
+                f"[{style_name}]{node.total*1000:.1f}ms[/]",
+                f"[{style_name}]{node.self_time*1000:.1f}ms[/]",
+                f"[{style_name}]{pct:.1f}%[/]",
+                f"[{color_only}]{bar}[/]" 
+            )
+            
+            children_to_show = self._process_children_for_display(node, min_pct, total_time)
+            for child in children_to_show:
+                build_table(child, depth + 1)
+
+        children = self._process_children_for_display(root_agg, min_pct, total_time)
+        for child in children:
+            build_table(child, 0)
+        
+        Console().print(table)
+
+    # ─────────────────────────────────────────────────────────────
+    # BROWSER VISUALIZATION (Auto-open)
+    # ─────────────────────────────────────────────────────────────
+
+    def _open_html(self, html, name_suffix):
+        path = Path(tempfile.gettempdir()) / f"profile_{name_suffix}.html"
+        path.write_text(html, encoding='utf-8')
+        try:
+            webbrowser.open(f"file://{path}")
+            print(f"[Profiler] Opened visualization: file://{path}")
+        except Exception:
+            print(f"[Profiler] Saved visualization to: {path}")
+
+    def _b64(self, s):
+        import base64
+        return base64.b64encode(s.encode()).decode()
+
+    def open_flame(self):
+        """Generate HTML flame graph and auto-open in browser."""
+        if not self.enabled: return
+        self.stop()
+        
+        def to_dict(node):
+            dur = node.end - node.start
+            children_dur = sum(c.end - c.start for c in node.children)
+            self_val = int((dur - children_dur) * 1_000_000)
+            return {
+                "name": node.name,
+                "value": self_val if self_val > 0 else 0, 
+                "children": [to_dict(c) for c in node.children]
+            }
+        
+        data = {
+            "name": "root",
+            "value": 0,
+            "children": [to_dict(c) for c in self.root.children]
+        }
+        
+        html = f'''<!DOCTYPE html>
+<html><head>
+<style>body {{ margin: 0; font-family: system-ui; }} #chart {{ height: 100vh; }}</style>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css">
+</head><body>
+<div id="chart"></div>
+<script>
+var data = {json.dumps(data)};
+var chart = flamegraph().width(window.innerWidth).cellHeight(20)
+    .tooltip(d3.select("body").append("div").style("position","absolute")
+        .style("background","#333").style("color","#fff").style("padding","5px")
+        .style("border-radius","3px").style("font-size","12px").style("display","none"))
+    .setLabelHandler(function(d) {{
+        var ms = (d.value / 1000).toFixed(2);
+        return d.data.name + " (" + ms + "ms)";
+    }});
+d3.select("#chart").datum(data).call(chart);
+</script></body></html>'''
+        self._open_html(html, "flamegraph")
+
+    def open_speedscope(self):
+        """Generate speedscope-compatible view and auto-open."""
+        if not self.enabled: return
+        self.stop()
+        
+        frames, frame_idx, samples, weights = [], {}, [], []
+        
+        def get_idx(name):
+            if name not in frame_idx:
+                frame_idx[name] = len(frames)
+                frames.append({"name": name})
+            return frame_idx[name]
+        
+        def walk(node, stack):
+            idx = get_idx(node.name)
+            new_stack = stack + [idx]
+            children_time = sum(c.end - c.start for c in node.children)
+            self_time = (node.end - node.start) - children_time
+            if self_time > 1e-7: 
+                samples.append(new_stack[:])
+                weights.append(int(self_time * 1e9))
+            for c in node.children:
+                walk(c, new_stack)
+        
+        for c in self.root.children:
+            walk(c, [])
+        
+        profile_data = {
+            "$schema": "https://www.speedscope.app/file-format-schema.json",
+            "shared": {"frames": frames},
+            "profiles": [{
+                "type": "sampled", "name": "profile", "unit": "nanoseconds",
+                "startValue": 0, "endValue": sum(weights),
+                "samples": samples, "weights": weights
+            }]
+        }
+        
+        html = f'''<!DOCTYPE html>
+<html><head><title>Profile</title></head>
+<body style="margin:0">
+<script>window.speedscopeConfig = {{ profileURL: "data:application/json;base64,{self._b64(json.dumps(profile_data))}" }}</script>
+<script src="https://cdn.jsdelivr.net/npm/speedscope@1.20.0/dist/release/index.js"></script>
+</body></html>'''
+        self._open_html(html, "speedscope")
+
+    # ─────────────────────────────────────────────────────────────
+    # EXPORT (Manual)
+    # ─────────────────────────────────────────────────────────────
+
+    def to_speedscope(self) -> dict:
+        """Export to speedscope JSON format (raw dict)."""
+        self.stop()
+        frames, frame_idx, samples, weights = [], {}, [], []
+        
+        def get_idx(name):
+             if name not in frame_idx:
+                 frame_idx[name] = len(frames)
+                 frames.append({"name": name})
+             return frame_idx[name]
+        
+        def walk(node, stack):
+             idx = get_idx(node.name)
+             new_stack = stack + [idx]
+             children_time = sum(c.end-c.start for c in node.children)
+             self_time = (node.end - node.start) - children_time
+             if self_time > 1e-7:
+                 samples.append(new_stack[:])
+                 weights.append(int(self_time * 1e9))
+             for c in node.children:
+                 walk(c, new_stack)
+        
+        for c in self.root.children:
+             walk(c, [])
+        
+        return {
+             "$schema": "https://www.speedscope.app/file-format-schema.json",
+             "shared": {"frames": frames},
+             "profiles": [{
+                 "type": "sampled", "name": "profile", "unit": "nanoseconds",
+                 "startValue": 0, "endValue": sum(weights),
+                 "samples": samples, "weights": weights
+             }]
+        }
+
+    def save_speedscope(self, path: str):
+        """Save speedscope JSON to file."""
+        data = self.to_speedscope()
+        with open(path, "w") as f:
+            json.dump(data, f)
+        print(f"[Profiler] Saved Speedscope profile to: {path}")
+
+# ─────────────────────────────────────────────────────────────
+# GLOBAL INSTANCE
+# ─────────────────────────────────────────────────────────────
+
 _profiler = None
 
-
 def get_profiler(enabled=True):
-    """
-    Get or create global profiler instance.
-    
-    Args:
-        enabled: Whether profiling is enabled (default: True)
-        
-    Returns:
-        Global Profiler instance
-    """
     global _profiler
     if _profiler is None:
         _profiler = Profiler(enabled=enabled)
+    if _profiler.enabled != enabled:
+        _profiler.enabled = enabled
     return _profiler
 
-
 def reset_profiler():
-    """Reset global profiler (clear all timing data)."""
-    global _profiler
     if _profiler is not None:
         _profiler.reset()
 
-
 def enable_profiling():
-    """Enable profiling globally."""
-    global _profiler
-    _profiler = Profiler(enabled=True)
-
+    get_profiler(enabled=True)
 
 def disable_profiling():
-    """Disable profiling globally."""
-    global _profiler
-    _profiler = Profiler(enabled=False)
-
+    get_profiler(enabled=False)
 
 def profile_print(show_stats=True):
-    """
-    Print results from global profiler.
-    
-    Args:
-        show_stats: Show detailed statistics (mean, std, min, max) (default: True)
-    """
-    p = get_profiler()
-    p.print(show_stats=show_stats)
+    if _profiler:
+        _profiler.print(show_stats)
 
-
-# ============================================================================
-# UNIFIED DECORATOR
-# ============================================================================
-
-def profile(func=None, *, enabled=True, detailed=False, name=None, top_n=15, sort_by='cumulative'):
-    """
-    Unified decorator for profiling functions.
-    
-    Can be used for simple timing (fast, clean output) or detailed profiling
-    (shows all function calls with cProfile).
-    
-    Args:
-        enabled: Enable/disable profiling (default: True)
-        detailed: Use cProfile for detailed analysis (default: False)
-        name: Custom name for the profile (default: function name)
-        top_n: Number of functions to show in detailed mode (default: 15)
-        sort_by: Sort key for detailed mode: 'cumulative', 'time', 'calls' (default: 'cumulative')
-    
-    Usage:
-        # Simple timing (recommended for daily use)
-        @profile
-        def my_function():
-            ...
-        
-        # Detailed profiling (for deep analysis)
-        @profile(detailed=True)
-        def my_function():
-            ...
-        
-        # Custom configuration
-        @profile(name="Custom Name", top_n=20, sort_by='time')
-        def my_function():
-            ...
-        
-        # Disable specific function
-        @profile(enabled=False)
-        def my_function():
-            ...
-    
-    Note:
-        - Simple mode has minimal overhead (~5-10%)
-        - Detailed mode has higher overhead but shows all internal calls
-        - Use simple mode for daily profiling, detailed mode when investigating bottlenecks
-        - Statistics (mean, std, min, max) are computed for functions called multiple times
-    """
+def profile(func=None, *, enabled=True, name=None):
+    """Decorator for profiling functions using the global profiler."""
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
-            if not enabled:
+            p = get_profiler(enabled=enabled)
+            sec_name = name or f.__name__
+            with p.time(sec_name):
                 return f(*args, **kwargs)
-            
-            section_name = name if name else f.__name__
-            
-            # Simple profiling (fast)
-            if not detailed:
-                p = get_profiler(enabled=True)
-                with p.time(section_name):
-                    return f(*args, **kwargs)
-            
-            # Detailed profiling with cProfile
-            else:
-                pr = cProfile.Profile()
-                pr.enable()
-                
-                start = time.perf_counter()
-                try:
-                    retval = f(*args, **kwargs)
-                finally:
-                    elapsed = time.perf_counter() - start
-                    pr.disable()
-                    
-                    # Also record in simple profiler for consistency
-                    p = get_profiler(enabled=True)
-                    if section_name not in p.stats:
-                        p.stats[section_name] = ProfileStats()
-                    p.stats[section_name].add_time(elapsed)
-                    
-                    # Print detailed stats
-                    s = io.StringIO()
-                    ps = pstats.Stats(pr, stream=s).sort_stats(sort_by)
-                    ps.print_stats(top_n)
-                    
-                    print(f"\n{'='*70}")
-                    print(f"Detailed profile: {section_name}")
-                    print(f"Total time: {elapsed:.4f}s")
-                    print(f"{'='*70}")
-                    print(s.getvalue())
-                    print(f"{'='*70}\n")
-                
-                return retval
-        
         return wrapper
-    
-    # Handle both @profile and @profile()
+
     if func is None:
         return decorator
     else:
