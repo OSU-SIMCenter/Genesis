@@ -148,28 +148,35 @@ class SurfaceReconstructor:
         N, D = particles.shape
         device = particles.device
         
-        # --- Phase 1: FPS Initialization ---
-        # Seed selection using Farthest Point Sampling to cover boundaries and voids
-        centroids_idx = torch.zeros(k, dtype=torch.long, device=device)
-        dists = torch.full((N,), float('inf'), device=device)
-        
-        # Random first point
-        initial_idx = torch.randint(0, N, (1,), device=device)
-        centroids_idx[0] = initial_idx
-        
-        # We need actual positions for distance calc
-        current_centroid = particles[initial_idx]
-        
-        for i in range(1, k):
-            # Update distances: min(old_dist, dist_to_new_centroid)
-            # Shapes: particles (N, 3), current_centroid (1, 3)
-            new_dists = torch.norm(particles - current_centroid, dim=1)
-            dists = torch.minimum(dists, new_dists)
+        # --- Phase 1: Quasi-Random Initialization (Halton Sequence) ---
+        # The user requested a "patterned" uniform distribution without grid artifacts.
+        # Halton sequences are Low-Discrepancy Sequences that fill space uniformly.
+        try:
+            from scipy.stats import qmc
             
-            # Select farthest
-            next_idx = torch.argmax(dists)
-            centroids_idx[i] = next_idx
-            current_centroid = particles[next_idx].unsqueeze(0)
+            # 1. Compute Bounding Box
+            min_bound = torch.min(particles, dim=0).values
+            max_bound = torch.max(particles, dim=0).values
+            range_bound = max_bound - min_bound
+            
+            # 2. Generate Halton Sequence (0-1 range)
+            # We generate slightly more to account for potential out-of-bounds mapping
+            sampler = qmc.Halton(d=D, scramble=True)
+            halton_sample = sampler.random(n=k)
+            halton_sample = torch.tensor(halton_sample, dtype=torch.float32, device=device)
+            
+            # 3. Scale to Particle Bounding Box
+            target_points = min_bound + halton_sample * range_bound
+            
+            # 4. Snap to Nearest Actual Particle (Discrete Constraint)
+            # We find the particle closest to each ideal Halton point
+            # This selects a subset that structurally resembles the Halton pattern
+            dists = torch.cdist(target_points, particles) # (K, N)
+            centroids_idx = torch.argmin(dists, dim=1)    # (K,)
+            
+        except ImportError:
+            gs.logger.warning("Scipy not found for Halton sampling, falling back to Random.")
+            centroids_idx = torch.randperm(N, device=device)[:k]
             
         # --- Phase 2: Discrete Lloyd's Relaxation ---
         # Iterate to minimize variance ("bumps")
