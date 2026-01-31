@@ -353,11 +353,11 @@ class Profiler:
             if node.total > 0 and node.children:
                 children_sum = sum(c.total for c in node.children.values())
                 child_pct_local = (children_sum / node.total) * 100
-                self_pct_local = (node.self_time / node.total) * 100
+                self_pct_abs = (node.self_time / total_time) * 100 if total_time > 0 else 0.0
                 
                 # Format exactly as 100.0% even if float math is slightly off
                 # Update terminology: Children -> Subsections, Self -> Unprofiled
-                breakdown = f" [Subsections: {child_pct_local:.1f}% + Unprofiled: {self_pct_local:.1f}%]"
+                breakdown = f" [Subsections: {child_pct_local:.1f}% + Unprofiled: {self_pct_abs:.1f}%]"
             else:
                 breakdown = ""
 
