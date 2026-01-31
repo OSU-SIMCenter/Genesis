@@ -1,5 +1,4 @@
 import time
-import logging
 import torch
 import numpy as np
 import trimesh
@@ -7,6 +6,16 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.particle as pu
 from genesis.utils.misc import ti_to_numpy
+from enum import Enum
+from typing import Optional
+
+
+class SamplingMethod(Enum):
+    RANDOM = "random"
+    VOXEL_STRATIFIED = "voxel_stratified"  # RECOMMENDED for uniform volume coverage
+    FPS = "fps"  # Farthest point sampling (biased to surface)
+    HALTON_LLOYD = "halton_lloyd"  # Original method (bad for non-cubic shapes)
+
 
 class SurfaceReconstructor:
     def __init__(self, env):
@@ -14,29 +23,68 @@ class SurfaceReconstructor:
         self.reconstructed_mesh = trimesh.Trimesh()
         self.recon_enabled = True
         self.recon_frame_interval = 2
-        self.recon_particle_fraction = 0.5 
+        self.recon_particle_fraction = 0.5
         self.frame_counter = 0
         
-        # Cached indices for deterministic random sampling
+        # Sampling configuration
+        self.sampling_method = SamplingMethod.VOXEL_STRATIFIED
+        
+        # Cached indices for deterministic sampling
         self.main_particle_indices = None
-
+        self.last_total_particles = 0
         
         # Skinning data
         self.skinning_enabled = False
         self.bind_indices = None
         self.bind_weights = None
         self.bind_offsets = None
-        self.device = env.device
+        
+        # Device setup with MPS support
+        if hasattr(env, 'device'):
+            self.device = env.device
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
+        
+        # Smoothing matrix state
+        self.smoothing_matrix = None
+        self._use_dense_smoothing = False
+        
+        # Cache particle radius for skinning sigma calculation
+        self._cached_particle_radius = None
+
+        # Particle Cache (Optimization)
+        self._cached_particles = None
+        self._cached_frame = -1
+        
+        # FIX #1: Global frame counter that always increments
+        self._global_frame = 0
+        
+        # Rebind check interval
+        self._rebind_check_interval = 30
 
     def reset(self):
         """Resets the reconstructor state and sampling cache."""
         self.reconstructed_mesh = trimesh.Trimesh()
+        self.main_particle_indices = None
+        self.last_total_particles = 0
+        self._invalidate_skinning()
+        # Reset cache
+        self._cached_particles = None
+        self._cached_frame = -1
+        self._global_frame = 0
+
+    def _invalidate_skinning(self):
+        """Properly invalidate skinning state."""
         self.skinning_enabled = False
         self.bind_indices = None
         self.bind_weights = None
         self.bind_offsets = None
-        # Don't create mesh immediately on reset, wait for explicit call or first update
-        # self.create_reconstructed_mesh()
+        self.smoothing_matrix = None
+        self._use_dense_smoothing = False
 
     def get_mesh_data(self):
         """Returns the current mesh and its vertices/faces."""
@@ -48,13 +96,24 @@ class SurfaceReconstructor:
         args:
             should_reconstruct: External condition (e.g. is striking)
         """
+        # FIX #1: Always increment global frame
+        self._global_frame += 1
+        
         if not self.recon_enabled:
             return
 
         # If skinning active, update positions
         if self.skinning_enabled:
-             self.update_skinning()
-             return
+            # FIX #7: Check if rebind needed periodically
+            if self._global_frame % self._rebind_check_interval == 0:
+                if self._should_rebind():
+                    gs.logger.info("Large drift detected, rebinding mesh to particles...")
+                    self.create_reconstructed_mesh()
+                    self.init_skinning()
+                    return
+            
+            self.update_skinning()
+            return
 
         # Fallback to full reconstruction if not skinned or explicitly requested
         if not should_reconstruct:
@@ -66,6 +125,57 @@ class SurfaceReconstructor:
 
         self.create_reconstructed_mesh()
 
+    def _should_rebind(self) -> bool:
+        """
+        FIX #7: Detect when skinning drift is too large and rebind is needed.
+        Returns True if mesh vertices have drifted too far from their bound particles.
+        """
+        if not self.skinning_enabled:
+            return False
+        if self._cached_particle_radius is None:
+            return False
+        if self.reconstructed_mesh is None or len(self.reconstructed_mesh.vertices) == 0:
+            return True
+        
+        try:
+            particles = self._get_active_particles(use_cache=False)
+            if particles is None or len(particles) == 0:
+                return True
+            
+            if isinstance(particles, np.ndarray):
+                parts_t = torch.from_numpy(particles).float().to(self.device)
+            else:
+                parts_t = particles.to(self.device)
+            
+            verts_t = torch.tensor(
+                self.reconstructed_mesh.vertices, 
+                device=self.device, 
+                dtype=torch.float32
+            )
+            
+            # Sample subset for speed
+            n_check = min(100, len(verts_t))
+            idx = torch.linspace(0, len(verts_t) - 1, n_check, device=self.device).long()
+            
+            sample_verts = verts_t[idx]
+            sample_bind = self.bind_indices[idx, 0]  # Primary bound particle
+            
+            # Check bounds
+            if sample_bind.max() >= len(parts_t):
+                return True
+            
+            bound_pos = parts_t[sample_bind]
+            
+            # Compute mean drift
+            drift = torch.norm(sample_verts - bound_pos, dim=1).mean().item()
+            threshold = self._cached_particle_radius * 15  # Allow 15x radius drift
+            
+            return drift > threshold
+            
+        except Exception as e:
+            gs.logger.warning(f"Rebind check failed: {e}")
+            return True
+
     def init_skinning(self):
         """
         Binds the current reconstructed mesh to current active particles.
@@ -75,96 +185,131 @@ class SurfaceReconstructor:
             gs.logger.warning("Cannot init skinning: No mesh generated yet.")
             return
 
-        # Get current particles (assume full set or same subset as used for generation)
-        # Note: If using subsampling, we must ensure we use the SAME subset indices.
-        # But for skinning to work robustly, we usually want to bind to 'physics' particles
-        # even if we rendered a subset. However, if the physics particle count changes (it shouldn't for MPM),
-        # we might have issues. 
-        # For simplicity/robustness, we'll re-fetch the particles exactly as we get them for update.
-        
-        particles = self._get_active_particles()
+        particles = self._get_active_particles(use_cache=False)
         if particles is None or len(particles) == 0:
+            gs.logger.warning("Cannot init skinning: No active particles.")
             return
 
         gs.logger.info(f"Visual Binding: {len(self.reconstructed_mesh.vertices)} vertices -> {len(particles)} particles")
 
         # Convert to Torch Tensors on Device
-        # Vertices (V, 3)
-        verts_tensor = torch.tensor(self.reconstructed_mesh.vertices, dtype=torch.float32, device=self.device)
+        verts_tensor = torch.tensor(
+            self.reconstructed_mesh.vertices, 
+            dtype=torch.float32, 
+            device=self.device
+        )
         
-        # Particles (P, 3)
-        # We need to make sure particles are a tensor on device
         if isinstance(particles, np.ndarray):
             parts_tensor = torch.from_numpy(particles).float().to(self.device)
         else:
-             parts_tensor = particles # Assume already tensor/compatible if not numpy? _get_active_particles usually returns numpy in current impl.
-             # Let's verify _get_active_particles implementation below.
+            parts_tensor = torch.tensor(particles, dtype=torch.float32, device=self.device)
 
-        # Verify type
-        if not isinstance(parts_tensor, torch.Tensor):
-             parts_tensor = torch.tensor(parts_tensor, dtype=torch.float32, device=self.device)
-
-        # k-NN search
+        # k-NN parameters
         k = 4
-        sigma = 0.05 # Influence radius scaling factor
-
-        # Compute pairwise distances (V, P) - Watch out for VRAM usage!
-        # If V*P is large (e.g. > 10^8), cdist might OOM. 
-        # Chunking if needed, but let's try direct first for typical scenes.
-        # Use negative squared euclidean distance for weights
         
-        try:
-            # Finding k nearest particles for each vertex
-            # We can use cdist or a custom kernel. 
-            # For 20k verts * 5k particles = 100M floats = 400MB. Safe.
-            # If 20k verts * 50k particles = 1B floats = 4GB. Might be risky.
+        # Auto-compute sigma relative to particle spacing
+        if len(parts_tensor) > 1:
+            sample_size = min(1000, len(parts_tensor))
+            # FIX #2: Specify device on randperm
+            sample_idx = torch.randperm(len(parts_tensor), device=self.device)[:sample_size]
+            sample = parts_tensor[sample_idx]
             
-            # Use topk optimization with negative distance?
-            # Or use a chunked approach for safety.
+            sample_dists = torch.cdist(sample, sample)
+            sample_dists.fill_diagonal_(float('inf'))
+            nn_dists = sample_dists.min(dim=1).values
+            mean_spacing = nn_dists.mean().item()
             
-            self.bind_indices = torch.zeros((len(verts_tensor), k), dtype=torch.long, device=self.device)
-            self.bind_weights = torch.zeros((len(verts_tensor), k), dtype=torch.float32, device=self.device)
-            self.bind_offsets = torch.zeros((len(verts_tensor), k, 3), dtype=torch.float32, device=self.device)
+            sigma = mean_spacing * 1.5
+            gs.logger.info(f"Auto-computed sigma: {sigma:.6f} (mean spacing: {mean_spacing:.6f})")
+        else:
+            sigma = 0.01
 
-            chunk_size = 1000 # Process 1000 vertices at a time
-            for i in range(0, len(verts_tensor), chunk_size):
-                end_i = min(i + chunk_size, len(verts_tensor))
-                v_chunk = verts_tensor[i:end_i] # (Chunk, 3)
+        try:
+            V = len(verts_tensor)
+            self.bind_indices = torch.zeros((V, k), dtype=torch.long, device=self.device)
+            self.bind_weights = torch.zeros((V, k), dtype=torch.float32, device=self.device)
+            self.bind_offsets = torch.zeros((V, k, 3), dtype=torch.float32, device=self.device)
+
+            chunk_size = 1000
+            for i in range(0, V, chunk_size):
+                end_i = min(i + chunk_size, V)
+                v_chunk = verts_tensor[i:end_i]
                 
-                # Dist: (Chunk, P)
                 dists = torch.cdist(v_chunk, parts_tensor)
-                
-                # Get k nearest
-                # topk returns largest, so we negate distance or use largest=False
                 vals, idxs = torch.topk(dists, k=k, dim=1, largest=False)
                 
-                # Compute weights: exp(-dist^2 / (2*sigma^2))
                 weights = torch.exp(-vals.pow(2) / (2 * sigma**2))
-                
-                # Normalize weights
                 weights_sum = weights.sum(dim=1, keepdim=True)
-                weights_sum[weights_sum < 1e-6] = 1.0 # Avoid div by zero
+                weights_sum = torch.clamp(weights_sum, min=1e-6)
                 weights = weights / weights_sum
                 
                 self.bind_indices[i:end_i] = idxs
                 self.bind_weights[i:end_i] = weights
                 
-                # Precompute offsets in local frame of each neighbor
-                # Offset = Vertex_Bind - Particle_Bind
-                # (Chunk, k, 3) - (Chunk, k, 3)
-                # Gather particles: (Chunk, k, 3)
-                neighbor_pos = parts_tensor[idxs] 
-                
-                # v_chunk (Chunk, 3) -> (Chunk, 1, 3)
+                neighbor_pos = parts_tensor[idxs]
                 offsets = v_chunk.unsqueeze(1) - neighbor_pos
                 self.bind_offsets[i:end_i] = offsets
 
+            # Precompute smoothing matrix
+            self._compute_laplacian_matrix(lamb=0.5)
+            
             self.skinning_enabled = True
             gs.logger.info("Skinning initialized successfully.")
 
         except Exception as e:
             gs.logger.error(f"Failed to init skinning: {e}")
-            self.skinning_enabled = False
+            self._invalidate_skinning()
+
+    def _compute_laplacian_matrix(self, lamb=0.5):
+        """Precomputes sparse smoothing matrix with MPS fallback."""
+        if self.reconstructed_mesh is None or len(self.reconstructed_mesh.vertices) == 0:
+            return
+
+        try:
+            faces = torch.from_numpy(self.reconstructed_mesh.faces).long().to(self.device)
+            V = len(self.reconstructed_mesh.vertices)
+
+            edges = torch.cat([
+                faces[:, [0, 1]],
+                faces[:, [1, 2]],
+                faces[:, [2, 0]]
+            ], dim=0)
+            
+            edges, _ = torch.sort(edges, dim=1)
+            edges = torch.unique(edges, dim=0)
+
+            row = torch.cat([edges[:, 0], edges[:, 1]])
+            col = torch.cat([edges[:, 1], edges[:, 0]])
+            
+            ones = torch.ones(len(row), device=self.device)
+            degree = torch.zeros(V, device=self.device)
+            degree.scatter_add_(0, row, ones)
+            degree = torch.clamp(degree, min=1.0)
+            
+            norm_vals = (1.0 / degree[row]) * lamb
+            indices = torch.stack([row, col], dim=0)
+            S_off = torch.sparse_coo_tensor(indices, norm_vals, (V, V))
+            
+            diag_idx = torch.arange(V, device=self.device).unsqueeze(0).repeat(2, 1)
+            diag_val = torch.full((V,), 1.0 - lamb, device=self.device)
+            S_diag = torch.sparse_coo_tensor(diag_idx, diag_val, (V, V))
+            
+            self.smoothing_matrix = (S_diag + S_off).coalesce()
+            self._use_dense_smoothing = False
+            
+            # FIX #6: MPS fallback - test if sparse mm works
+            if self.device.type == "mps":
+                try:
+                    test_input = torch.zeros(V, 3, device=self.device)
+                    _ = torch.sparse.mm(self.smoothing_matrix, test_input)
+                except Exception:
+                    gs.logger.warning("MPS sparse mm not supported, converting to dense matrix")
+                    self.smoothing_matrix = self.smoothing_matrix.to_dense()
+                    self._use_dense_smoothing = True
+            
+        except Exception as e:
+            gs.logger.warning(f"Failed to build smoothing matrix: {e}")
+            self.smoothing_matrix = None
 
     def update_skinning(self):
         """Updates mesh vertices based on current particle positions."""
@@ -175,83 +320,96 @@ class SurfaceReconstructor:
         if particles is None or len(particles) == 0:
             return
             
-        # Ensure particles are on GPU tensor
         if isinstance(particles, np.ndarray):
             parts_current = torch.from_numpy(particles).float().to(self.device)
         else:
             parts_current = torch.tensor(particles, dtype=torch.float32, device=self.device)
 
+        # Validate particle count matches binding
+        expected_count = self.bind_indices.max().item() + 1
+        if len(parts_current) < expected_count:
+            gs.logger.error(
+                f"Particle count mismatch: have {len(parts_current)}, need {expected_count}. "
+                "Disabling skinning."
+            )
+            self._invalidate_skinning()
+            return
+
         try:
-            # 1. Gather neighbor positions: (V, k, 3)
-            # bind_indices is (V, k)
+            # 1. Gather neighbor positions
             neighbors = parts_current[self.bind_indices]
             
-            # 2. Add offsets: (V, k, 3)
-            # New Pos = Neighbor_Pos + Offset
-            # Note: This implies RIGID translation of the offset. 
-            # Ideally we rotate the offset using Deformation Gradient F if available from MPM.
-            # But the 'Optimization' task just requested a simple update. 
-            # Pure translation skinning is decent for small deformations but won't capture rotation well.
-            # Given user asked for "adjusts/updates", this is step 1.
-            # If we had F from MPM state, we would do: Neighbor + F @ Offset.
-            
+            # 2. Add offsets
             estimated_pos = neighbors + self.bind_offsets
             
             # 3. Weighted Average
-            # (V, k, 3) * (V, k, 1) -> sum dim 1 -> (V, 3)
             new_verts = (estimated_pos * self.bind_weights.unsqueeze(-1)).sum(dim=1)
             
-            # 4. Update mesh
+            # 4. GPU Smoothing (3 iterations)
+            # FIX #6: Use dense or sparse based on what's available
+            if self.smoothing_matrix is not None:
+                for _ in range(3):
+                    if self._use_dense_smoothing:
+                        new_verts = self.smoothing_matrix @ new_verts
+                    else:
+                        new_verts = torch.sparse.mm(self.smoothing_matrix, new_verts)
+            
+            # 5. Update mesh
             self.reconstructed_mesh.vertices = new_verts.cpu().numpy()
             
         except Exception as e:
             gs.logger.error(f"Skinning update failed: {e}")
+            self._invalidate_skinning()
 
-    def _get_active_particles(self):
-        """Helper to fetch particles with consistent logic."""
-        solver = self.env.scene.sim.mpm_solver
+    def _get_active_particles(self, use_cache: bool = True):
+        """Helper to fetch particles with consistent logic and caching."""
+        # FIX #1: Use global frame counter
+        current_frame = self._global_frame
         
-        # Explicit synchronization for Metal backend
+        # Cache check
+        if use_cache and self._cached_frame == current_frame and self._cached_particles is not None:
+            return self._cached_particles
+
+        solver = self.env.scene.sim.mpm_solver
         ti.sync()
         
         try:
             if hasattr(solver.particles_render.pos, 'to_numpy'):
-                 particles = solver.particles_render.pos.to_numpy()[:, 0]
+                particles = solver.particles_render.pos.to_numpy()[:, 0]
             else:
-                 particles = ti_to_numpy(solver.particles_render.pos)[:, 0]
+                particles = ti_to_numpy(solver.particles_render.pos)[:, 0]
             
-            # Get environment offset
             offset = self.env.scene.envs_offset[0]
-            
-            # Ensure it is on CPU and float32
             if hasattr(offset, 'cpu'):
                 offset = offset.cpu().numpy()
             elif hasattr(offset, 'numpy'):
                 offset = offset.numpy()
-                
             particles = particles + offset
             
             if hasattr(solver.particles_render.active, 'to_numpy'):
                 active = solver.particles_render.active.to_numpy()[:, 0].astype(bool)
             else:
                 active = ti_to_numpy(solver.particles_render.active)[:, 0].astype(bool)
-                
             particles = particles[active]
             
-            # Important: We must apply the SAME subsampling as used during init!
-            # If recon_particle_fraction < 1.0, we used self.main_particle_indices.
-            # If those indices are set, we MUST use them to get the same subset mapping.
-            
+            # Apply subsampling if indices are set
             if self.main_particle_indices is not None and len(self.main_particle_indices) > 0:
-                 # Check bounds just in case
-                 if np.max(self.main_particle_indices) < len(particles):
-                     particles = particles[self.main_particle_indices]
-                 else:
-                     # This should not happen if logic is correct, but if total particles changed...
-                     gs.logger.warning("Particle count changed, invalidating indices!")
-                     # This invalidates skinning binding completely.
-                     # We should probably force a re-init or disable skinning.
-                     pass 
+                # FIX #5: Properly handle particle count change
+                if np.max(self.main_particle_indices) < len(particles):
+                    particles = particles[self.main_particle_indices]
+                else:
+                    gs.logger.warning(
+                        "Particle count changed! Invalidating cached indices and skinning."
+                    )
+                    self.main_particle_indices = None
+                    self.last_total_particles = 0
+                    self._invalidate_skinning()
+                    # Return None to force reinitialization
+                    return None
+            
+            # Update cache
+            self._cached_particles = particles
+            self._cached_frame = current_frame
             
             return particles
 
@@ -262,87 +420,80 @@ class SurfaceReconstructor:
     def create_reconstructed_mesh(self):
         """Reconstruct surface mesh from active particles using splashsurf."""
         solver = self.env.scene.sim.mpm_solver
-        
-        # Explicit synchronization for Metal backend
         ti.sync()
         
         try:
-            # t0 = time.time()
             if hasattr(solver.particles_render.pos, 'to_numpy'):
-                 particles = solver.particles_render.pos.to_numpy()[:, 0]
+                particles = solver.particles_render.pos.to_numpy()[:, 0]
             else:
-                 particles = ti_to_numpy(solver.particles_render.pos)[:, 0]
+                particles = ti_to_numpy(solver.particles_render.pos)[:, 0]
             
-            # Get environment offset
             offset = self.env.scene.envs_offset[0]
-            
-            # Ensure it is on CPU and float32
             if hasattr(offset, 'cpu'):
                 offset = offset.cpu().numpy()
             elif hasattr(offset, 'numpy'):
                 offset = offset.numpy()
-                
             particles = particles + offset
             
             if hasattr(solver.particles_render.active, 'to_numpy'):
                 active = solver.particles_render.active.to_numpy()[:, 0].astype(bool)
             else:
                 active = ti_to_numpy(solver.particles_render.active)[:, 0].astype(bool)
-                
             particles = particles[active]
             
-            # Subsample if needed
+            # Subsampling logic
             if self.recon_particle_fraction < 1.0:
                 num_keep = int(len(particles) * self.recon_particle_fraction)
                 if num_keep > 0:
-                    # Regenerate indices if cache is invalid or particle count changed
                     if (self.main_particle_indices is None or 
                         len(self.main_particle_indices) != num_keep or
                         self.last_total_particles != len(particles)):
                         
-                        gs.logger.info("Regenerating particle sample with High-Fidelity CVT...")
-                        t_start_cv = time.time()
+                        gs.logger.info(f"Regenerating sample with {self.sampling_method.value}...")
+                        t_start = time.time()
                         
-                        # Convert to torch for GPU acceleration if available
                         particles_tensor = torch.from_numpy(particles).float()
-                        if self.env.device != 'cpu':
+                        if self.device.type != 'cpu':
                             try:
-                                particles_tensor = particles_tensor.to(self.env.device)
+                                particles_tensor = particles_tensor.to(self.device)
                             except Exception:
-                                pass # Fallback to CPU if transfer fails
+                                pass
                         
                         try:
-                            # Run optimal sampling (FPS + Lloyd's)
-                            indices = self._compute_optimal_indices_torch(particles_tensor, num_keep)
-                            self.main_particle_indices = indices.cpu().numpy()
+                            indices = self._compute_sample_indices(particles_tensor, num_keep)
+                            if isinstance(indices, torch.Tensor):
+                                self.main_particle_indices = indices.cpu().numpy()
+                            else:
+                                self.main_particle_indices = indices
                         except Exception as e:
-                            gs.logger.error(f"CVT Sampling failed ({e}), falling back to random")
+                            gs.logger.error(f"Sampling failed ({e}), falling back to random")
                             rng = np.random.default_rng(seed=42)
-                            self.main_particle_indices = rng.choice(len(particles), num_keep, replace=False)
+                            self.main_particle_indices = rng.choice(
+                                len(particles), num_keep, replace=False
+                            )
                             
                         self.last_total_particles = len(particles)
-                        gs.logger.info(f"Sampling complete in {time.time() - t_start_cv:.2f}s")
+                        gs.logger.info(f"Sampling complete in {time.time() - t_start:.2f}s")
+                        
+                        # Invalidate skinning since particle subset changed
+                        self._invalidate_skinning()
                         
                     particles = particles[self.main_particle_indices]
 
-            # --- Critical Visualization Parameter Scaling ---
-            # As per research: R_vis approx R_sim * (N_total / N_vis)^(1/3)
-            # This prevents "holes" when using a sparse subset.
+            # Radius scaling
             base_radius = solver.particle_radius
+            self._cached_particle_radius = base_radius
+            
             if self.recon_particle_fraction < 1.0 and self.recon_particle_fraction > 0:
-                # fraction = N_vis / N_total
-                # Scaling factor = (1 / fraction)^(1/3)
-                radius_scale = (1.0 / self.recon_particle_fraction) ** (1.0/3.0)
-                # Apply a small extra buffer (e.g. 10%) to ensure overlap
-                radius_scale *= 1.1 
+                radius_scale = (1.0 / self.recon_particle_fraction) ** (1.0 / 3.0)
+                radius_scale *= 1.15  # Buffer for overlap
                 radius = base_radius * radius_scale
             else:
                 radius = base_radius
                 
-            # Check if particles is valid
             if len(particles) == 0:
-                 gs.logger.warning("No active particles for reconstruction")
-                 return
+                gs.logger.warning("No active particles for reconstruction")
+                return
 
             self.reconstructed_mesh = pu.particles_to_mesh(
                 positions=particles,
@@ -354,92 +505,225 @@ class SurfaceReconstructor:
             gs.logger.error(f"Surface reconstruction failed: {e}")
             self.reconstructed_mesh = trimesh.Trimesh()
 
-    def _compute_optimal_indices_torch(self, particles: torch.Tensor, k: int) -> torch.Tensor:
+    def _compute_sample_indices(self, particles: torch.Tensor, k: int) -> torch.Tensor:
+        """Dispatch to selected sampling method."""
+        if self.sampling_method == SamplingMethod.RANDOM:
+            return self._sample_random(particles, k)
+        elif self.sampling_method == SamplingMethod.VOXEL_STRATIFIED:
+            return self._sample_voxel_stratified(particles, k)
+        elif self.sampling_method == SamplingMethod.FPS:
+            return self._sample_fps(particles, k)
+        elif self.sampling_method == SamplingMethod.HALTON_LLOYD:
+            return self._sample_halton_lloyd(particles, k)
+        else:
+            return self._sample_voxel_stratified(particles, k)
+
+    # ==================== SAMPLING METHODS ====================
+
+    def _sample_random(self, particles: torch.Tensor, k: int) -> torch.Tensor:
+        """Simple random sampling (baseline)."""
+        N = particles.shape[0]
+        perm = torch.randperm(N, device=particles.device)
+        return perm[:k]
+
+    def _compute_voxel_size(
+        self, 
+        particles: torch.Tensor, 
+        target_k: int, 
+        iterations: int = 12
+    ) -> float:
         """
-        Selects k indices using Discrete Capacity-Constrained CVT (FPS Init + Lloyd's Relaxation).
-        Optimized for GPU execution.
+        FIX #8: Binary search for voxel size giving ~k occupied voxels.
+        Stays on GPU for speed.
+        """
+        device = particles.device
+        min_bound = particles.min(dim=0).values
+        max_bound = particles.max(dim=0).values
+        extent = max_bound - min_bound
+        
+        # Initial estimate (assumes uniform fill of bounding box)
+        volume = extent.prod().item()
+        initial = (volume / target_k) ** (1/3)
+        
+        low, high = initial * 0.1, initial * 5.0
+        
+        for _ in range(iterations):
+            mid = (low + high) / 2
+            voxel_idx = torch.floor((particles - min_bound) / mid).long()
+            keys = voxel_idx[:, 0] * 1000003 + voxel_idx[:, 1] * 1009 + voxel_idx[:, 2]
+            num_occupied = len(torch.unique(keys))
+            
+            if num_occupied < target_k:
+                high = mid  # Smaller voxels = more of them
+            else:
+                low = mid
+        
+        return mid
+
+    def _sample_voxel_stratified(self, particles: torch.Tensor, k: int) -> torch.Tensor:
+        """
+        GPU-accelerated voxel stratified sampling.
+        
+        FIX #8: Uses binary search for accurate voxel count.
+        FIX #9: Minimizes CPU<->GPU transfers.
         """
         N, D = particles.shape
         device = particles.device
         
-        # --- Phase 1: Quasi-Random Initialization (Halton Sequence) ---
-        # The user requested a "patterned" uniform distribution without grid artifacts.
-        # Halton sequences are Low-Discrepancy Sequences that fill space uniformly.
+        # FIX #8: Binary search for voxel size (stays on GPU)
+        voxel_size = self._compute_voxel_size(particles, k)
+        
+        min_bound = particles.min(dim=0).values
+        
+        # Voxel assignment (GPU)
+        voxel_idx = torch.floor((particles - min_bound) / voxel_size).long()
+        voxel_keys = voxel_idx[:, 0] * 1000003 + voxel_idx[:, 1] * 1009 + voxel_idx[:, 2]
+        
+        # Get unique voxels and inverse mapping
+        unique_keys, inverse, counts = torch.unique(
+            voxel_keys, return_inverse=True, return_counts=True
+        )
+        num_voxels = len(unique_keys)
+        
+        gs.logger.debug(f"Voxel sampling: size={voxel_size:.6f}, voxels={num_voxels}, target={k}")
+        
+        # Compute distance to voxel center for each particle
+        voxel_centers = min_bound + (voxel_idx.float() + 0.5) * voxel_size
+        dist_to_center = torch.sum((particles - voxel_centers) ** 2, dim=1)
+        
+        # Find minimum distance per voxel
+        INF = float('inf')
+        min_dist_per_voxel = torch.full((num_voxels,), INF, device=device)
+        
+        # FIX #4: Remove include_self parameter for compatibility
+        min_dist_per_voxel.scatter_reduce_(0, inverse, dist_to_center, reduce='amin')
+        
+        # Find particles that achieved the minimum in their voxel
+        is_closest = dist_to_center == min_dist_per_voxel[inverse]
+        
+        # FIX #3: Use flatten() instead of squeeze() to handle edge cases
+        candidates = torch.nonzero(is_closest).flatten()
+        
+        # Handle case where we have duplicate minima (ties)
+        # Get unique voxels from candidates
+        candidate_voxels = inverse[candidates]
+        _, first_occurrence = torch.unique(candidate_voxels, return_inverse=True)
+        
+        # Keep only first occurrence of each voxel
+        unique_mask = torch.zeros(len(candidates), dtype=torch.bool, device=device)
+        seen_voxels = torch.zeros(num_voxels, dtype=torch.bool, device=device)
+        
+        for i in range(len(candidates)):
+            v = candidate_voxels[i]
+            if not seen_voxels[v]:
+                unique_mask[i] = True
+                seen_voxels[v] = True
+        
+        selected = candidates[unique_mask]
+        
+        # Adjust to target count k
+        if len(selected) > k:
+            # FIX #2: Specify device on randperm
+            perm = torch.randperm(len(selected), device=device)[:k]
+            selected = selected[perm]
+            
+        elif len(selected) < k:
+            # Fill deficit from remaining particles
+            deficit = k - len(selected)
+            mask = torch.ones(N, dtype=torch.bool, device=device)
+            mask[selected] = False
+            remaining = torch.nonzero(mask).flatten()
+            
+            if remaining.numel() > 0:
+                if remaining.numel() > deficit:
+                    # FIX #2: Specify device on randperm
+                    perm = torch.randperm(remaining.numel(), device=device)[:deficit]
+                    extra = remaining[perm]
+                else:
+                    extra = remaining
+                selected = torch.cat([selected, extra])
+
+        return selected
+
+    def _sample_fps(self, particles: torch.Tensor, k: int) -> torch.Tensor:
+        """
+        Farthest Point Sampling.
+        
+        Note: Biased toward surface/extremities - not ideal for volume sampling.
+        """
+        N = particles.shape[0]
+        device = particles.device
+        
+        selected = torch.zeros(k, dtype=torch.long, device=device)
+        min_dists = torch.full((N,), float('inf'), device=device)
+        
+        # Start from particle closest to centroid
+        centroid = particles.mean(dim=0)
+        dists = torch.sum((particles - centroid) ** 2, dim=1)
+        first = torch.argmin(dists)
+        selected[0] = first
+        
+        dists = torch.sum((particles - particles[first]) ** 2, dim=1)
+        min_dists = torch.minimum(min_dists, dists)
+        
+        for i in range(1, k):
+            farthest = torch.argmax(min_dists)
+            selected[i] = farthest
+            
+            dists = torch.sum((particles - particles[farthest]) ** 2, dim=1)
+            min_dists = torch.minimum(min_dists, dists)
+            min_dists[farthest] = -float('inf')  # Exclude from future selection
+        
+        return selected
+
+    def _sample_halton_lloyd(self, particles: torch.Tensor, k: int) -> torch.Tensor:
+        """
+        Halton sequence initialization + Lloyd's relaxation.
+        
+        Note: Halton fills bounding BOX, not actual shape. Bad for non-cubic volumes.
+        """
+        N, D = particles.shape
+        device = particles.device
+        
         try:
             from scipy.stats import qmc
             
-            # 1. Compute Bounding Box
             min_bound = torch.min(particles, dim=0).values
             max_bound = torch.max(particles, dim=0).values
             range_bound = max_bound - min_bound
             
-            # 2. Generate Halton Sequence (0-1 range)
-            # We generate slightly more to account for potential out-of-bounds mapping
             sampler = qmc.Halton(d=D, scramble=True)
-            halton_sample = sampler.random(n=k)
-            halton_sample = torch.tensor(halton_sample, dtype=torch.float32, device=device)
+            halton = sampler.random(n=k)
+            halton = torch.tensor(halton, dtype=torch.float32, device=device)
             
-            # 3. Scale to Particle Bounding Box
-            target_points = min_bound + halton_sample * range_bound
-            
-            # 4. Snap to Nearest Actual Particle (Discrete Constraint)
-            # We find the particle closest to each ideal Halton point
-            # This selects a subset that structurally resembles the Halton pattern
-            dists = torch.cdist(target_points, particles) # (K, N)
-            centroids_idx = torch.argmin(dists, dim=1)    # (K,)
+            targets = min_bound + halton * range_bound
+            dists = torch.cdist(targets, particles)
+            centroids_idx = torch.argmin(dists, dim=1)
             
         except ImportError:
-            gs.logger.warning("Scipy not found for Halton sampling, falling back to Random.")
+            gs.logger.warning("scipy not available, using random initialization")
             centroids_idx = torch.randperm(N, device=device)[:k]
-            
-        # --- Phase 2: Discrete Lloyd's Relaxation ---
-        # Iterate to minimize variance ("bumps")
-        num_iterations = 10
         
-        for i in range(num_iterations):
-            # Step A: Assignment (Voronoi Partitioning)
+        # Lloyd's relaxation
+        for _ in range(15):
             centroids = particles[centroids_idx]
+            D_mat = torch.cdist(particles, centroids)
+            labels = torch.argmin(D_mat, dim=1)
             
-            try:
-                D_mat = torch.cdist(particles, centroids)
-            except RuntimeError:
-                gs.logger.warning("OOM during CVT Lloyd's, stopping relaxation early.")
-                break
-                
-            # Assign to nearest centroid
-            labels = torch.argmin(D_mat, dim=1) # (N,)
-            
-            # Step B: Compute Geometric Centroids of partitions
             cluster_sums = torch.zeros((k, D), device=device)
             cluster_counts = torch.zeros((k, 1), device=device)
             
-            # Scatter add
-            labels_expanded = labels.view(-1, 1).expand(-1, D)
-            cluster_sums.scatter_add_(0, labels_expanded, particles)
-            
-            # Count points per label
-            ones = torch.ones((N, 1), device=device)
-            cluster_counts.scatter_add_(0, labels.view(-1, 1), ones)
-            
-            # Avoid divide by zero
+            labels_exp = labels.view(-1, 1).expand(-1, D)
+            cluster_sums.scatter_add_(0, labels_exp, particles)
+            cluster_counts.scatter_add_(0, labels.view(-1, 1), torch.ones((N, 1), device=device))
             cluster_counts = torch.clamp(cluster_counts, min=1.0)
             
-            # Geometric centroids
-            geo_centroids = cluster_sums / cluster_counts # (K, 3)
+            geo_centroids = cluster_sums / cluster_counts
+            D_geo = torch.cdist(particles, geo_centroids)
+            new_idx = torch.argmin(D_geo, dim=0)
             
-            # Step C: Snap to nearest VALID particle (Discrete Constraint)
-            try:
-                D_mat_geo = torch.cdist(particles, geo_centroids)
-            except RuntimeError:
+            if torch.equal(centroids_idx, new_idx):
                 break
-            
-            # Nearest particle to each geometric centroid
-            new_centroids_idx = torch.argmin(D_mat_geo, dim=0) # (K,)
-            
-            # Check convergence
-            if torch.equal(centroids_idx, new_centroids_idx):
-                break
-                
-            centroids_idx = new_centroids_idx
-            
+            centroids_idx = new_idx
+        
         return centroids_idx
