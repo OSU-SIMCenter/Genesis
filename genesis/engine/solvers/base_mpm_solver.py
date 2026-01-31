@@ -529,22 +529,24 @@ class BaseMPMSolver(Solver):
         self.compute_F_tmp.grad(f)
 
     def substep_post_coupling(self, f):
-        self.g2p(
-            f,
-            self.sim.coupler.rigid_solver.geoms_info,
-            self.sim.coupler.rigid_solver.links_state,
-            self.sim.coupler.rigid_solver._rigid_global_info,
-        )
-
-        # Apply particle constraints after g2p
-        if self._constraints_initialized:
-            self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
-
-        # FIXME: Use existing errno mechanism for this.
-        if not self._is_state_valid(f):
-            gs.raise_exception(
-                "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
+        profiler = self.sim.scene.profiling_options.profiler
+        with profiler.time("mpm_post_couple") if True else contextlib.suppress():
+            self.g2p(
+                f,
+                self.sim.coupler.rigid_solver.geoms_info,
+                self.sim.coupler.rigid_solver.links_state,
+                self.sim.coupler.rigid_solver._rigid_global_info,
             )
+
+            # Apply particle constraints after g2p
+            if self._constraints_initialized:
+                self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
+
+            # FIXME: Use existing errno mechanism for this.
+            if not self._is_state_valid(f):
+                gs.raise_exception(
+                    "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
+                )
 
     def substep_post_coupling_grad(self, f):
         self.g2p.grad(

@@ -89,34 +89,36 @@ async def simulation_loop(websocket, state: StrikeController):
                 await asyncio.sleep(0.001)
                 continue
             
-            # 1. atomic step (Logic + Physics + Render)
-            await state.step_simulation()
-            
-            # 2. Reconstruction & IO
-            # Note: state.env.scene.profiling_options is accessible
-            with state._profile("teleop_io"):
-                vertices, triangles, particles = await state.update_and_get_recon_data()
+            # Root of the hierarchy for this frame/step
+            with state._profile("teleop_step"):
+                # 1. atomic step (Logic + Physics + Render)
+                await state.step_simulation()
                 
-                v_flat, v_count = _prepare_array(vertices, np.float32)
-                t_flat, t_count = _prepare_array(triangles, np.int32)
-                p_flat, p_count = _prepare_array(particles, np.float32)
-                
-                header = {
-                    "steps": [0],
-                    "Pressure": 0,
-                    "StressField": -1,
-                    "is_pressing": state.strike_state != StrikeState.IDLE,
-                    "counts": {
-                        "vertices": v_count,
-                        "faces": t_count,
-                        "particles": p_count
+                # 2. Reconstruction & IO
+                # Note: state.env.scene.profiling_options is accessible
+                with state._profile("teleop_io"):
+                    vertices, triangles, particles = await state.update_and_get_recon_data()
+                    
+                    v_flat, v_count = _prepare_array(vertices, np.float32)
+                    t_flat, t_count = _prepare_array(triangles, np.int32)
+                    p_flat, p_count = _prepare_array(particles, np.float32)
+                    
+                    header = {
+                        "steps": [0],
+                        "Pressure": 0,
+                        "StressField": -1,
+                        "is_pressing": state.strike_state != StrikeState.IDLE,
+                        "counts": {
+                            "vertices": v_count,
+                            "faces": t_count,
+                            "particles": p_count
+                        }
                     }
-                }
-                header_json = json.dumps(header).encode('utf-8')
-                binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes()
-                message = struct.pack('<I', len(header_json)) + header_json + binary_body
-                
-                await websocket.send(message)
+                    header_json = json.dumps(header).encode('utf-8')
+                    binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes()
+                    message = struct.pack('<I', len(header_json)) + header_json + binary_body
+                    
+                    await websocket.send(message)
             
             await asyncio.sleep(1/60)
             

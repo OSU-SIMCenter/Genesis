@@ -124,7 +124,8 @@ class StrikeController:
                  self._stop_motors()
                  return
             
-            force_L, force_R = self.robot.get_resistance_forces()
+            with self._profile("logic_get_resistance"):
+                force_L, force_R = self.robot.get_resistance_forces()
             
             if not self.contact_L and force_L > contact_threshold:
                 self.contact_L = True
@@ -132,17 +133,23 @@ class StrikeController:
             if not self.contact_R and force_R > contact_threshold:
                 self.contact_R = True
 
-            vel_cmd = torch.zeros(4, device=self.env.device)
-            vel_cmd[2] = 0.0 if self.contact_L else approach_speed
-            vel_cmd[3] = 0.0 if self.contact_R else approach_speed
-            self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+            with self._profile("logic_calc_cmd"):
+                vel_cmd = torch.zeros(4, device=self.env.device)
+                vel_cmd[2] = 0.0 if self.contact_L else approach_speed
+                vel_cmd[3] = 0.0 if self.contact_R else approach_speed
+            
+            with self._profile("logic_apply_vel"):
+                self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
             
             if self.contact_L and self.contact_R:
                 self.strike_state = StrikeState.PRESSING
                 self.stage_start_time = time.time()
-                pos_L = self.robot.left_gripper.get_pos()
-                pos_R = self.robot.right_gripper.get_pos()
-                self.contact_width = torch.norm(pos_L - pos_R).item()
+                
+                with self._profile("logic_get_pos"):
+                    pos_L = self.robot.left_gripper.get_pos()
+                    pos_R = self.robot.right_gripper.get_pos()
+                    self.contact_width = torch.norm(pos_L - pos_R).item()
+                
                 gs.logger.info(f"Strike -> PRESSING (width={self.contact_width:.4f})")
                 
         # --- PRESSING STAGE ---
@@ -153,11 +160,13 @@ class StrikeController:
             pressing_timeout = self.env.cfg.strike.pressing_timeout
             force_balance_gain = self.env.cfg.strike.force_balance_gain
 
-            force_L, force_R = self.robot.get_resistance_forces()
+            with self._profile("logic_get_resistance"):
+                force_L, force_R = self.robot.get_resistance_forces()
             
-            pos_L = self.robot.left_gripper.get_pos()
-            pos_R = self.robot.right_gripper.get_pos()
-            current_width = torch.norm(pos_L - pos_R).item()
+            with self._profile("logic_get_pos"):
+                pos_L = self.robot.left_gripper.get_pos()
+                pos_R = self.robot.right_gripper.get_pos()
+                current_width = torch.norm(pos_L - pos_R).item()
             
             if self.contact_width > 1e-6:
                 current_strain = (self.contact_width - current_width) / self.contact_width
@@ -166,31 +175,35 @@ class StrikeController:
                 
             elapsed_time = time.time() - self.stage_start_time
 
-            stop_reason = None
-            if current_strain >= target_strain:
-                stop_reason = "Target Strain"
-            elif force_L > max_force or force_R > max_force:
-                stop_reason = "Max Force"
-            elif elapsed_time > pressing_timeout:
-                stop_reason = "Timeout"
+            with self._profile("logic_check_stop"):
+                stop_reason = None
+                if current_strain >= target_strain:
+                    stop_reason = "Target Strain"
+                elif force_L > max_force or force_R > max_force:
+                    stop_reason = "Max Force"
+                elif elapsed_time > pressing_timeout:
+                    stop_reason = "Timeout"
                 
-            if stop_reason:
-                gs.logger.info(f"Strike -> RELEASE ({stop_reason}, strain={current_strain:.4f})")
-                self.strike_state = StrikeState.RELEASE
-                self.stage_start_time = time.time()
-                self._stop_motors()
-                return
+                if stop_reason:
+                    gs.logger.info(f"Strike -> RELEASE ({stop_reason}, strain={current_strain:.4f})")
+                    self.strike_state = StrikeState.RELEASE
+                    self.stage_start_time = time.time()
+                    self._stop_motors()
+                    return
 
-            imbalance = force_L - force_R
-            correction = imbalance * force_balance_gain
+            with self._profile("logic_calc_cmd"):
+                imbalance = force_L - force_R
+                correction = imbalance * force_balance_gain
+                
+                v_L = max(0.0, pressing_speed - correction)
+                v_R = max(0.0, pressing_speed + correction)
+                
+                vel_cmd = torch.zeros(4, device=self.env.device)
+                vel_cmd[2] = v_L
+                vel_cmd[3] = v_R
             
-            v_L = max(0.0, pressing_speed - correction)
-            v_R = max(0.0, pressing_speed + correction)
-            
-            vel_cmd = torch.zeros(4, device=self.env.device)
-            vel_cmd[2] = v_L
-            vel_cmd[3] = v_R
-            self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+            with self._profile("logic_apply_vel"):
+                self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
 
         # --- RELEASE STAGE ---
         elif self.strike_state == StrikeState.RELEASE:
@@ -205,18 +218,23 @@ class StrikeController:
                  await self.save_checkpoint()
                  return
             
-            force_L, force_R = self.robot.get_resistance_forces()
-            imbalance = force_L - force_R
-            correction = imbalance * force_balance_gain
+            with self._profile("logic_get_resistance"):
+                force_L, force_R = self.robot.get_resistance_forces()
+
+            with self._profile("logic_calc_cmd"):
+                imbalance = force_L - force_R
+                correction = imbalance * force_balance_gain
+                
+                v_open = -release_speed
+                v_L = v_open - correction
+                v_R = v_open + correction
+                
+                vel_cmd = torch.zeros(4, device=self.env.device)
+                vel_cmd[2] = v_L
+                vel_cmd[3] = v_R
             
-            v_open = -release_speed
-            v_L = v_open - correction
-            v_R = v_open + correction
-            
-            vel_cmd = torch.zeros(4, device=self.env.device)
-            vel_cmd[2] = v_L
-            vel_cmd[3] = v_R
-            self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
+            with self._profile("logic_apply_vel"):
+                self.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=self.env.device))
             
             if abs(force_L) < contact_threshold and abs(force_R) < contact_threshold:
                  self._force_idle_reset()
@@ -277,14 +295,13 @@ class StrikeController:
                  self.env.scene.sim.coupler.clear_link_coupling_forces()
 
         # 4. Physics Step
-        self.env.scene.step() # Profiled internally
+        with self._profile("teleop_physics"):
+            self.env.scene.step(update_visualizer=False)
 
         # 5. Render Update
         with self._profile("teleop_render_update"):
-            if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
-                self.env.scene.sim.mpm_solver.update_render_fields()
-            else:
-                self.env.scene.visualizer.update_visual_states()
+            if self.env.scene.visualizer:
+                 self.env.scene.visualizer.update(force=False, auto=True)
 
     def _profile(self, name):
         # Fix for Pydantic model access
