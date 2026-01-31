@@ -392,8 +392,13 @@ class SharedState:
             self.contact_R = False
             self.checkpoints = []
             self.contact_width = 0.0
-            # Reset sampling cache
+            # Reset sampling cache and init skinning
             self.reconstructor.reset()
+            
+            # Generate the high-quality base mesh ONCE
+            gs.logger.info("Initializing surface skinning...")
+            self.reconstructor.create_reconstructed_mesh()
+            self.reconstructor.init_skinning()
             
             # Save initial state as first checkpoint
             self._save_checkpoint_impl()
@@ -443,7 +448,14 @@ class SharedState:
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
             
-            self.reconstructor.create_reconstructed_mesh()
+            self.robot.apply_action(self.qpos)
+            
+            # Restore visual mesh state (re-skin if needed)
+            # Since we jump back in time, particles move. Skinning update will fix vertices.
+            # But if we want to be safe, we could force an update.
+            # However, init_skinning relies on the base mesh being valid. 
+            # If the base mesh hasn't changed (topology constant), we are fine.
+            self.reconstructor.update(True)
             gs.logger.info(f"Undo complete ({len(self.checkpoints)} checkpoints remaining)")
 
     def _apply_transformation(self, points):
@@ -474,10 +486,18 @@ class SharedState:
 
     async def update_reconstructed_mesh(self):
         """Reconstruct mesh during active strike stages."""
-        # Only reconstruct during PRESSING and RELEASE to save performance
+        # Update skinning every frame if enabled, otherwise reconstruct based on stage
+        # The reconstructor.update() method handles the logic internally now:
+        # If skinning_enabled -> update_skinning() (fast)
+        # Else -> create_reconstructed_mesh() (slow, only if allowed)
+        
         allowed_stages = (StrikeState.PRESSING, StrikeState.RELEASE)
         should_reconstruct = self.strike_state in allowed_stages
-        self.reconstructor.update(should_reconstruct)
+        
+        # We only update if in the allowed stages, even for skinning
+        # The user specifically requested this optimization.
+        if should_reconstruct:
+            self.reconstructor.update(should_reconstruct)
             
 
 
