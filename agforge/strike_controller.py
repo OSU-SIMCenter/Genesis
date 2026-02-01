@@ -6,7 +6,7 @@ import numpy as np
 import genesis as gs
 import contextlib
 
-from reconstruction import SurfaceReconstructor
+from agforge.reconstruction import SurfaceReconstructor
 
 class StrikeState(enum.Enum):
     IDLE = 0
@@ -69,7 +69,7 @@ class StrikeController:
         # Since agforge_builder is where RobotXMLGenerator lives, we might need to import it
         # or just assume standard values if not critical. 
         # Better: Import it to be safe.
-        from agforge_builder import RobotXMLGenerator
+        from agforge.agforge_builder import RobotXMLGenerator
         xml_generator = RobotXMLGenerator(robot_cfg=self.env.cfg.robot)
         self.gripper_closed_pos = xml_generator.gripper_slide_range[1]
         self.gripper_open_pos = xml_generator.gripper_slide_range[0]

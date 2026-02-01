@@ -3,7 +3,6 @@ import json
 import torch
 import numpy as np
 import genesis as gs
-import sys
 import os
 import argparse
 import copy
@@ -13,13 +12,12 @@ try:
 except ImportError:
     rr = None
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+from agforge.options import TeleopOptions
+from agforge.agforge_builder import build_env
+from agforge.reconstruction import SurfaceReconstructor, SamplingMethod
 
-from options import TeleopOptions
-from agforge_builder import build_env
-from reconstruction import SurfaceReconstructor, SamplingMethod
+# Current directory for file path operations
+current_dir = os.path.dirname(os.path.abspath(__file__))
 
 
 def run_reconstruction_benchmark():

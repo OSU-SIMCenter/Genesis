@@ -2,9 +2,9 @@ import argparse
 import genesis as gs
 
 # Import config dataclasses and parameters needed for the builder
-from options import TrainingOptions
-from agforge_builder import build_env
-from trainers import SACTrainer, AdamTrainer, BaseTrainer
+from agforge.options import TrainingOptions
+from agforge.agforge_builder import build_env
+from agforge.training.trainers import SACTrainer, AdamTrainer, BaseTrainer
 
 def main():
     """

@@ -2,7 +2,7 @@ import torch
 import os
 import sys
 import genesis as gs
-from options import (
+from agforge.options import (
     AgilityForgeOptions,
     RobotOptions,
     GENERATED_ROBOT_XML_PATH,

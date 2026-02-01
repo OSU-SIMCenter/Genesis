@@ -3,8 +3,8 @@ import genesis as gs
 import abc
 from rsl_rl.runners import OnPolicyRunner
 
-from environment import AgilityForgeEnv
-from options import TrainingOptions
+from agforge.environment import AgilityForgeEnv
+from agforge.options import TrainingOptions
 
 class BaseTrainer(abc.ABC):
     """Abstract base class for all training algorithms."""

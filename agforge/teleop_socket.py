@@ -15,9 +15,9 @@ import numpy as np
 
 import genesis as gs
 
-from options import TeleopOptions
-from agforge_builder import build_env
-from strike_controller import StrikeController, StrikeState
+from agforge.options import TeleopOptions
+from agforge.agforge_builder import build_env
+from agforge.strike_controller import StrikeController, StrikeState
 
 # Suppress websockets connection errors
 logging.getLogger("websockets").setLevel(logging.CRITICAL)

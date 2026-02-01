@@ -5,8 +5,8 @@ import torch
 from pynput import keyboard
 
 # Import configs and environment from the training folder
-from options import TeleopOptions
-from agforge_builder import build_env
+from agforge.options import TeleopOptions
+from agforge.agforge_builder import build_env
 
 # Profiling
 import contextlib
