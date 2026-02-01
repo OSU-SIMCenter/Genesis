@@ -2,7 +2,6 @@ import asyncio
 import time
 import json
 import os
-import sys
 import copy
 import argparse
 import itertools
@@ -10,9 +9,9 @@ import numpy as np
 import genesis as gs
 import torch
 
-from options import TeleopOptions
-from agforge_builder import build_env
-from strike_controller import StrikeController, StrikeState
+from agforge.options import TeleopOptions
+from agforge.agforge_builder import build_env
+from agforge.strike_controller import StrikeController, StrikeState
 
 def get_current_time_ms():
     return time.time() * 1000.0
