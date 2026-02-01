@@ -3,9 +3,9 @@ from gymnasium import spaces
 import numpy as np
 import torch
 
-from options import AgilityForgeOptions, TrainingOptions
-from agforge_builder import build_env
-from environment import AgilityForgeEnv
+from agforge.options import AgilityForgeOptions, TrainingOptions
+from agforge.agforge_builder import build_env
+from agforge.environment import AgilityForgeEnv
 
 
 class AgilityForgeGymEnv(gym.Env):

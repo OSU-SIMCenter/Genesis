@@ -3,8 +3,8 @@ import torch
 import genesis as gs
 
 import platform
-from options import AgilityForgeOptions, RobotOptions, GENERATED_ROBOT_XML_PATH
-from environment import AgilityForgeEnv
+from agforge.options import AgilityForgeOptions, RobotOptions, GENERATED_ROBOT_XML_PATH
+from agforge.environment import AgilityForgeEnv
 
 
 class RobotXMLGenerator:
