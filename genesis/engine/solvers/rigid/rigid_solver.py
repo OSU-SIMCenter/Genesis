@@ -1244,10 +1244,11 @@ class RigidSolver(Solver):
         config = self.sim.scene.profiling_options.configs.rigid
 
         if not self._disable_constraint:
-            if self._use_contact_island:
-                self.constraint_solver.clear()
-            else:
-                self.constraint_solver.add_equality_constraints()
+            with profiler.time("rigid_constraints_clear") if config.constraints_clear else contextlib.suppress():
+                if self._use_contact_island:
+                    self.constraint_solver.clear()
+                else:
+                    self.constraint_solver.add_equality_constraints()
 
         if self._enable_collision:
             with profiler.time("rigid_constraints_detect") if config.constraints_detect else contextlib.suppress():
@@ -1615,15 +1616,14 @@ class RigidSolver(Solver):
 
         profiler = self.sim.scene.profiling_options.profiler
         config = self.sim.scene.profiling_options.configs.rigid
-        with profiler.time("rigid_post_couple") if config.post_couple else contextlib.suppress():
-            if isinstance(self.sim.coupler, SAPCoupler):
-                update_qacc_from_qvel_delta(
-                    dofs_state=self.dofs_state,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=self._is_backward,
-                )
-                kernel_step_2(
+        if isinstance(self.sim.coupler, SAPCoupler):
+            update_qacc_from_qvel_delta(
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=self._is_backward,
+            )
+            kernel_step_2(
                     dofs_state=self.dofs_state,
                     dofs_info=self.dofs_info,
                     links_info=self.links_info,
@@ -1641,17 +1641,17 @@ class RigidSolver(Solver):
                     is_backward=self._is_backward,
                     errno=self._errno,
                 )
-            elif isinstance(self.sim.coupler, IPCCoupler):
-                # For IPCCoupler, perform full rigid rigid computation in post-coupling phase
-                # This allows IPC to handle rigid bodies during the coupling phase
-                # Temporarily disable ground collision if requested
-                if self.sim.coupler.options.disable_genesis_ground_contact:
-                    original_enable_collision = self._enable_collision
-                    self._enable_collision = False
-                    self.substep(f)
-                    self._enable_collision = original_enable_collision
-                else:
-                    self.substep(f)
+        elif isinstance(self.sim.coupler, IPCCoupler):
+            # For IPCCoupler, perform full rigid rigid computation in post-coupling phase
+            # This allows IPC to handle rigid bodies during the coupling phase
+            # Temporarily disable ground collision if requested
+            if self.sim.coupler.options.disable_genesis_ground_contact:
+                original_enable_collision = self._enable_collision
+                self._enable_collision = False
+                self.substep(f)
+                self._enable_collision = original_enable_collision
+            else:
+                self.substep(f)
 
     def substep_post_coupling_grad(self, f):
         pass

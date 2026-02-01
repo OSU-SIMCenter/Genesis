@@ -268,7 +268,8 @@ class Simulator(RBC):
         # kernel right away. Moreover, if computations are still not done at this point, then the queue will just
         # continue growing endlessly, which will not make the simulation faster either.
         if self.rigid_solver.is_active and self._cur_substep_global % RATE_CHECK_ERRNO == 0:
-            self.rigid_solver.check_errno()
+            with profiler.time("sim_check_errno") if config.check_errno else contextlib.suppress():
+                self.rigid_solver.check_errno()
 
         if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
             for _ in range(self._substeps):
@@ -276,7 +277,7 @@ class Simulator(RBC):
                     self.rigid_solver.substep(self.cur_substep_local)
                 self._cur_substep_global += 1
         else:
-            with profiler.time("process_input") if config.process_input else contextlib.suppress():
+            with profiler.time("sim_process_input") if config.process_input else contextlib.suppress():
                 self.process_input(in_backward=in_backward)
             for _ in range(self._substeps):
                 with profiler.time("substep") if config.substep else contextlib.suppress():
@@ -288,10 +289,10 @@ class Simulator(RBC):
                         self.save_ckpt()
 
         if self.rigid_solver.is_active:
-            with profiler.time("clear_external_force") if config.clear_external_force else contextlib.suppress():
+            with profiler.time("sim_clear_force") if config.clear_force else contextlib.suppress():
                 self.rigid_solver.clear_external_force()
 
-        with profiler.time("sensor_manager_step") if config.sensor_manager_step else contextlib.suppress():
+        with profiler.time("sim_sensor_step") if config.sensor_step else contextlib.suppress():
             self._sensor_manager.step()
 
     def _step_grad(self):
@@ -319,8 +320,7 @@ class Simulator(RBC):
     def substep(self, f):
         profiler = self.scene.profiling_options.profiler
         config = self.scene.profiling_options.configs.simulator
-        with profiler.time("preprocess") if config.preprocess else contextlib.suppress():
-            self._coupler.preprocess(f)
+        self._coupler.preprocess(f)
         with profiler.time("substep_pre_couple") if config.substep_pre_couple else contextlib.suppress():
             self.substep_pre_coupling(f)
         with profiler.time("couple") if config.couple else contextlib.suppress():
