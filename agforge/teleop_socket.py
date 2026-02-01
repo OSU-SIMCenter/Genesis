@@ -22,9 +22,9 @@ from agforge.strike_controller import StrikeController, StrikeState
 # Suppress websockets connection errors
 logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
-# Transformation constants (Matches StrikeController's internal logic, but kept here for InputMapper if needed)
-TRANSFORM_SCALE = 31.275
-TRANSFORM_HEIGHT_FACTOR = 0.375
+# Configuration constants
+TARGET_FPS = 60  # Target frame rate for the sim loop
+
 
 class InputMapper:
     """
@@ -120,7 +120,7 @@ async def simulation_loop(websocket, state: StrikeController):
                     
                     await websocket.send(message)
             
-            await asyncio.sleep(1/60)
+            await asyncio.sleep(1/TARGET_FPS)
             
             # Cleanup
             if hasattr(state, 'new_input_received'):
