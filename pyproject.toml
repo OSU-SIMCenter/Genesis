@@ -133,7 +133,7 @@ gs = "genesis._main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["genesis", "genesis.*"]
+include = ["genesis", "genesis.*", "agforge", "agforge.*"]
 
 [tool.setuptools.package-data]
 genesis = [
@@ -141,6 +141,11 @@ genesis = [
     "ext/pyrender/fonts/*",
     "ext/pyrender/shaders/*",
     "ext/VolumeSampling",
+]
+agforge = [
+    "pbs_samples/*",
+    "*.xml",
+    "scripts/*",
 ]
 
 [tool.black]
