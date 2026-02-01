@@ -98,7 +98,8 @@ class SurfaceReconstructor:
         if state is None:
             return
 
-        self.reconstructed_mesh = state['mesh']
+        # CRITICAL: Deep copy the mesh to prevent mutations from corrupting the checkpoint
+        self.reconstructed_mesh = state['mesh'].copy()
         self.skinning_enabled = state['skinning_enabled']
         self.recon_enabled = state['recon_enabled']
         self.frame_counter = state['frame_counter']
@@ -107,14 +108,16 @@ class SurfaceReconstructor:
         self._global_frame = state['global_frame']
         
         self.recon_particle_fraction = state.get('recon_particle_fraction', 1.0)
-        self.main_particle_indices = state['main_particle_indices']
+        # Deep copy numpy array if present
+        self.main_particle_indices = state['main_particle_indices'].copy() if state['main_particle_indices'] is not None else None
         self.last_total_particles = state['last_total_particles']
         
         if self.skinning_enabled:
-            self.bind_indices = state['bind_indices']
-            self.bind_weights = state['bind_weights']
-            self.bind_offsets = state['bind_offsets']
-            self.smoothing_matrix = state['smoothing_matrix']
+            # CRITICAL: Clone tensors to prevent mutations from corrupting the checkpoint
+            self.bind_indices = state['bind_indices'].clone() if state['bind_indices'] is not None else None
+            self.bind_weights = state['bind_weights'].clone() if state['bind_weights'] is not None else None
+            self.bind_offsets = state['bind_offsets'].clone() if state['bind_offsets'] is not None else None
+            self.smoothing_matrix = state['smoothing_matrix'].clone() if state['smoothing_matrix'] is not None else None
             self._use_dense_smoothing = state['use_dense_smoothing']
             self._cached_particle_radius = state['cached_particle_radius']
         else:
