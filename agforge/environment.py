@@ -13,7 +13,7 @@ def resource_path(relative_path):
     try:
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
-    except Exception:
+    except AttributeError:
         base_path = os.path.dirname(__file__)
 
     return os.path.join(base_path, relative_path)
@@ -40,6 +40,10 @@ class AgilityForgeManipulator:
         
         self.default_joint_angles = torch.tensor([0.0, 0.0, 0.0, 0.0], dtype=torch.float32, device=self.device)
         self.control_mode = "PD_CONTROL"  # Initial control mode
+        
+        # Pre-allocated tensors for resistance force calculation (Issue #16 optimization)
+        self._squeeze_dir_L = torch.tensor([0.0, 1.0, 0.0], device=self.device)
+        self._squeeze_dir_R = torch.tensor([0.0, -1.0, 0.0], device=self.device)
 
     def set_pd_gains(self):
         """Sets the Proportional-Derivative controller gains for the robot's joints."""
@@ -163,18 +167,18 @@ class AgilityForgeManipulator:
         Positive value means resistance (pushing back against squeeze).
         
         Returns:
-            torch.Tensor: Shape (n_envs, 2) [Force_L, Force_R]
+            tuple[float, float]: (Force_L, Force_R) resistance forces for each gripper
         """
         # Get orientation of clamp_bar (parent of grippers)
         # quat is (n_envs, 4) or (4,)
         quat = self.ee_link.get_quat() 
         if quat.dim() == 1: quat = quat.unsqueeze(0)
 
-        # Local squeeze directions (Pushing IN)
+        # Local squeeze directions (Pushing IN) - use pre-allocated tensors
         # Left slides +Y: (0, 1, 0)
         # Right slides -Y: (0, -1, 0)
-        local_squeeze_L = torch.tensor([0.0, 1.0, 0.0], device=self.device).expand(quat.shape[0], 3)
-        local_squeeze_R = torch.tensor([0.0, -1.0, 0.0], device=self.device).expand(quat.shape[0], 3)
+        local_squeeze_L = self._squeeze_dir_L.expand(quat.shape[0], 3)
+        local_squeeze_R = self._squeeze_dir_R.expand(quat.shape[0], 3)
         
         # Global squeeze directions
         global_squeeze_L = self._rotate_vector_by_quat(local_squeeze_L, quat)
@@ -239,8 +243,6 @@ class AgilityForgeEnv:
         self.target_mpm_pos = torch.zeros_like(self.initial_mpm_pos)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.int32)
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
-        self.extras = {}
-
         self.extras = {}
 
     def _setup_scene(self):
