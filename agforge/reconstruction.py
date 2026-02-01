@@ -176,10 +176,11 @@ class SurfaceReconstructor:
 
                 if should_rebind:
                     gs.logger.info("Large drift detected, rebinding mesh to particles...")
-                    with profiler.time("recon_mesh") if True else contextlib.suppress():
-                        self.create_reconstructed_mesh()
-                    with profiler.time("recon_update_skinning") if True else contextlib.suppress():
-                        self.init_skinning()
+                    with profiler.time("recon_rebind") if True else contextlib.suppress():
+                        with profiler.time("recon_mesh") if True else contextlib.suppress():
+                            self.create_reconstructed_mesh()
+                        with profiler.time("recon_update_skinning") if True else contextlib.suppress():
+                            self.init_skinning()
                     return
             
             with profiler.time("recon_update_skinning") if True else contextlib.suppress():

@@ -152,6 +152,7 @@ class Profiler:
         name: str
         total: float = 0.0
         self_time: float = 0.0
+        recursive_unprofiled: float = 0.0 # Cumulative unprofiled time (Self + Children's unprofiled)
         count: int = 0
         children: Dict[str, '_AggNode'] = field(default_factory=dict)
 
@@ -163,8 +164,20 @@ class Profiler:
         root_agg.total = self.root.end - self.root.start
 
         def recurse(raw_node: ProfileEvent, agg_node: '_AggNode'):
-            dur = raw_node.end - raw_node.start
-            children_dur = sum(c.end - c.start for c in raw_node.children)
+            # Handle active nodes (end=0.0) by using root's end time (snapshot time)
+            end_t = raw_node.end
+            if end_t == 0.0:
+                end_t = self.root.end
+                
+            dur = end_t - raw_node.start
+            
+            # Calculate children duration similarly
+            children_dur = 0.0
+            for c in raw_node.children:
+                c_end = c.end
+                if c_end == 0.0: c_end = self.root.end
+                children_dur += (c_end - c.start)
+
             self_dur = dur - children_dur
             
             agg_node.total += dur
@@ -180,6 +193,23 @@ class Profiler:
             if child.name not in root_agg.children:
                 root_agg.children[child.name] = self._AggNode(child.name)
             recurse(child, root_agg.children[child.name])
+            
+        # Post-process: Calculate recursive unprofiled time (Bottom-Up)
+        def calc_recursive(node: '_AggNode'):
+            if not node.children:
+                # Leaf node: This IS a profiled section, so it contributes 0 to "Unprofiled"
+                node.recursive_unprofiled = 0.0
+                return
+
+            child_unprof_sum = 0.0
+            for child in node.children.values():
+                calc_recursive(child)
+                child_unprof_sum += child.recursive_unprofiled
+            
+            # Recursive unprofiled = My own glue code (self_time) + Children's unprofiled glue
+            node.recursive_unprofiled = node.self_time + child_unprof_sum
+
+        calc_recursive(root_agg)
             
         return root_agg
 
@@ -203,6 +233,7 @@ class Profiler:
             else:
                 others.total += c.total
                 others.self_time += c.self_time 
+                others.recursive_unprofiled += c.recursive_unprofiled
                 others.count += c.count
 
         if others.count > 0:
@@ -252,49 +283,67 @@ class Profiler:
         total_time = root_agg.total
         
         def collect(node: Profiler._AggNode):
-            if node.name not in flat_stats:
-                flat_stats[node.name] = self._AggNode(node.name)
-            
-            # Aggregate stats across the tree for same-named functions
-            target = flat_stats[node.name]
-            target.total += node.total
-            target.self_time += node.self_time
-            target.count += node.count
-            
+            # Traverse children first
             for child in node.children.values():
                 collect(child)
+
+            # Check if it's a leaf (no children)
+            if not node.children:
+                if node.name not in flat_stats:
+                    flat_stats[node.name] = self._AggNode(node.name)
+                
+                target = flat_stats[node.name]
+                # For leaves, total time is entirely self time effectively
+                target.total += node.total
+                target.self_time += node.self_time
+                target.count += node.count
         
         # Collect from children of root
         for child in root_agg.children.values():
             collect(child)
             
-        # Sort
+        # Sort by Total Time (which is same as Self Time for leaves) descending
         items = list(flat_stats.values())
-        if sort_by == "self":
-            items.sort(key=lambda x: x.self_time, reverse=True)
-            value_getter = lambda x: x.self_time
-            title = "Profile Results (Flat - Sorted by Unprofiled Time)"
-        else:
-            items.sort(key=lambda x: x.total, reverse=True)
-            value_getter = lambda x: x.total
-            title = "Profile Results (Flat - Sorted by Total Time)"
+        items.sort(key=lambda x: x.total, reverse=True)
+        
+        # Calculate Unprofiled (Glue code in parents)
+        sum_leaves = sum(x.total for x in items)
+        unprofiled_time = total_time - sum_leaves
+        
+        if unprofiled_time > 0 and total_time > 0:
+            unprof_node = self._AggNode(" [Unprofiled (Glue Code)] ")
+            unprof_node.total = unprofiled_time
+            unprof_node.self_time = unprofiled_time
+            unprof_node.count = 1 # Abstract count
+            
+            # Insert at appropriate position
+            inserted = False
+            for i, item in enumerate(items):
+                if unprof_node.total > item.total:
+                    items.insert(i, unprof_node)
+                    inserted = True
+                    break
+            if not inserted:
+                items.append(unprof_node)
+
+        value_getter = lambda x: x.total
+        title = "Profile Results (Hot Spots - Leaf Nodes Only)"
             
         print(f"\n--- {title} ---")
         if use_rich:
-            print(f"{'Section':<30} {'Calls':>7} {'Total':>10} {'Unprofiled':>10} {'% Unprof':>8}   {'Graph'}")
+            print(f"{'Section':<30} {'Calls':>7} {'Total':>10} {'%':>8}   {'Graph'}")
             print("-" * 105)
         else:
-            print(f"{'Section':<30} {'Calls':>7} {'Total':>10} {'Unprofiled':>10} {'% Unprof':>8}   {'Graph'}")
+            print(f"{'Section':<30} {'Calls':>7} {'Total':>10} {'%':>8}   {'Graph'}")
             print("-" * 105)
         
         # Softened Heatmap (Red -> Orange -> Yellow -> Green)
-        # Using standard Rich colors or safe hexes
         colors_heat = ["red", "orange1", "dark_orange", "gold1", "yellow", "chartreuse1", "green3", "green"]
         
         # Determine max value for relative scaling
         max_val = 0.0
         if items:
-            max_val = value_getter(items[0]) # Items are already sorted descending
+            max_val = value_getter(items[0])
 
         for node in items:
             val = value_getter(node)
@@ -303,32 +352,27 @@ class Profiler:
             if pct < min_pct: continue
             
             # Simple ASCII bar
-            bar_len = 20
+            bar_len = 25
             filled = int(pct / 100 * bar_len)
             bar_str = "█" * filled + "░" * (bar_len - filled)
             
             if use_rich:
-                # Color based on relative heat (val / max_val)
-                # Max value = 1.0 -> Index 0
-                # Low value = 0.0 -> Index len-1
+                # Color logic
                 if max_val > 0:
                     relative = val / max_val
                 else:
                     relative = 0
                 
-                # Invert logic: 1.0 is Hot (index 0), 0.0 is Cold (index last)
                 idx = int((1.0 - relative) * (len(colors_heat) - 1))
                 idx = max(0, min(len(colors_heat) - 1, idx))
-                
                 color = colors_heat[idx]
                 
-                # IMPORTANT: highlight=False to disable auto-number coloring (blue/gray issues)
                 console.print(f"[{color}]{node.name:<30} {node.count:>7} "
-                      f"{node.total*1000:>9.1f}ms {node.self_time*1000:>9.1f}ms {pct:>7.1f}%   {bar_str}[/]", 
+                      f"{node.total*1000:>9.1f}ms {pct:>7.1f}%   {bar_str}[/]", 
                       highlight=False)
             else:
                  print(f"{node.name:<30} {node.count:>7} "
-                      f"{node.total*1000:>9.1f}ms {node.self_time*1000:>9.1f}ms {pct:>7.1f}%   {bar_str}")
+                      f"{node.total*1000:>9.1f}ms {pct:>7.1f}%   {bar_str}")
         print("---------------------------------------------------------------------------------------------------------\n")
 
     def print_tree(self, min_pct=0.0):
@@ -349,24 +393,34 @@ class Profiler:
         def walk(node: '_AggNode', prefix: str, is_last: bool, depth: int):
             pct = (node.total / total_time * 100) if total_time > 0 else 0
             
-            # Local Breakdown (Subsections vs Unprofiled)
-            if node.total > 0 and node.children:
-                children_sum = sum(c.total for c in node.children.values())
-                child_pct_local = (children_sum / node.total) * 100
-                self_pct_abs = (node.self_time / total_time) * 100 if total_time > 0 else 0.0
-                
-                # Format exactly as 100.0% even if float math is slightly off
-                # Update terminology: Children -> Subsections, Self -> Unprofiled
-                breakdown = f" [Subsections: {child_pct_local:.1f}% + Unprofiled: {self_pct_abs:.1f}%]"
-            else:
-                breakdown = ""
+            # 1. Absolute Cumulative Unprofiled (Recursive / Global Total)
+            # This accounts for the node's glue code PLUS all its children's glue code
+            abs_cum_unprof_pct = (node.recursive_unprofiled / total_time) * 100 if total_time > 0 else 0.0
 
+            # 2. Relative Local Unprofiled (Self / Node Total)
+            # This accounts for how much of THIS node is just glue code vs delegated to children
+            if node.total > 0:
+                rel_unprof_pct = (node.self_time / node.total) * 100
+            else:
+                rel_unprof_pct = 0.0
+            
             # Connector
             connector = "└── " if is_last else "├── "
             
             # Info string
-            # Update terminology: self -> unprofiled
-            self_info = f" [unprofiled: {node.self_time*1000:.1f}ms]" if node.children else ""
+            # Only show unprofiled info if it's non-negligible
+            unprof_info = ""
+            if abs_cum_unprof_pct > 0.1:
+                # For non-leaves, show both Absolute Cumulative and Relative
+                if node.children:
+                    unprof_info = f" [Unprofiled: {abs_cum_unprof_pct:.1f}% Abs Cum, {rel_unprof_pct:.1f}% Rel]"
+                else:
+                    # For leaves, Relative is technically 100% (all self time), which is confusing.
+                    # Just show Absolute Cumulative (which is 0.0 for leaves properly).
+                    # Actually, if it's 0.0, we just skip it.
+                    if abs_cum_unprof_pct > 0.1:
+                         unprof_info = f" [Unprofiled: {abs_cum_unprof_pct:.1f}% Abs Cum]"
+
             count_info = f" ({node.count}x)" if node.count > 1 else ""
             
             # Bar 
@@ -378,13 +432,13 @@ class Profiler:
             if use_rich:
                 color = colors[depth % len(colors)]
                 # Reset prefix and connector to dim, color the name and info
-                console.print(f"[dim]{prefix}{connector}[/][{color}]{node.name}{count_info}: {node.total*1000:.1f}ms ({pct:.1f}%){self_info}[dim]{breakdown}[/][/]", highlight=False)
+                console.print(f"[dim]{prefix}{connector}[/][{color}]{node.name}{count_info}: {node.total*1000:.1f}ms ({pct:.1f}%){unprof_info}[/]", highlight=False)
                 
                 # Bar Line
                 bar_prefix = prefix + ("    " if is_last else "│   ")
                 console.print(f"[dim]{bar_prefix}    [/][{color}]{bar_str}[/]", highlight=False)
             else:
-                print(f"{prefix}{connector}{node.name}{count_info}: {node.total*1000:.1f}ms ({pct:.1f}%){self_info}{breakdown}")
+                print(f"{prefix}{connector}{node.name}{count_info}: {node.total*1000:.1f}ms ({pct:.1f}%){unprof_info}")
                 bar_prefix = prefix + ("    " if is_last else "│   ")
                 print(f"{bar_prefix}    {bar_str}")
             
@@ -427,7 +481,8 @@ class Profiler:
         table.add_column("Section", style="cyan")
         table.add_column("Calls", justify="right")
         table.add_column("Total", justify="right")
-        table.add_column("Unprofiled", justify="right") # Renamed from Self
+        table.add_column("Unprof (Abs Cum)", justify="right") 
+        table.add_column("Unprof (Rel)", justify="right")
         table.add_column("%", justify="right")
         table.add_column("Visualization", width=30)
         
@@ -443,26 +498,27 @@ class Profiler:
             
             # Color name by depth
             style_name = colors[depth % len(colors)]
-            
             # We strip 'bold' for the bar color usually, but keeping it simple: just use the color name
             # e.g. "bold cyan" -> "cyan"
             color_only = style_name.replace("bold ", "")
             
-            # Local Breakdown
-            breakdown = ""
-            if node.total > 0 and node.children:
-                 children_sum = sum(c.total for c in node.children.values())
-                 child_pct_local = (children_sum / node.total) * 100
-                 if child_pct_local > 1.0: # Only show if significant children
-                     # Update terminology: Ch -> Sub
-                     breakdown = f" [dim](Sub:{child_pct_local:.0f}%)[/]"
+            # 1. Absolute Cumulative Unprofiled
+            abs_cum_unprof_pct = (node.recursive_unprofiled / total_time * 100) if total_time > 0 else 0.0
+            
+            # 2. Relative Local Unprofiled (Hide for leaves)
+            rel_unprof_str = "-"
+            if node.children and node.total > 0:
+                 rel_unprof_pct = (node.self_time / node.total) * 100
+                 if rel_unprof_pct > 1.0:
+                     rel_unprof_str = f"{rel_unprof_pct:.1f}%"
 
             # Apply color to all columns
             table.add_row(
-                f"{indent}[{style_name}]{node.name}[/]{breakdown}",
+                f"{indent}[{style_name}]{node.name}[/]",
                 f"[{style_name}]{node.count}[/]",
                 f"[{style_name}]{node.total*1000:.1f}ms[/]",
-                f"[{style_name}]{node.self_time*1000:.1f}ms[/]",
+                f"[{style_name}]{node.recursive_unprofiled*1000:.1f}ms ({abs_cum_unprof_pct:.1f}%)[/]",
+                f"[{style_name}]{rel_unprof_str}[/]", 
                 f"[{style_name}]{pct:.1f}%[/]",
                 f"[{color_only}]{bar}[/]" 
             )

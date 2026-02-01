@@ -544,12 +544,13 @@ class BaseMPMSolver(Solver):
     def substep_post_coupling(self, f):
         profiler = self.sim.scene.profiling_options.profiler
         with profiler.time("mpm_post_couple") if True else contextlib.suppress():
-            self.g2p(
-                f,
-                self.sim.coupler.rigid_solver.geoms_info,
-                self.sim.coupler.rigid_solver.links_state,
-                self.sim.coupler.rigid_solver._rigid_global_info,
-            )
+            with profiler.time("mpm_g2p") if self.sim.scene.profiling_options.configs.simulator.mpm_g2p else contextlib.suppress():
+                self.g2p(
+                    f,
+                    self.sim.coupler.rigid_solver.geoms_info,
+                    self.sim.coupler.rigid_solver.links_state,
+                    self.sim.coupler.rigid_solver._rigid_global_info,
+                )
 
             # Apply particle constraints after g2p
             if self._constraints_initialized:

@@ -114,146 +114,143 @@ class StrikeController:
         Executes one step of the strike state machine logic.
         This mirrors `update_strike_logic` from teleop_socket.py.
         """
-        with self._profile("logic_idle"):
-            if self.strike_state == StrikeState.IDLE:
-                return
 
         with self._profile("logic_step"):
-            # --- APPROACHING STAGE ---
+            with self._profile("logic_update_state"):
+                # --- APPROACHING STAGE ---
+                if self.strike_state == StrikeState.APPROACHING:
+                    approach_speed = self.env.cfg.strike.approach_speed
+                    contact_threshold = self.env.cfg.strike.contact_force_threshold
+                    approaching_timeout = self.env.cfg.strike.approaching_timeout
+                    
+                    if time.time() - self.stage_start_time > approaching_timeout:
+                         gs.logger.warning(f"Strike APPROACHING timed out")
+                         self.strike_state = StrikeState.RELEASE
+                         self.stage_start_time = time.time()
+                         self._stop_motors()
+                         return
+                    
             if self.strike_state == StrikeState.APPROACHING:
-                approach_speed = self.env.cfg.strike.approach_speed
-                contact_threshold = self.env.cfg.strike.contact_force_threshold
-                approaching_timeout = self.env.cfg.strike.approaching_timeout
-                
-                if time.time() - self.stage_start_time > approaching_timeout:
-                     gs.logger.warning(f"Strike APPROACHING timed out")
-                     self.strike_state = StrikeState.RELEASE
-                     self.stage_start_time = time.time()
-                     self._stop_motors()
-                     return
-                
-                with self._profile("logic_get_resistance"):
-                    force_L, force_R = self.robot.get_resistance_forces()
-                
-                if not self.contact_L and force_L > contact_threshold:
-                    self.contact_L = True
+                    with self._profile("logic_get_resistance"):
+                        force_L, force_R = self.robot.get_resistance_forces()
                     
-                if not self.contact_R and force_R > contact_threshold:
-                    self.contact_R = True
+                    with self._profile("logic_update_state"):
+                        if not self.contact_L and force_L > contact_threshold:
+                            self.contact_L = True
+                            
+                        if not self.contact_R and force_R > contact_threshold:
+                            self.contact_R = True
 
-                with self._profile("logic_calc_cmd"):
-                    self._vel_cmd.zero_()
-                    self._vel_cmd[2] = 0.0 if self.contact_L else approach_speed
-                    self._vel_cmd[3] = 0.0 if self.contact_R else approach_speed
-                
-                with self._profile("logic_apply_vel"):
-                    self._apply_vel_dedup()
-                
-                if self.contact_L and self.contact_R:
-                    self.strike_state = StrikeState.PRESSING
-                    self.stage_start_time = time.time()
+                        self._vel_cmd.zero_()
+                        self._vel_cmd[2] = 0.0 if self.contact_L else approach_speed
+                        self._vel_cmd[3] = 0.0 if self.contact_R else approach_speed
                     
-                    with self._profile("logic_get_pos"):
+                    with self._profile("logic_apply_vel"):
+                        self._apply_vel_dedup()
+                    
+                    with self._profile("logic_update_state"):
+                        if self.contact_L and self.contact_R:
+                            self.strike_state = StrikeState.PRESSING
+                            self.stage_start_time = time.time()
+                            
+                            pos_L = self.robot.left_gripper.get_pos()
+                            pos_R = self.robot.right_gripper.get_pos()
+                            self.contact_width = torch.norm(pos_L - pos_R).item()
+                            
+                            gs.logger.info(f"Strike -> PRESSING (width={self.contact_width:.4f})")
+                        
+                # --- PRESSING STAGE ---
+            elif self.strike_state == StrikeState.PRESSING:
+                    with self._profile("logic_update_state"):
+                        pressing_speed = self.env.cfg.strike.pressing_speed
+                        target_strain = self.target_strain
+                        max_force = self.env.cfg.strike.max_force
+                        pressing_timeout = self.env.cfg.strike.pressing_timeout
+                        force_balance_gain = self.env.cfg.strike.force_balance_gain
+
+                    with self._profile("logic_get_resistance"):
+                        force_L, force_R = self.robot.get_resistance_forces()
+                    
+                    with self._profile("logic_update_state"):
                         pos_L = self.robot.left_gripper.get_pos()
                         pos_R = self.robot.right_gripper.get_pos()
-                        self.contact_width = torch.norm(pos_L - pos_R).item()
-                    
-                    gs.logger.info(f"Strike -> PRESSING (width={self.contact_width:.4f})")
-                    
-            # --- PRESSING STAGE ---
-            elif self.strike_state == StrikeState.PRESSING:
-                with self._profile("logic_prep"):
-                    pressing_speed = self.env.cfg.strike.pressing_speed
-                    target_strain = self.target_strain
-                    max_force = self.env.cfg.strike.max_force
-                    pressing_timeout = self.env.cfg.strike.pressing_timeout
-                    force_balance_gain = self.env.cfg.strike.force_balance_gain
+                        current_width = torch.norm(pos_L - pos_R).item()
+                        
+                        if self.contact_width > 1e-6:
+                            current_strain = (self.contact_width - current_width) / self.contact_width
+                        else:
+                            current_strain = 0.0
+                        
+                        elapsed_time = time.time() - self.stage_start_time
 
-                with self._profile("logic_get_resistance"):
-                    force_L, force_R = self.robot.get_resistance_forces()
-                
-                with self._profile("logic_get_pos"):
-                    pos_L = self.robot.left_gripper.get_pos()
-                    pos_R = self.robot.right_gripper.get_pos()
-                    current_width = torch.norm(pos_L - pos_R).item()
-                
-                with self._profile("logic_update_state"):
-                    if self.contact_width > 1e-6:
-                        current_strain = (self.contact_width - current_width) / self.contact_width
-                    else:
-                        current_strain = 0.0
-                    
-                    elapsed_time = time.time() - self.stage_start_time
-
-                with self._profile("logic_check_stop"):
-                    stop_reason = None
-                    if current_strain >= target_strain:
-                        stop_reason = "Target Strain"
-                    elif force_L > max_force or force_R > max_force:
-                        stop_reason = "Max Force"
-                    elif elapsed_time > pressing_timeout:
-                        stop_reason = "Timeout"
-                    
-                    if stop_reason:
-                        with self._profile("logic_update_state"):
+                        stop_reason = None
+                        if current_strain >= target_strain:
+                            stop_reason = "Target Strain"
+                        elif force_L > max_force or force_R > max_force:
+                            stop_reason = "Max Force"
+                        elif elapsed_time > pressing_timeout:
+                            stop_reason = "Timeout"
+                        
+                        if stop_reason:
                             gs.logger.info(f"Strike -> RELEASE ({stop_reason}, strain={current_strain:.4f})")
                             self.strike_state = StrikeState.RELEASE
                             self.stage_start_time = time.time()
                             self._stop_motors()
                             return
 
-                with self._profile("logic_calc_cmd"):
-                    imbalance = force_L - force_R
-                    correction = imbalance * force_balance_gain
+                        imbalance = force_L - force_R
+                        correction = imbalance * force_balance_gain
+                        
+                        v_L = max(0.0, pressing_speed - correction)
+                        v_R = max(0.0, pressing_speed + correction)
+                        
+                        self._vel_cmd.zero_()
+                        self._vel_cmd[2] = v_L
+                        self._vel_cmd[3] = v_R
                     
-                    v_L = max(0.0, pressing_speed - correction)
-                    v_R = max(0.0, pressing_speed + correction)
-                    
-                    self._vel_cmd.zero_()
-                    self._vel_cmd[2] = v_L
-                    self._vel_cmd[3] = v_R
-                
-                with self._profile("logic_apply_vel"):
-                    self._apply_vel_dedup()
+                    with self._profile("logic_apply_vel"):
+                        self._apply_vel_dedup()
 
-            # --- RELEASE STAGE ---
+                # --- RELEASE STAGE ---
             elif self.strike_state == StrikeState.RELEASE:
-                release_speed = self.env.cfg.strike.pressing_speed
-                contact_threshold = self.env.cfg.strike.contact_force_threshold * 0.2
-                force_balance_gain = self.env.cfg.strike.force_balance_gain
-                release_timeout = self.env.cfg.strike.release_timeout
-                
-                if time.time() - self.stage_start_time > release_timeout:
-                     gs.logger.warning(f"Strike RELEASE timed out - Forcing reset")
-                     self._force_idle_reset()
-                     await self.save_checkpoint()
-                     return
-                
-                with self._profile("logic_get_resistance"):
-                    force_L, force_R = self.robot.get_resistance_forces()
+                    with self._profile("logic_update_state"):
+                        release_speed = self.env.cfg.strike.pressing_speed
+                        contact_threshold = self.env.cfg.strike.contact_force_threshold * 0.2
+                        force_balance_gain = self.env.cfg.strike.force_balance_gain
+                        release_timeout = self.env.cfg.strike.release_timeout
+                        
+                        if time.time() - self.stage_start_time > release_timeout:
+                             gs.logger.warning(f"Strike RELEASE timed out - Forcing reset")
+                             self._force_idle_reset()
+                             await self.save_checkpoint()
+                             return
+                    
+                    with self._profile("logic_get_resistance"):
+                        force_L, force_R = self.robot.get_resistance_forces()
 
-                with self._profile("logic_calc_cmd"):
-                    imbalance = force_L - force_R
-                    correction = imbalance * force_balance_gain
+                    with self._profile("logic_update_state"):
+                        imbalance = force_L - force_R
+                        correction = imbalance * force_balance_gain
+                        
+                        v_open = -release_speed
+                        v_L = v_open - correction
+                        v_R = v_open + correction
+                        
+                        self._vel_cmd.zero_()
+                        self._vel_cmd[2] = v_L
+                        self._vel_cmd[3] = v_R
                     
-                    v_open = -release_speed
-                    v_L = v_open - correction
-                    v_R = v_open + correction
+                    with self._profile("logic_apply_vel"):
+                        self._apply_vel_dedup()
                     
-                    self._vel_cmd.zero_()
-                    self._vel_cmd[2] = v_L
-                    self._vel_cmd[3] = v_R
-                
-                with self._profile("logic_apply_vel"):
-                    self._apply_vel_dedup()
-                
-                if abs(force_L) < contact_threshold and abs(force_R) < contact_threshold:
-                     self._force_idle_reset()
-                     # Stabilization after release
-                     self.stabilization_steps = self.env.cfg.strike.post_release_steps
-                     gs.logger.info(f"Strike -> IDLE (Stabilizing for {self.stabilization_steps} steps)")
-                     await self.save_checkpoint()
-                     return
+                    with self._profile("logic_update_state"):
+                        if abs(force_L) < contact_threshold and abs(force_R) < contact_threshold:
+                             self._force_idle_reset()
+                             # Stabilization after release
+                             self.stabilization_steps = self.env.cfg.strike.post_release_steps
+                             gs.logger.info(f"Strike -> IDLE (Stabilizing for {self.stabilization_steps} steps)")
+                             await self.save_checkpoint()
+                             return
 
             # --- HOLDING STAGE ---
             elif self.strike_state == StrikeState.HOLDING:
@@ -309,23 +306,21 @@ class StrikeController:
 
         # 2. Apply Actions (if not handled by strike logic, handle idle holding)
         if self.strike_state == StrikeState.IDLE or self.strike_state == StrikeState.HOLDING:
-            with self._profile("teleop_action"):
-                qpos = await self.get_qpos()
-                self.robot.apply_action(qpos)
+            qpos = await self.get_qpos()
+            self.robot.apply_action(qpos)
 
         # 3. Clear Forces
-        with self._profile("teleop_clear_force"):
-             if hasattr(self.env.scene.sim.coupler, 'clear_link_coupling_forces'):
-                 self.env.scene.sim.coupler.clear_link_coupling_forces()
+        if hasattr(self.env.scene.sim.coupler, 'clear_link_coupling_forces'):
+            self.env.scene.sim.coupler.clear_link_coupling_forces()
 
         # 4. Physics Step
         with self._profile("teleop_physics"):
             self.env.scene.step(update_visualizer=False)
 
         # 5. Render Update
-        with self._profile("teleop_render_update"):
-            if self.env.scene.visualizer:
-                 self.env.scene.visualizer.update(force=False, auto=True)
+        if self.env.scene.visualizer:
+            with self._profile("teleop_render"):
+                self.env.scene.visualizer.update(force=False, auto=True)
 
     def _profile(self, name):
         # Fix for Pydantic model access
@@ -342,15 +337,20 @@ class StrikeController:
             should_reconstruct = self.strike_state in allowed_stages
             
             if should_reconstruct:
-                self.reconstructor.update(should_reconstruct)
-                particles = self.reconstructor.get_active_particle_cache()
-                if particles is None:
-                     particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+                with self._profile("teleop_recon_update"):
+                    self.reconstructor.update(should_reconstruct)
+                with self._profile("teleop_recon_get_particles"):
+                    particles = self.reconstructor.get_active_particle_cache()
+                    if particles is None:
+                         particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
             else:
-                particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+                with self._profile("teleop_recon_get_particles"):
+                    particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
 
-            points = self._apply_transformation(particles)
-            vertices = self._apply_transformation(self.reconstructor.reconstructed_mesh.vertices)
+            with self._profile("teleop_recon_transform"):
+                points = self._apply_transformation(particles)
+                vertices = self._apply_transformation(self.reconstructor.reconstructed_mesh.vertices)
+            
             triangles = self.reconstructor.reconstructed_mesh.faces
             
             return vertices, triangles, points
