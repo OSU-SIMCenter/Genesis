@@ -431,7 +431,8 @@ class StrikeController:
         self.checkpoints.append(ckpt)
         if len(self.checkpoints) > MAX_CHECKPOINTS:
             self.checkpoints.pop(0)
-        gs.logger.info(f"Checkpoint saved ({len(self.checkpoints)} total)")
+        mesh_verts = len(self.reconstructor.reconstructed_mesh.vertices) if self.reconstructor.reconstructed_mesh.vertices is not None else 0
+        gs.logger.info(f"Checkpoint saved (stack={len(self.checkpoints)}, mesh_verts={mesh_verts})")
 
     async def save_checkpoint(self):
         async with self.lock:
@@ -477,7 +478,8 @@ class StrikeController:
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
             
-            gs.logger.info(f"Undo complete ({len(self.checkpoints)} checkpoints remaining)")
+            mesh_verts = len(self.reconstructor.reconstructed_mesh.vertices) if self.reconstructor.reconstructed_mesh.vertices is not None else 0
+            gs.logger.info(f"Undo complete (stack={len(self.checkpoints)}, mesh_verts={mesh_verts})")
 
     async def reset_simulation(self):
         async with self.lock:
