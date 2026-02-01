@@ -171,19 +171,19 @@ class SurfaceReconstructor:
             # FIX #7: Check if rebind needed periodically
             if self._global_frame % self._rebind_check_interval == 0:
                 should_rebind = False
-                with profiler.time("recon_check_rebind") if True else contextlib.suppress():
+                with profiler.time("recon_check_rebind"):
                     should_rebind = self._should_rebind()
 
                 if should_rebind:
                     gs.logger.info("Large drift detected, rebinding mesh to particles...")
-                    with profiler.time("recon_rebind") if True else contextlib.suppress():
-                        with profiler.time("recon_mesh") if True else contextlib.suppress():
+                    with profiler.time("recon_rebind"):
+                        with profiler.time("recon_mesh"):
                             self.create_reconstructed_mesh()
-                        with profiler.time("recon_update_skinning") if True else contextlib.suppress():
+                        with profiler.time("recon_update_skinning"):
                             self.init_skinning()
                     return
             
-            with profiler.time("recon_update_skinning") if True else contextlib.suppress():
+            with profiler.time("recon_update_skinning"):
                 self.update_skinning()
             return
 
@@ -195,7 +195,7 @@ class SurfaceReconstructor:
         if self.frame_counter % self.recon_frame_interval != 0:
             return
 
-        with profiler.time("recon_mesh") if True else contextlib.suppress():
+        with profiler.time("recon_mesh"):
             self.create_reconstructed_mesh()
 
     def _should_rebind(self) -> bool:
@@ -688,19 +688,19 @@ class SurfaceReconstructor:
         # Handle case where we have duplicate minima (ties)
         # Get unique voxels from candidates
         candidate_voxels = inverse[candidates]
-        _, first_occurrence = torch.unique(candidate_voxels, return_inverse=True)
         
-        # Keep only first occurrence of each voxel
-        unique_mask = torch.zeros(len(candidates), dtype=torch.bool, device=device)
-        seen_voxels = torch.zeros(num_voxels, dtype=torch.bool, device=device)
+        # Vectorized unique voxel selection - keep first occurrence of each voxel
+        # Sort by voxel index to group same voxels together
+        sorted_order = torch.argsort(candidate_voxels)
+        sorted_voxels = candidate_voxels[sorted_order]
         
-        for i in range(len(candidates)):
-            v = candidate_voxels[i]
-            if not seen_voxels[v]:
-                unique_mask[i] = True
-                seen_voxels[v] = True
+        # Find first occurrence: where value differs from previous
+        first_mask = torch.ones(len(sorted_voxels), dtype=torch.bool, device=device)
+        if len(sorted_voxels) > 1:
+            first_mask[1:] = sorted_voxels[1:] != sorted_voxels[:-1]
         
-        selected = candidates[unique_mask]
+        # Map back to original candidate order
+        selected = candidates[sorted_order[first_mask]]
         
         # Adjust to target count k
         if len(selected) > k:

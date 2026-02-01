@@ -48,8 +48,8 @@ class EnvOptions(Options):
         arbitrary_types_allowed = True
 
 
-class SacOptions(Options):
-    """Hyperparameters for the SAC (PPO) reinforcement learning algorithm."""
+class RLOptions(Options):
+    """Hyperparameters for reinforcement learning (PPO algorithm)."""
     class_name: str = "PPO"
     gamma: float = 0.99
     lam: float = 0.95
@@ -172,7 +172,7 @@ class RobotOptions(Options):
 class AgilityForgeOptions(Options):
     """Aggregated configuration for the AgilityForge environment."""
     mat: MaterialOptions = MaterialOptions()
-    sac: SacOptions = SacOptions()
+    sac: RLOptions = RLOptions()  # Note: Still named 'sac' for backwards compatibility
     adam: AdamOptions = AdamOptions()
     performance_mode: bool = True
 
