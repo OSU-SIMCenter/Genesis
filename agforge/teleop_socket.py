@@ -24,6 +24,7 @@ logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
 # Configuration constants
 TARGET_FPS = 60  # Target frame rate for the sim loop
+FORCE_SCALE = 10.0  # Scale factor for client force/strain values (client sends 0-0.1, we want 0-1)
 
 
 class InputMapper:
@@ -207,8 +208,13 @@ async def handle_client(websocket, state: StrikeController, path=None):
 
                 elif packet.get("request") == "strike":
                     if state.strike_state == StrikeState.IDLE:
-                         force = packet.get("force", 0.5)
-                         await state.trigger_strike(force)
+                         raw_force = packet.get("force", 0.05)  # Default 0.05 -> 0.5 strain after scaling
+                         
+                         # Scale client value (0-0.1) to strain range (0-1)
+                         scaled_strain = min(1.0, max(0.0, raw_force * FORCE_SCALE))
+                         
+                         gs.logger.info(f"Strike request: raw={raw_force}, scaled_strain={scaled_strain:.2f}")
+                         await state.trigger_strike(scaled_strain)
 
             except json.JSONDecodeError:
                 gs.logger.warning("Invalid JSON from client")
