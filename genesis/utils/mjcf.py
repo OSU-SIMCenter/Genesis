@@ -604,8 +604,14 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         visual=TextureVisuals(uv=uv, material=tmesh_mat),
         process=False,
     )
+    # For collision geoms, create a Collision surface with the MJCF material color
+    # to preserve colors defined in MJCF files
+    if is_col:
+        col_surface = gs.surfaces.Collision(color=tuple(mj_rgba[:3]))
+    else:
+        col_surface = surface
     mesh = gs.Mesh.from_trimesh(
-        tmesh, scale=scale, surface=gs.surfaces.Collision() if is_col else surface, metadata=metadata
+        tmesh, scale=scale, surface=col_surface, metadata=metadata
     )
 
     info = {
@@ -739,9 +745,10 @@ def parse_geoms(mj, scale, surface, xml_path):
             if g_info["group"] in (0, 1, 2):
                 g_info = g_info.copy()
                 mesh = g_info.pop("mesh")
+                # Use the collision mesh's surface to preserve MJCF material colors
                 vmesh = gs.Mesh(
                     mesh=mesh.trimesh,
-                    surface=surface,
+                    surface=mesh.surface,
                     uvs=mesh.uvs,
                     metadata=mesh.metadata,
                 )
