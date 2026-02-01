@@ -1000,7 +1000,7 @@ class Scene(RBC):
             with profiler.time("fps_tracker_step") if config.fps_tracker else contextlib.suppress():
                 self.FPS_tracker.step()
 
-        with profiler.time("recorder_manager_step") if config.recorder_manager else contextlib.suppress():
+        with profiler.time("recorder_step") if config.recorder else contextlib.suppress():
             self._recorder_manager.step(self._sim.cur_step_global)
 
     def stop_recording(self):

@@ -28,56 +28,57 @@ class ProfilingOptions(Options):
             """Scene profiling configurations."""
             class Step(Options):
                 """Settings for the scene step."""
-                sim: bool = False
+                sim: bool = True
                 visualizer: bool = True
                 fps_tracker: bool = True
-                recorder_manager: bool = True
+                recorder: bool = True
             step: Step = Step()
         
         class Simulator(Options):
             """Simulator profiling configurations."""
-            preprocess: bool = True
+            process_input: bool = True
+            check_errno: bool = True
+            clear_force: bool = True
+            sensor_step: bool = True
             substep_pre_couple: bool = True
             substep: bool = True
             couple: bool = True
             substep_post_couple: bool = True
-            process_input: bool = True
+            mpm_g2p: bool = True
             save_ckpt: bool = True
-            clear_external_force: bool = True
-            sensor_manager_step: bool = True
             rigid_solver_substep: bool = True
 
         class Rigid(Options):
             """Rigid solver profiling configurations."""
             step_1: bool = True
             constraints: bool = True
+            constraints_force: bool = True
+            constraints_clear: bool = True
             constraints_detect: bool = True
             constraints_add: bool = True
             constraints_solve: bool = True
             step_2: bool = True
-            post_couple: bool = True
 
         class Teleop(Options):
             """Teleop socket profiling configurations."""
+            step: bool = True
+            physics: bool = True
             logic: bool = True
             logic_step: bool = True
-            logic_idle: bool = True
-            logic_get_resistance: bool = True
-            logic_get_pos: bool = True
-            logic_check_stop: bool = True
-            logic_calc_cmd: bool = True
             logic_apply_vel: bool = True
+            logic_get_resistance: bool = True
             logic_update_state: bool = True
-            logic_prep: bool = True
-
-            action: bool = True
-            clear_force: bool = True
+            io: bool = True
             recon: bool = True
             recon_mesh: bool = True
             recon_update_skinning: bool = True
+            recon_update: bool = True
+            recon_get_particles: bool = True
             recon_check_rebind: bool = True
-            io: bool = True
-            render_update: bool = True
+            recon_rebind: bool = True
+            recon_transform: bool = True
+            render: bool = True
+
 
         scene: Scene = Scene()
         simulator: Simulator = Simulator()

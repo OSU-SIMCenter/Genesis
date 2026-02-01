@@ -74,7 +74,6 @@ async def run_benchmark():
         cfg.profiling.configs.scene.step.sim = True
         cfg.profiling.configs.scene.step.visualizer = True
         cfg.profiling.configs.scene.step.fps_tracker = True
-        cfg.profiling.configs.scene.step.recorder_manager = True
         
         # Simulator options
         for field in cfg.profiling.configs.simulator.__dict__:
@@ -157,16 +156,15 @@ async def run_benchmark():
                         await controller.step_simulation()
                         
                         # Reconstruction
-                        with profiler.time("teleop_recon"): # Manual because socket does it outside
-                            await controller.update_and_get_recon_data()
+                        await controller.update_and_get_recon_data()
                         
                         # Update Viewer Context explicitly if visualizing
-                        with profiler.time("teleop_render_update"): # Additional render overhead
-                            if args.visualize and env.scene.visualizer:
-                                 if hasattr(env.scene.visualizer, 'render'):
-                                     env.scene.visualizer.render()
-                                 elif hasattr(env.scene.visualizer, 'viewer') and hasattr(env.scene.visualizer.viewer, 'render'):
-                                     env.scene.visualizer.viewer.render()
+                        # Update Viewer Context explicitly if visualizing
+                        if args.visualize and env.scene.visualizer:
+                             if hasattr(env.scene.visualizer, 'render'):
+                                 env.scene.visualizer.render()
+                             elif hasattr(env.scene.visualizer, 'viewer') and hasattr(env.scene.visualizer.viewer, 'render'):
+                                 env.scene.visualizer.viewer.render()
                     
                     step_count += 1
                     
