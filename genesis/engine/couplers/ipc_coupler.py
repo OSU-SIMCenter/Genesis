@@ -59,7 +59,7 @@ if UIPC_AVAILABLE:
     )
     from uipc.unit import MPa
 
-if POLYSCOPE_AVAILABLE:
+if UIPC_AVAILABLE and POLYSCOPE_AVAILABLE:
     from uipc.gui import SceneGUI
 
 
