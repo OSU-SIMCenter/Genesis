@@ -161,4 +161,7 @@ agforge_demo.xml
 # pixi environments
 .pixi/*
 !.pixi/config.toml
-agforge/benchmark_data/*
+
+# agforge benchmark outputs
+agforge/benchmarks/benchmark_data/
+agforge/benchmarks/benchmark_results.json
