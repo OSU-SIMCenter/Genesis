@@ -77,25 +77,30 @@ async def simulation_loop(websocket, state: StrikeController):
     
     try:
         while True:
-            # Determine if we need to step
+            # Determine if we need to step physics
             is_active = (state.strike_state != StrikeState.IDLE)
             needs_stabilization = (state.stabilization_steps > 0)
             
             # Helper dynamic attribute for manual inputs (socket only)
             has_input = getattr(state, 'new_input_received', False)
             
-            should_step = is_active or needs_stabilization or has_input
+            # Check if we need to send mesh data (e.g., after undo/reset)
+            pending_send = getattr(state, 'pending_mesh_send', False)
             
-            if not should_step:
+            should_step = is_active or needs_stabilization or has_input
+            should_send = should_step or pending_send
+            
+            if not should_send:
                 await asyncio.sleep(0.001)
                 continue
             
             # Root of the hierarchy for this frame/step
             with state._profile("teleop_step"):
-                # 1. atomic step (Logic + Physics + Render)
-                await state.step_simulation()
+                # 1. atomic step (Logic + Physics + Render) - only if needed
+                if should_step:
+                    await state.step_simulation()
                 
-                # 2. Reconstruction & IO
+                # 2. Reconstruction & IO (always send when should_send is True)
                 # Note: state.env.scene.profiling_options is accessible
                 with state._profile("teleop_io"):
                     vertices, triangles, particles = await state.update_and_get_recon_data()
@@ -123,9 +128,11 @@ async def simulation_loop(websocket, state: StrikeController):
             
             await asyncio.sleep(1/TARGET_FPS)
             
-            # Cleanup
+            # Cleanup flags
             if hasattr(state, 'new_input_received'):
                 state.new_input_received = False
+            if hasattr(state, 'pending_mesh_send'):
+                state.pending_mesh_send = False
             
             if state.stabilization_steps > 0:
                 state.stabilization_steps -= 1

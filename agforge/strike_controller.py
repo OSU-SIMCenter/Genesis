@@ -474,6 +474,9 @@ class StrikeController:
                 self.reconstructor.reset()
                 self.reconstructor.create_reconstructed_mesh()
 
+            # Trigger mesh data send to client (without physics step)
+            self.pending_mesh_send = True
+            
             gs.logger.info(f"Undo complete ({len(self.checkpoints)} checkpoints remaining)")
 
     async def reset_simulation(self):
@@ -500,4 +503,8 @@ class StrikeController:
             self.reconstructor.init_skinning()
             
             self._save_checkpoint_impl()
+            
+            # Trigger mesh data send to client (without physics step)
+            self.pending_mesh_send = True
+            
             gs.logger.info("Simulation reset")
