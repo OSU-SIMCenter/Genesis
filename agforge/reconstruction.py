@@ -508,7 +508,13 @@ class SurfaceReconstructor:
                  self._last_log_time = current_time
 
             # 4. Update mesh
-            self.reconstructed_mesh.vertices = new_verts.cpu().numpy()
+            new_verts_np = new_verts.cpu().numpy()
+            if len(new_verts_np) != len(self.reconstructed_mesh.vertices):
+                gs.logger.error(f"Skinning size mismatch: calculated {len(new_verts_np)}, mesh has {len(self.reconstructed_mesh.vertices)}. Forcing rebind.")
+                self._invalidate_skinning()
+                return
+
+            self.reconstructed_mesh.vertices = new_verts_np
             
         except Exception as e:
             gs.logger.error(f"Skinning update failed: {e}")

@@ -295,7 +295,7 @@ class StrikeController:
                         # This gives the user a "perfect" result after the action completes.
                         recon_start = time.time()
                         self.reconstructor.create_reconstructed_mesh()
-                        # self.reconstructor.init_skinning() # Optional, but good to reset bindings too
+                        self.reconstructor.init_skinning() # REQUIRED to sync weights with new mesh
                         recon_time = (time.time() - recon_start) * 1000
                         gs.logger.info(f"  Post-strike reconstruction: {recon_time:.1f}ms")
 
