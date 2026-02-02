@@ -373,7 +373,10 @@ class StrikeController:
 
         # 4. Physics Step
         with self._profile("teleop_physics"):
-            self.env.scene.step(update_visualizer=False)
+            try:
+                self.env.scene.step(update_visualizer=False)
+            except Exception as e:
+                gs.logger.warning(f"Physics step skipped due to instability: {e}")
 
         # 5. Render Update
         if self.env.scene.visualizer:
