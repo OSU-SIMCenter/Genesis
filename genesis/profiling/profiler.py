@@ -86,6 +86,7 @@ class Profiler:
         self.root = ProfileEvent("root", time.perf_counter_ns())
         self.stack = [self.root]
         self._cached_stats = None  # Cache for flat stats
+        self._profiler_start_time = time.perf_counter_ns()  # Track when profiler was started/reset
     
     def reset(self):
         """Clear all timing data."""
@@ -285,7 +286,15 @@ class Profiler:
         flat_stats: Dict[str, Profiler._AggNode] = {}
         
         root_agg = self._aggregate_tree()
-        total_time = root_agg.total
+        
+        # Calculate idle time (time outside any profiled block)
+        elapsed_ns = time.perf_counter_ns() - self._profiler_start_time
+        elapsed_time = elapsed_ns / 1_000_000_000  # Convert to seconds
+        sum_root_children = sum(c.total for c in root_agg.children.values())
+        idle_time = elapsed_time - sum_root_children
+        
+        # Use sum of root children as the "active" total for percentages
+        total_time = sum_root_children
         
         def collect(node: Profiler._AggNode):
             # Traverse children first
@@ -311,7 +320,7 @@ class Profiler:
         items = list(flat_stats.values())
         items.sort(key=lambda x: x.total, reverse=True)
         
-        # Calculate Unprofiled (Glue code in parents)
+        # Calculate Unprofiled (Glue code in parents - NOT idle time)
         sum_leaves = sum(x.total for x in items)
         unprofiled_time = total_time - sum_leaves
         
@@ -414,7 +423,18 @@ class Profiler:
                 print(f"{others.name:<30} {others.count:>7} "
                       f"{others.total*1000:>9.1f}ms {others_pct:>7.1f}%   {bar_str}")
         
-        print("---------------------------------------------------------------------------------------------------------\n")
+        print("---------------------------------------------------------------------------------------------------------")
+        
+        # Print idle time at the very bottom (excluded from % calculations)
+        if idle_time > 0.001:  # Only show if > 1ms
+            idle_ms = idle_time * 1000
+            if use_rich:
+                console.print(f"[dim italic] [Idle/Inactive Time]         (excluded)  {idle_ms:>9.1f}ms[/]", 
+                      highlight=False)
+            else:
+                print(f" [Idle/Inactive Time]         (excluded)  {idle_ms:>9.1f}ms")
+        
+        print("")
 
     def print_tree(self, min_pct=0.0):
         """Simple terminal tree with ASCII bars (Aggregated)."""
