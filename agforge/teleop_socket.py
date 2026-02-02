@@ -104,6 +104,7 @@ async def simulation_loop(websocket, state: StrikeController):
                  last_idle_time = time.time()
             
             should_send = should_step or should_smooth_idle or pending_send
+            should_send = should_step or pending_send
             
             if not should_send:
                 await asyncio.sleep(0.001)
@@ -114,10 +115,9 @@ async def simulation_loop(websocket, state: StrikeController):
                 # 1. atomic step (Logic + Physics + Render) - only if needed
                 if should_step:
                     await state.step_simulation()
-                elif should_smooth_idle:
-                    # Run ONLY reconstruction smoothing (no physics step)
-                    with state._profile("idle_smoothing"):
-                         state.reconstructor.update(should_reconstruct=False)
+                # IDLE SMOOTHING REMOVED:
+                # We reverted to "Periodic Full Recon" strategy which is handled inside step().
+                # No need to burn CPU smoothing a static mesh.
                 
                 # 2. Reconstruction & IO (always send when should_send is True)
                 # Note: state.env.scene.profiling_options is accessible
