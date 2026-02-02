@@ -28,11 +28,12 @@ from pathlib import Path
 # DATA STRUCTURES
 # ─────────────────────────────────────────────────────────────
 
-@dataclass
+@dataclass(slots=True)
 class ProfileEvent:
+    """Single profiling event with timing info."""
     name: str
-    start: float
-    end: float = 0.0
+    start: int  # nanoseconds from perf_counter_ns
+    end: int = 0
     children: List['ProfileEvent'] = field(default_factory=list)
 
 class ProfileStats:
@@ -82,9 +83,9 @@ class Profiler:
         self._reset_internal_state()
 
     def _reset_internal_state(self):
-        self.root = ProfileEvent("root", time.perf_counter())
+        self.root = ProfileEvent("root", time.perf_counter_ns())
         self.stack = [self.root]
-        self._cached_stats = None # Cache for flat stats
+        self._cached_stats = None  # Cache for flat stats
     
     def reset(self):
         """Clear all timing data."""
@@ -97,7 +98,7 @@ class Profiler:
             yield
             return
 
-        start_t = time.perf_counter()
+        start_t = time.perf_counter_ns()
         event = ProfileEvent(name, start_t)
         
         # Add to current parent
@@ -108,9 +109,10 @@ class Profiler:
         try:
             yield
         finally:
-            end_t = time.perf_counter()
+            end_t = time.perf_counter_ns()
             event.end = end_t
-            if self.stack:
+            # Safety check: only pop if this is the expected event
+            if self.stack and self.stack[-1] is event:
                 self.stack.pop()
             
             # Invalidate stats cache since we added data
@@ -118,8 +120,8 @@ class Profiler:
 
     def stop(self):
         """Ensure root is closed (useful before printing/exporting)."""
-        if self.root.end == 0.0:
-            self.root.end = time.perf_counter()
+        if self.root.end == 0:
+            self.root.end = time.perf_counter_ns()
 
     @property
     def stats(self) -> Dict[str, ProfileStats]:
@@ -134,7 +136,8 @@ class Profiler:
             if node.name != "root":
                 if node.name not in aggregated:
                     aggregated[node.name] = ProfileStats()
-                aggregated[node.name].add_time(node.end - node.start)
+                # Convert nanoseconds to seconds for backward compatibility
+                aggregated[node.name].add_time((node.end - node.start) / 1e9)
             
             for child in node.children:
                 traverse(child)
@@ -160,28 +163,29 @@ class Profiler:
         """Aggregate raw timeline events into a cleaner call tree."""
         root_agg = self._AggNode("root")
         
-        # We need to compute total time differently since it's aggregated
-        root_agg.total = self.root.end - self.root.start
+        # Convert nanoseconds to seconds for display
+        root_agg.total = (self.root.end - self.root.start) / 1e9
 
         def recurse(raw_node: ProfileEvent, agg_node: '_AggNode'):
-            # Handle active nodes (end=0.0) by using root's end time (snapshot time)
+            # Handle active nodes (end=0) by using root's end time (snapshot time)
             end_t = raw_node.end
-            if end_t == 0.0:
+            if end_t == 0:
                 end_t = self.root.end
                 
-            dur = end_t - raw_node.start
+            dur_ns = end_t - raw_node.start
             
             # Calculate children duration similarly
-            children_dur = 0.0
+            children_dur_ns = 0
             for c in raw_node.children:
                 c_end = c.end
-                if c_end == 0.0: c_end = self.root.end
-                children_dur += (c_end - c.start)
+                if c_end == 0: c_end = self.root.end
+                children_dur_ns += (c_end - c.start)
 
-            self_dur = dur - children_dur
+            self_dur_ns = dur_ns - children_dur_ns
             
-            agg_node.total += dur
-            agg_node.self_time += self_dur
+            # Convert to seconds for _AggNode
+            agg_node.total += dur_ns / 1e9
+            agg_node.self_time += self_dur_ns / 1e9
             agg_node.count += 1
             
             for child in raw_node.children:
@@ -556,9 +560,10 @@ class Profiler:
         self.stop()
         
         def to_dict(node):
-            dur = node.end - node.start
-            children_dur = sum(c.end - c.start for c in node.children)
-            self_val = int((dur - children_dur) * 1_000_000)
+            dur_ns = node.end - node.start
+            children_dur_ns = sum(c.end - c.start for c in node.children)
+            # Convert nanoseconds to microseconds for flame graph value
+            self_val = int((dur_ns - children_dur_ns) / 1000)
             return {
                 "name": node.name,
                 "value": self_val if self_val > 0 else 0, 
@@ -598,37 +603,7 @@ d3.select("#chart").datum(data).call(chart);
         if not self.enabled: return
         self.stop()
         
-        frames, frame_idx, samples, weights = [], {}, [], []
-        
-        def get_idx(name):
-            if name not in frame_idx:
-                frame_idx[name] = len(frames)
-                frames.append({"name": name})
-            return frame_idx[name]
-        
-        def walk(node, stack):
-            idx = get_idx(node.name)
-            new_stack = stack + [idx]
-            children_time = sum(c.end - c.start for c in node.children)
-            self_time = (node.end - node.start) - children_time
-            if self_time > 1e-7: 
-                samples.append(new_stack[:])
-                weights.append(int(self_time * 1e9))
-            for c in node.children:
-                walk(c, new_stack)
-        
-        for c in self.root.children:
-            walk(c, [])
-        
-        profile_data = {
-            "$schema": "https://www.speedscope.app/file-format-schema.json",
-            "shared": {"frames": frames},
-            "profiles": [{
-                "type": "sampled", "name": "profile", "unit": "nanoseconds",
-                "startValue": 0, "endValue": sum(weights),
-                "samples": samples, "weights": weights
-            }]
-        }
+        profile_data = self._build_speedscope_data()
         
         html = f'''<!DOCTYPE html>
 <html><head><title>Profile</title></head>
@@ -642,40 +617,45 @@ d3.select("#chart").datum(data).call(chart);
     # EXPORT (Manual)
     # ─────────────────────────────────────────────────────────────
 
-    def to_speedscope(self) -> dict:
-        """Export to speedscope JSON format (raw dict)."""
-        self.stop()
+    def _build_speedscope_data(self) -> dict:
+        """Build speedscope-compatible data structure from profile tree."""
         frames, frame_idx, samples, weights = [], {}, [], []
         
         def get_idx(name):
-             if name not in frame_idx:
-                 frame_idx[name] = len(frames)
-                 frames.append({"name": name})
-             return frame_idx[name]
+            if name not in frame_idx:
+                frame_idx[name] = len(frames)
+                frames.append({"name": name})
+            return frame_idx[name]
         
         def walk(node, stack):
-             idx = get_idx(node.name)
-             new_stack = stack + [idx]
-             children_time = sum(c.end-c.start for c in node.children)
-             self_time = (node.end - node.start) - children_time
-             if self_time > 1e-7:
-                 samples.append(new_stack[:])
-                 weights.append(int(self_time * 1e9))
-             for c in node.children:
-                 walk(c, new_stack)
+            idx = get_idx(node.name)
+            new_stack = stack + [idx]
+            children_time_ns = sum(c.end - c.start for c in node.children)
+            self_time_ns = (node.end - node.start) - children_time_ns
+            # Threshold: 100 nanoseconds (was 1e-7 seconds = 100ns)
+            if self_time_ns > 100:
+                samples.append(new_stack[:])
+                weights.append(self_time_ns)  # Already in nanoseconds
+            for c in node.children:
+                walk(c, new_stack)
         
         for c in self.root.children:
-             walk(c, [])
+            walk(c, [])
         
         return {
-             "$schema": "https://www.speedscope.app/file-format-schema.json",
-             "shared": {"frames": frames},
-             "profiles": [{
-                 "type": "sampled", "name": "profile", "unit": "nanoseconds",
-                 "startValue": 0, "endValue": sum(weights),
-                 "samples": samples, "weights": weights
-             }]
+            "$schema": "https://www.speedscope.app/file-format-schema.json",
+            "shared": {"frames": frames},
+            "profiles": [{
+                "type": "sampled", "name": "profile", "unit": "nanoseconds",
+                "startValue": 0, "endValue": sum(weights),
+                "samples": samples, "weights": weights
+            }]
         }
+
+    def to_speedscope(self) -> dict:
+        """Export to speedscope JSON format (raw dict)."""
+        self.stop()
+        return self._build_speedscope_data()
 
     def save_speedscope(self, path: str):
         """Save speedscope JSON to file."""
@@ -694,7 +674,9 @@ def get_profiler(enabled=True):
     global _profiler
     if _profiler is None:
         _profiler = Profiler(enabled=enabled)
-    if _profiler.enabled != enabled:
+    elif _profiler.enabled != enabled:
+        # Reset stale data when changing enabled state to avoid corruption
+        _profiler.reset()
         _profiler.enabled = enabled
     return _profiler
 
