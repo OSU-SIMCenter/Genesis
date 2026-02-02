@@ -274,6 +274,9 @@ async def main():
     shared_state.robot.get_resistance_forces()
     shared_state.robot.set_control_mode("TELEPORT")
     await shared_state.reset_simulation()
+    
+    # Reset profiler after warmup so only actual operation is profiled
+    env.scene.profiling_options.profiler.reset()
 
     gs.logger.info("Server ready on port 8765")
     handler = functools.partial(handle_client, state=shared_state)
