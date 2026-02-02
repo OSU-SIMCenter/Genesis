@@ -350,11 +350,31 @@ class Profiler:
         if items:
             max_val = value_getter(items[0])
 
+        # Separate items above and below cutoff, plus build "Others" aggregate
+        above_cutoff = []
+        others = self._AggNode("(Others)")
+        others_count = 0
+        
         for node in items:
             val = value_getter(node)
             pct = (val / total_time * 100) if total_time > 0 else 0
             
-            if pct < min_pct: continue
+            if pct >= min_pct:
+                above_cutoff.append(node)
+            else:
+                others.total += node.total
+                others.self_time += node.self_time
+                others.count += node.count
+                others_count += 1
+        
+        # Finalize "Others" name with count
+        if others_count > 0:
+            others_pct = (others.total / total_time * 100) if total_time > 0 else 0
+            others.name = f"(Others: {others_count} items, {others_pct:.1f}%)"
+        
+        for node in above_cutoff:
+            val = value_getter(node)
+            pct = (val / total_time * 100) if total_time > 0 else 0
             
             # Simple ASCII bar
             bar_len = 25
@@ -378,6 +398,22 @@ class Profiler:
             else:
                  print(f"{node.name:<30} {node.count:>7} "
                       f"{node.total*1000:>9.1f}ms {pct:>7.1f}%   {bar_str}")
+        
+        # Print "Others" at the bottom if there are any
+        if others_count > 0:
+            others_pct = (others.total / total_time * 100) if total_time > 0 else 0
+            bar_len = 25
+            filled = int(others_pct / 100 * bar_len)
+            bar_str = "█" * filled + "░" * (bar_len - filled)
+            
+            if use_rich:
+                console.print(f"[dim]{others.name:<30} {others.count:>7} "
+                      f"{others.total*1000:>9.1f}ms {others_pct:>7.1f}%   {bar_str}[/]", 
+                      highlight=False)
+            else:
+                print(f"{others.name:<30} {others.count:>7} "
+                      f"{others.total*1000:>9.1f}ms {others_pct:>7.1f}%   {bar_str}")
+        
         print("---------------------------------------------------------------------------------------------------------\n")
 
     def print_tree(self, min_pct=0.0):
