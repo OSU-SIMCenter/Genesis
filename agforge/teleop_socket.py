@@ -247,6 +247,11 @@ async def main():
     print("Building simulation environment...")
     cfg = TeleopOptions()
     cfg.general.show_viewer = True
+    
+    # Enable MPM grid/boundary visualization
+    cfg.vis.visualize_mpm_boundary = True
+    cfg.vis.visualize_mpm_grid = True
+    
     env = build_env(cfg)
     
     # Instantiate the new controller

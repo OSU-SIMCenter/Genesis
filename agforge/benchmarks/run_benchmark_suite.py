@@ -69,6 +69,11 @@ async def run_benchmark():
         cfg.general.show_viewer = args.visualize
         cfg.profiling.enabled = True
         
+        # Enable MPM grid/boundary visualization when viewer is active
+        if args.visualize:
+            cfg.vis.visualize_mpm_boundary = True
+            cfg.vis.visualize_mpm_grid = True
+        
         # Force enable granular profiling
         cfg.profiling.configs.scene.step.sim = True
         cfg.profiling.configs.scene.step.visualizer = True
