@@ -61,6 +61,11 @@ class SurfaceReconstructor:
         self._cached_particles = None
         self._cached_frame = -1
         
+        # Logging limiter
+        self._last_log_time = 0.0
+        self._cached_particles = None
+        self._cached_frame = -1
+        
         # FIX #1: Global frame counter that always increments
         self._global_frame = 0
         
@@ -154,6 +159,38 @@ class SurfaceReconstructor:
     def get_mesh_data(self):
         """Returns the current mesh and its vertices/faces."""
         return self.reconstructed_mesh
+
+    def _compute_mesh_quality(self):
+        """
+        Computes the average 'Aspect Ratio' (squared) of triangles.
+        Ideal (Equilateral) = 1.0. 
+        Stretched/Sliver >> 1.0.
+        """
+        if self.reconstructed_mesh is None or len(self.reconstructed_mesh.vertices) == 0:
+            return 0.0
+
+        # Get vertices for each face: Shape (F, 3, 3)
+        # Note: self.reconstructed_mesh.vertices is numpy array
+        tris = self.reconstructed_mesh.vertices[self.reconstructed_mesh.faces]
+        
+        # Compute edge vectors
+        e1 = tris[:, 1] - tris[:, 0]
+        e2 = tris[:, 2] - tris[:, 1]
+        e3 = tris[:, 0] - tris[:, 2]
+        
+        # Compute squared edge lengths
+        L1_sq = np.sum(e1**2, axis=1)
+        L2_sq = np.sum(e2**2, axis=1)
+        L3_sq = np.sum(e3**2, axis=1)
+        
+        # Metric: Ratio of Longest Edge squared to Shortest Edge squared
+        max_sq = np.maximum(np.maximum(L1_sq, L2_sq), L3_sq)
+        min_sq = np.maximum(np.minimum(np.minimum(L1_sq, L2_sq), L3_sq), 1e-8)
+        
+        aspect_ratio_sq = max_sq / min_sq
+        avg_quality = np.mean(aspect_ratio_sq)
+        
+        return avg_quality
 
     def update(self, should_reconstruct: bool):
         """
@@ -390,11 +427,6 @@ class SurfaceReconstructor:
             gs.logger.warning(f"Failed to build smoothing matrix: {e}")
             self.smoothing_matrix = None
 
-            
-        except Exception as e:
-            gs.logger.warning(f"Failed to build smoothing matrix: {e}")
-            self.smoothing_matrix = None
-
     def update_skinning(self):
         """Updates mesh vertices based on current particle positions."""
         if not self.skinning_enabled:
@@ -420,49 +452,64 @@ class SurfaceReconstructor:
             return
 
         try:
-            # 1. Gather neighbor positions
-            neighbors = parts_current[self.bind_indices]
+            # --- 1. STANDARD SKINNING (The "Reset") ---
+            # Gather neighbor positions
+            neighbors = parts_current[self.bind_indices] # (V, k, 3)
             
-            # 2. Add offsets
-            estimated_pos = neighbors + self.bind_offsets
+            # Apply offsets (Target positions per neighbor)
+            target_pos = neighbors + self.bind_offsets
             
-            # 3. Weighted Average (Skinned Position)
-            new_verts = (estimated_pos * self.bind_weights.unsqueeze(-1)).sum(dim=1)
+            # Weighted Sum to get vertex position
+            # new_verts shape: (V, 3)
+            new_verts = (target_pos * self.bind_weights.unsqueeze(-1)).sum(dim=1)
             
-            # 4. Tangential Laplacian Smoothing
-            # Goal: Improve triangle quality without shrinking volume.
-            # Strategy: Project smoothing force onto tangent plane defined by particle surface normal.
+            # --- 2. TAUBIN SMOOTHING (The "Anti-Bump" Filter) ---
             if self.smoothing_matrix is not None:
-                # Compute center of bound particles (Stable anchor for normal estimation)
-                # This represents the "core" volume that the vertex is skinning off of.
-                particle_centers = (neighbors * self.bind_weights.unsqueeze(-1)).sum(dim=1)
+                # Tuned parameters for volume preservation
+                lamb, mu = 0.5, -0.53
                 
-                # Approximate Surface Normal: Direction from particle center to vertex
-                # This is a robust estimate for convex/semi-convex fluid surfaces.
-                # normal = normalize(new_verts - particle_centers)
-                # Note: normalize() needs small epsilon to avoid NaN on locally 0-thickness events
-                surf_normals = new_verts - particle_centers
-                norm_len = torch.norm(surf_normals, dim=1, keepdim=True).clamp(min=1e-6)
-                surf_normals = surf_normals / norm_len
-                
-                for _ in range(3): # 3 Iterations
-                    # Standard Laplacian Centroid
+                # Run 1 pass per frame. 
+                # Since we update offsets now (Plasticity), 1 pass is sufficient and stable.
+                for _ in range(1):
+                    # Shrink Step
                     if self._use_dense_smoothing:
-                        centroids = self.smoothing_matrix @ new_verts
+                        smoothed = self.smoothing_matrix @ new_verts
                     else:
-                        centroids = torch.sparse.mm(self.smoothing_matrix, new_verts)
+                        smoothed = torch.sparse.mm(self.smoothing_matrix, new_verts)
+                    laplacian = (smoothed - new_verts) * 2.0 # Extract Laplacian from matrix (lambda=0.5)
+                    temp_verts = new_verts + laplacian * lamb
                     
-                    # Smoothing Force
-                    smooth_vec = centroids - new_verts
-                    
-                    # Project out the Normal component (Preserve Volume)
-                    # dot(smooth_vec, normal) * normal
-                    normal_comp = (smooth_vec * surf_normals).sum(dim=1, keepdim=True) * surf_normals
-                    tangential_force = smooth_vec - normal_comp
-                    
-                    # Apply only Tangential component
-                    new_verts = new_verts + tangential_force
+                    # Expand Step
+                    if self._use_dense_smoothing:
+                        smoothed_temp = self.smoothing_matrix @ temp_verts
+                    else:
+                        smoothed_temp = torch.sparse.mm(self.smoothing_matrix, temp_verts)
+                    laplacian_temp = (smoothed_temp - temp_verts) * 2.0
+                    new_verts = temp_verts + laplacian_temp * mu
+
+            # --- 3. PLASTICITY UPDATE (The "Fix") ---
+            # Update the bind_offsets to match the new, smoothed vertex positions.
+            # This allows the mesh to "relax" into the new shape permanently.
             
+            # Rate of plasticity (0.0 = Elastic/Snap Back, 1.0 = Fully Plastic/Liquid)
+            # 0.1 is a good "viscous" value. 
+            plasticity_rate = 0.1
+            
+            current_offsets = self.bind_offsets
+            # Calculate where the offset SHOULD be to match the smoothed vertex
+            # ideal_offsets shape: (V, k, 3)
+            ideal_offsets = new_verts.unsqueeze(1) - neighbors
+            
+            # Blend current offsets toward ideal offsets
+            self.bind_offsets = torch.lerp(current_offsets, ideal_offsets, plasticity_rate)
+
+            # --- 4. LOGGING ---
+            current_time = time.time()
+            if current_time - self._last_log_time >= 0.5:
+                 quality = self._compute_mesh_quality()
+                 gs.logger.info(f"Frame={self._global_frame}: Quality={quality:.2f}")
+                 self._last_log_time = current_time
+
             # 5. Update mesh
             self.reconstructed_mesh.vertices = new_verts.cpu().numpy()
             
