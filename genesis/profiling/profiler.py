@@ -246,22 +246,23 @@ class Profiler:
             
         return kept
 
-    def print(self, show_stats=True):
+    def print(self, show_stats=True, min_pct=0.0):
         """
         Backward compatible print. Prefers rich_table if available.
+        min_pct: Minimum absolute percentage to display a section (filters noise).
         """
         if not self.enabled: return
         self.stop()
         
         try:
             import rich
-            self.rich_table()
+            self.rich_table(min_pct=min_pct)
             return
         except ImportError:
             pass
             
         # Fallback
-        self.print_flat(sort_by="total")
+        self.print_flat(sort_by="total", min_pct=min_pct)
 
     def _get_console(self):
         try:
@@ -509,12 +510,11 @@ class Profiler:
             # 1. Absolute Cumulative Unprofiled
             abs_cum_unprof_pct = (node.recursive_unprofiled / total_time * 100) if total_time > 0 else 0.0
             
-            # 2. Relative Local Unprofiled (Hide for leaves)
+            # 2. Relative Local Unprofiled (Hide for leaves since they're 100% self)
             rel_unprof_str = "-"
             if node.children and node.total > 0:
-                 rel_unprof_pct = (node.self_time / node.total) * 100
-                 if rel_unprof_pct > 1.0:
-                     rel_unprof_str = f"{rel_unprof_pct:.1f}%"
+                rel_unprof_pct = (node.self_time / node.total) * 100
+                rel_unprof_str = f"{rel_unprof_pct:.1f}%"
 
             # Apply color to all columns
             table.add_row(

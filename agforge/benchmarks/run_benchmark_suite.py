@@ -185,12 +185,12 @@ async def run_benchmark():
                 profiler.rich_table(min_pct=0.0)
                 
                 # Detailed Profiler Output (ASCII Tree)
-                print("\n    --- Detailed Profiling Hierarchy (ASCII Tree - Full) ---")
-                profiler.print_tree(min_pct=0.0)
+                print("\n    --- Detailed Profiling Hierarchy (ASCII Tree - >2%) ---")
+                profiler.print_tree(min_pct=2.0)
                 
                 # Detailed Profiler Output (Flat Hot Spots)
-                print("\n    --- Profiling Hot-Spots (Flat - Sorted by Self Time) ---")
-                profiler.print_flat(sort_by="self", min_pct=0.0)
+                print("\n    --- Profiling Hot-Spots (Flat - >1.5%) ---")
+                profiler.print_flat(sort_by="self", min_pct=1.5)
                 print("    --------------------------------\n")
 
                 # Collect Metrics
