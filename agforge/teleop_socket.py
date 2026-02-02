@@ -301,7 +301,16 @@ async def main():
              except asyncio.CancelledError:
                  pass
              gs.logger.info("Shutdown complete")
-             shared_state.env.scene.profiling_options.profiler.print()
+             
+             # Print all profiler visualizations if enabled
+             if cfg.print_profiling_on_exit:
+                 profiler = shared_state.env.scene.profiling_options.profiler
+                 print("\n--- Detailed Profiling Stats (Rich Table - Full) ---")
+                 profiler.rich_table(min_pct=0.0)
+                 print("\n--- Detailed Profiling Hierarchy (ASCII Tree - >2%) ---")
+                 profiler.print_tree(min_pct=2.0)
+                 print("\n--- Profiling Hot-Spots (Flat - >1.5%) ---")
+                 profiler.print_flat(sort_by="self", min_pct=1.5)
 
 if __name__ == "__main__":
     asyncio.run(main())

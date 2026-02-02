@@ -277,6 +277,7 @@ class TeleopOptions(AgilityForgeOptions):
     """Aggregated configuration for teleoperation."""
     strike: StrikeOptions = StrikeOptions()
     adaptive_control: AdaptiveControlConfig = AdaptiveControlConfig()
+    print_profiling_on_exit: bool = True  # Print profiler visualizations on shutdown
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002
