@@ -64,8 +64,11 @@ class SurfaceReconstructor:
         # FIX #1: Global frame counter that always increments
         self._global_frame = 0
         
-        # Rebind check interval
-        self._rebind_check_interval = 30
+        # Rebind check interval (was 30)
+        self._rebind_check_interval = 10
+        
+        # Level 2: Movement limiting - track previous vertex positions
+        self._prev_verts = None
 
     def get_state(self):
         """Returns a snapshot of the current mesh and skinning state (for checkpoints)."""
@@ -244,7 +247,7 @@ class SurfaceReconstructor:
             
             # Compute mean drift
             drift = torch.norm(sample_verts - bound_pos, dim=1).mean().item()
-            threshold = self._cached_particle_radius * 15  # Allow 15x radius drift
+            threshold = self._cached_particle_radius * 8  # Tighter threshold (was 15)
             
             return drift > threshold
             
@@ -295,7 +298,7 @@ class SurfaceReconstructor:
             nn_dists = sample_dists.min(dim=1).values
             mean_spacing = nn_dists.mean().item()
             
-            sigma = mean_spacing * 1.5
+            sigma = mean_spacing * 1.0  # Level 1 tuning: tighter binding (was 1.5)
             gs.logger.info(f"Auto-computed sigma: {sigma:.6f} (mean spacing: {mean_spacing:.6f})")
         else:
             sigma = 0.01
@@ -387,6 +390,11 @@ class SurfaceReconstructor:
             gs.logger.warning(f"Failed to build smoothing matrix: {e}")
             self.smoothing_matrix = None
 
+            
+        except Exception as e:
+            gs.logger.warning(f"Failed to build smoothing matrix: {e}")
+            self.smoothing_matrix = None
+
     def update_skinning(self):
         """Updates mesh vertices based on current particle positions."""
         if not self.skinning_enabled:
@@ -418,17 +426,42 @@ class SurfaceReconstructor:
             # 2. Add offsets
             estimated_pos = neighbors + self.bind_offsets
             
-            # 3. Weighted Average
+            # 3. Weighted Average (Skinned Position)
             new_verts = (estimated_pos * self.bind_weights.unsqueeze(-1)).sum(dim=1)
             
-            # 4. GPU Smoothing (3 iterations)
-            # FIX #6: Use dense or sparse based on what's available
+            # 4. Tangential Laplacian Smoothing
+            # Goal: Improve triangle quality without shrinking volume.
+            # Strategy: Project smoothing force onto tangent plane defined by particle surface normal.
             if self.smoothing_matrix is not None:
-                for _ in range(3):
+                # Compute center of bound particles (Stable anchor for normal estimation)
+                # This represents the "core" volume that the vertex is skinning off of.
+                particle_centers = (neighbors * self.bind_weights.unsqueeze(-1)).sum(dim=1)
+                
+                # Approximate Surface Normal: Direction from particle center to vertex
+                # This is a robust estimate for convex/semi-convex fluid surfaces.
+                # normal = normalize(new_verts - particle_centers)
+                # Note: normalize() needs small epsilon to avoid NaN on locally 0-thickness events
+                surf_normals = new_verts - particle_centers
+                norm_len = torch.norm(surf_normals, dim=1, keepdim=True).clamp(min=1e-6)
+                surf_normals = surf_normals / norm_len
+                
+                for _ in range(3): # 3 Iterations
+                    # Standard Laplacian Centroid
                     if self._use_dense_smoothing:
-                        new_verts = self.smoothing_matrix @ new_verts
+                        centroids = self.smoothing_matrix @ new_verts
                     else:
-                        new_verts = torch.sparse.mm(self.smoothing_matrix, new_verts)
+                        centroids = torch.sparse.mm(self.smoothing_matrix, new_verts)
+                    
+                    # Smoothing Force
+                    smooth_vec = centroids - new_verts
+                    
+                    # Project out the Normal component (Preserve Volume)
+                    # dot(smooth_vec, normal) * normal
+                    normal_comp = (smooth_vec * surf_normals).sum(dim=1, keepdim=True) * surf_normals
+                    tangential_force = smooth_vec - normal_comp
+                    
+                    # Apply only Tangential component
+                    new_verts = new_verts + tangential_force
             
             # 5. Update mesh
             self.reconstructed_mesh.vertices = new_verts.cpu().numpy()
