@@ -212,12 +212,22 @@ class SurfaceReconstructor:
                 return
 
             # FIX #7: Check if rebind needed periodically
-            if self._global_frame % self._rebind_check_interval == 0:
-                should_rebind = False
-                with profiler.time("recon_check_rebind"):
-                    should_rebind = self._should_rebind()
+            # STRATEGY: "Periodic Rebind" (Safe Mode)
+            # Since we removed plastic "flow", we must rebind frequently to avoid stretching.
+            # 1. Every 15 frames (approx 4Hz) guarantees fresh topology.
+            # 2. Immediately if Quality > 4.0 (Panic Reset).
+            if self._global_frame % 15 == 0:
+                should_rebind = True
+            elif self._global_frame % self._rebind_check_interval == 0:
+                 # Intermediate check for panic quality
+                 if self._compute_mesh_quality() > 4.0:
+                     should_rebind = True
+                 else:
+                     should_rebind = self._should_rebind()
+            else:
+                 should_rebind = False
 
-                if should_rebind:
+            if should_rebind:
                     gs.logger.info("Large drift detected, rebinding mesh to particles...")
                     with profiler.time("recon_rebind"):
                         with profiler.time("recon_mesh"):
@@ -321,7 +331,8 @@ class SurfaceReconstructor:
             parts_tensor = torch.tensor(particles, dtype=torch.float32, device=self.device)
 
         # k-NN parameters
-        k = 4
+        # [cite_start]KEEP: 6 is a good balance between smoothness and detail [cite: 8]
+        k = 6
         
         # Auto-compute sigma relative to particle spacing
         if len(parts_tensor) > 1:
@@ -335,7 +346,8 @@ class SurfaceReconstructor:
             nn_dists = sample_dists.min(dim=1).values
             mean_spacing = nn_dists.mean().item()
             
-            sigma = mean_spacing * 1.0  # Level 1 tuning: tighter binding (was 1.5)
+            # [cite_start]KEEP: 1.2 is tighter than 1.5, reducing the "webbing" effect [cite: 10]
+            sigma = mean_spacing * 1.2
             gs.logger.info(f"Auto-computed sigma: {sigma:.6f} (mean spacing: {mean_spacing:.6f})")
         else:
             sigma = 0.01
@@ -466,11 +478,12 @@ class SurfaceReconstructor:
             # --- 2. TAUBIN SMOOTHING (The "Anti-Bump" Filter) ---
             if self.smoothing_matrix is not None:
                 # Tuned parameters for volume preservation
+                # RESTORED: mu = -0.53.
+                # -0.51 caused shrinking. We need -0.53 to maintain volume.
                 lamb, mu = 0.5, -0.53
                 
-                # Run 1 pass per frame. 
-                # Since we update offsets now (Plasticity), 1 pass is sufficient and stable.
-                for _ in range(1):
+                # Run 2 passes per frame. 5 was overkill for static skinning.
+                for _ in range(2):
                     # Shrink Step
                     if self._use_dense_smoothing:
                         smoothed = self.smoothing_matrix @ new_verts
@@ -487,30 +500,14 @@ class SurfaceReconstructor:
                     laplacian_temp = (smoothed_temp - temp_verts) * 2.0
                     new_verts = temp_verts + laplacian_temp * mu
 
-            # --- 3. PLASTICITY UPDATE (The "Fix") ---
-            # Update the bind_offsets to match the new, smoothed vertex positions.
-            # This allows the mesh to "relax" into the new shape permanently.
-            
-            # Rate of plasticity (0.0 = Elastic/Snap Back, 1.0 = Fully Plastic/Liquid)
-            # 0.1 is a good "viscous" value. 
-            plasticity_rate = 0.1
-            
-            current_offsets = self.bind_offsets
-            # Calculate where the offset SHOULD be to match the smoothed vertex
-            # ideal_offsets shape: (V, k, 3)
-            ideal_offsets = new_verts.unsqueeze(1) - neighbors
-            
-            # Blend current offsets toward ideal offsets
-            self.bind_offsets = torch.lerp(current_offsets, ideal_offsets, plasticity_rate)
-
-            # --- 4. LOGGING ---
+            # --- 3. LOGGING ---
             current_time = time.time()
             if current_time - self._last_log_time >= 0.5:
                  quality = self._compute_mesh_quality()
                  gs.logger.info(f"Frame={self._global_frame}: Quality={quality:.2f}")
                  self._last_log_time = current_time
 
-            # 5. Update mesh
+            # 4. Update mesh
             self.reconstructed_mesh.vertices = new_verts.cpu().numpy()
             
         except Exception as e:
