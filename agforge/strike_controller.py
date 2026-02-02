@@ -291,7 +291,18 @@ class StrikeController:
                         gs.logger.info(f"Strike -> IDLE (Stabilizing for {self.stabilization_steps} steps)")
                         gs.logger.info(f"  Summary: total_time={total_duration:.2f}s, steps={self.strike_step_count}, final_width={final_width:.4f}")
                         
+                        # Full reconstruction after strike to fix skinning drift
+                        recon_start = time.time()
+                        self.reconstructor.create_reconstructed_mesh()
+                        self.reconstructor.init_skinning()
+                        recon_time = (time.time() - recon_start) * 1000
+                        gs.logger.info(f"  Post-strike reconstruction: {recon_time:.1f}ms")
+                        
+                        # Save checkpoint AFTER reconstruction so undo gets clean mesh
                         await self.save_checkpoint()
+                        
+                        # Flag to ensure updated mesh is sent to client
+                        self.pending_mesh_send = True
                         return
 
             # --- HOLDING STAGE ---
