@@ -453,33 +453,31 @@ class SurfaceReconstructor:
              else:
                 pass # Force fetch for raw particles
 
-        solver = self.env.scene.sim.mpm_solver
-        ti.sync()
-        
         try:
-            if hasattr(solver.particles_render.pos, 'to_numpy'):
-                particles = solver.particles_render.pos.to_numpy()[:, 0]
-            else:
-                particles = ti_to_numpy(solver.particles_render.pos)[:, 0]
+            # OPTIMIZATION: Use mpm_entity.get_particles_pos() instead of particles_render
+            # This reads directly from simulation state (no visualizer dependency) and
+            # returns a torch tensor on GPU, avoiding CPU round-trip.
+            mpm_entity = self.env.mpm_entity
             
-            offset = self.env.scene.envs_offset[0]
-            if hasattr(offset, 'cpu'):
-                offset = offset.cpu().numpy()
-            elif hasattr(offset, 'numpy'):
-                offset = offset.numpy()
-            particles = particles + offset
+            # get_particles_pos returns torch tensor on GPU: shape [n_particles, 3]
+            particles_gpu = mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
             
-            if hasattr(solver.particles_render.active, 'to_numpy'):
-                active = solver.particles_render.active.to_numpy()[:, 0].astype(bool)
-            else:
-                active = ti_to_numpy(solver.particles_render.active)[:, 0].astype(bool)
-            particles = particles[active]
+            # Get active mask (still need to check which particles are active)
+            particles_active = mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
             
-            # Apply subsampling if indices are set
+            # Filter to active particles only (stay on GPU)
+            particles_gpu = particles_gpu[particles_active]
+            
+            # Apply subsampling if indices are set (stay on GPU)
             if apply_subsampling and self.main_particle_indices is not None and len(self.main_particle_indices) > 0:
                 # FIX #5: Properly handle particle count change
-                if np.max(self.main_particle_indices) < len(particles):
-                    particles = particles[self.main_particle_indices]
+                if np.max(self.main_particle_indices) < len(particles_gpu):
+                    # Convert indices to torch tensor for GPU indexing
+                    if not isinstance(self.main_particle_indices, torch.Tensor):
+                        indices_gpu = torch.from_numpy(self.main_particle_indices).to(particles_gpu.device)
+                    else:
+                        indices_gpu = self.main_particle_indices.to(particles_gpu.device)
+                    particles_gpu = particles_gpu[indices_gpu]
                 else:
                     gs.logger.warning(
                         "Particle count changed! Invalidating cached indices and skinning."
@@ -489,6 +487,9 @@ class SurfaceReconstructor:
                     self._invalidate_skinning()
                     # Return None to force reinitialization
                     return None
+            
+            # Convert to numpy for downstream compatibility (skinning still needs numpy for some ops)
+            particles = particles_gpu.cpu().numpy()
             
             # Update cache ONLY if we are doing the standard subsampled fetch
             if apply_subsampling:
