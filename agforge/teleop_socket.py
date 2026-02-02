@@ -75,6 +75,9 @@ async def simulation_loop(websocket, state: StrikeController):
     """Runs the simulation and sends state updates to the client."""
     gs.logger.debug("Simulation loop started")
     
+    last_idle_time = 0
+    IDLE_UPDATE_INTERVAL = 1.0 / 10.0  # Cap idle updates to 10Hz (~3-5s for full smoothing)
+    
     try:
         while True:
             # Determine if we need to step physics
@@ -88,7 +91,19 @@ async def simulation_loop(websocket, state: StrikeController):
             pending_send = getattr(state, 'pending_mesh_send', False)
             
             should_step = is_active or needs_stabilization or has_input
-            should_send = should_step or pending_send
+            
+            # Feature: Continuous smoothing even when idle
+            should_smooth_idle = not should_step
+            
+            # Rate limit idle smoothing to avoid blocking inputs or spamming logs
+            if should_smooth_idle:
+                 if time.time() - last_idle_time < IDLE_UPDATE_INTERVAL:
+                     # Too fast, sleep and check again (allows unexpected inputs to interrupt)
+                     await asyncio.sleep(0.001)
+                     continue
+                 last_idle_time = time.time()
+            
+            should_send = should_step or should_smooth_idle or pending_send
             
             if not should_send:
                 await asyncio.sleep(0.001)
@@ -99,6 +114,10 @@ async def simulation_loop(websocket, state: StrikeController):
                 # 1. atomic step (Logic + Physics + Render) - only if needed
                 if should_step:
                     await state.step_simulation()
+                elif should_smooth_idle:
+                    # Run ONLY reconstruction smoothing (no physics step)
+                    with state._profile("idle_smoothing"):
+                         state.reconstructor.update(should_reconstruct=False)
                 
                 # 2. Reconstruction & IO (always send when should_send is True)
                 # Note: state.env.scene.profiling_options is accessible
@@ -246,7 +265,7 @@ async def main():
     
     print("Building simulation environment...")
     cfg = TeleopOptions()
-    cfg.general.show_viewer = True
+    cfg.general.show_viewer = False
     
     # Enable MPM grid/boundary visualization
     cfg.vis.visualize_mpm_boundary = True
