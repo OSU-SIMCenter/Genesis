@@ -439,7 +439,14 @@ class StrikeController:
 
             with self._profile("teleop_recon_transform"):
                 points = self._apply_transformation(particles)
-                vertices = self._apply_transformation(self.reconstructor.reconstructed_mesh.vertices)
+                
+                # OPTIMIZATION: Use GPU tensor for vertices if available
+                if hasattr(self.reconstructor, 'reconstructed_vertices_tensor') and self.reconstructor.reconstructed_vertices_tensor is not None:
+                     vertices_raw = self.reconstructor.reconstructed_vertices_tensor
+                else:
+                     vertices_raw = self.reconstructor.reconstructed_mesh.vertices
+                     
+                vertices = self._apply_transformation(vertices_raw)
             
             triangles = self.reconstructor.reconstructed_mesh.faces
             

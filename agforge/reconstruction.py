@@ -440,14 +440,14 @@ class SurfaceReconstructor:
         if not self.skinning_enabled:
             return
 
-        particles = self._get_active_particles()
-        if particles is None or len(particles) == 0:
+        # OPTIMIZATION: Keep on GPU
+        parts_current = self._get_active_particles(as_tensor=True)
+        if parts_current is None or len(parts_current) == 0:
             return
             
-        if isinstance(particles, np.ndarray):
-            parts_current = torch.from_numpy(particles).float().to(self.device)
-        else:
-            parts_current = torch.tensor(particles, dtype=torch.float32, device=self.device)
+        # Ensure it is a tensor (it should be)
+        if not isinstance(parts_current, torch.Tensor):
+             parts_current = torch.tensor(parts_current, dtype=torch.float32, device=self.device)
 
         # Validate particle count matches binding
         expected_count = self.bind_indices.max().item() + 1
@@ -504,31 +504,45 @@ class SurfaceReconstructor:
                  self._last_log_time = current_time
 
             # 4. Update mesh
-            new_verts_np = new_verts.cpu().numpy()
-            if len(new_verts_np) != len(self.reconstructed_mesh.vertices):
-                gs.logger.error(f"Skinning size mismatch: calculated {len(new_verts_np)}, mesh has {len(self.reconstructed_mesh.vertices)}. Forcing rebind.")
-                self._invalidate_skinning()
-                return
+            self.reconstructed_vertices_tensor = new_verts
+            
+            # Optional: Keep numpy mesh updated only if visualizer is active
+            if self.env.scene.visualizer is not None:
+                # Convert to numpy for Visualizer (CPU-bound)
+                new_verts_np = new_verts.cpu().numpy()
+                
+                if len(new_verts_np) != len(self.reconstructed_mesh.vertices):
+                    gs.logger.error(f"Skinning size mismatch: calculated {len(new_verts_np)}, mesh has {len(self.reconstructed_mesh.vertices)}. Forcing rebind.")
+                    self._invalidate_skinning()
+                    return
 
-            self.reconstructed_mesh.vertices = new_verts_np
+                self.reconstructed_mesh.vertices = new_verts_np
             
         except Exception as e:
             gs.logger.error(f"Skinning update failed: {e}")
             self._invalidate_skinning()
 
-    def _get_active_particles(self, use_cache: bool = True, apply_subsampling: bool = True):
-        """Helper to fetch particles with consistent logic and caching."""
+    def _get_active_particles(self, use_cache: bool = True, apply_subsampling: bool = True, as_tensor: bool = False):
+        """Helper to fetch particles with consistent logic and caching.
+           as_tensor: If True, returns torch.Tensor on device. If False, returns numpy array (CPU).
+        """
         # FIX #1: Use global frame counter
         current_frame = self._global_frame
         
         # Cache check
         if use_cache and self._cached_frame == current_frame and self._cached_particles is not None:
              # If cached particles are already subsampled, we return them.
-             # If we need RAW particles but cache has SUBSAMPLED, we must re-fetch.
              # Current design: cache stores SUBSAMPLED particles (ready for skinning/rendering).
-             # So if apply_subsampling=False, we cannot use the Default Cache safely if it's already subsampled.
              if apply_subsampling:
-                return self._cached_particles
+                cached = self._cached_particles
+                if as_tensor:
+                    if isinstance(cached, np.ndarray):
+                        return torch.from_numpy(cached).to(self.device)
+                    return cached
+                else:
+                    if isinstance(cached, torch.Tensor):
+                        return cached.cpu().numpy()
+                    return cached
              else:
                 pass # Force fetch for raw particles
 
@@ -551,31 +565,39 @@ class SurfaceReconstructor:
             if apply_subsampling and self.main_particle_indices is not None and len(self.main_particle_indices) > 0:
                 # FIX #5: Properly handle particle count change
                 if np.max(self.main_particle_indices) < len(particles_gpu):
-                    # Convert indices to torch tensor for GPU indexing
-                    if not isinstance(self.main_particle_indices, torch.Tensor):
-                        indices_gpu = torch.from_numpy(self.main_particle_indices).to(particles_gpu.device)
-                    else:
-                        indices_gpu = self.main_particle_indices.to(particles_gpu.device)
+                    # Cache indices as tensor to avoid CPU->GPU copy every frame
+                    if not hasattr(self, '_main_particle_indices_tensor') or self._main_particle_indices_tensor is None:
+                         if isinstance(self.main_particle_indices, torch.Tensor):
+                             self._main_particle_indices_tensor = self.main_particle_indices.to(particles_gpu.device)
+                         else:
+                             self._main_particle_indices_tensor = torch.from_numpy(self.main_particle_indices).to(particles_gpu.device)
+
+                    indices_gpu = self._main_particle_indices_tensor
                     particles_gpu = particles_gpu[indices_gpu]
                 else:
                     gs.logger.warning(
                         "Particle count changed! Invalidating cached indices and skinning."
                     )
                     self.main_particle_indices = None
+                    self._main_particle_indices_tensor = None
                     self.last_total_particles = 0
                     self._invalidate_skinning()
                     # Return None to force reinitialization
                     return None
             
-            # Convert to numpy for downstream compatibility (skinning still needs numpy for some ops)
-            particles = particles_gpu.cpu().numpy()
-            
-            # Update cache ONLY if we are doing the standard subsampled fetch
+            # Update cache with TENSOR (Avoid CPU Sync)
             if apply_subsampling:
-                self._cached_particles = particles
+                self._cached_particles = particles_gpu
                 self._cached_frame = current_frame
             
-            return particles
+            if as_tensor:
+                return particles_gpu
+            else:
+                return particles_gpu.cpu().numpy()
+
+        except Exception as e:
+            gs.logger.error(f"Failed to get particles: {e}")
+            return None
 
         except Exception as e:
             gs.logger.error(f"Failed to get particles: {e}")
