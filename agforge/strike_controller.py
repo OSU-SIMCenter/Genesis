@@ -147,11 +147,10 @@ class StrikeController:
                         self._stop_motors()
                         return
                 
-                with self._profile("logic_get_resistance"):
-                    # force_L, force_R are now TENSORS
-                    force_L, force_R = self.robot.get_resistance_forces()
-                
-                with self._profile("logic_update_state"):
+                    with self._profile("logic_get_resistance"):
+                        # force_L, force_R are now TENSORS
+                        force_L, force_R = self.robot.get_resistance_forces()
+                    
                     # Batch contact check sync: Combine predicates
                     # We need to know specific contacts to set velocity
                     # contacts = [L_hit, R_hit]
@@ -176,10 +175,9 @@ class StrikeController:
                     self._vel_cmd[2] = 0.0 if self.contact_L else approach_speed
                     self._vel_cmd[3] = 0.0 if self.contact_R else approach_speed
                 
-                with self._profile("logic_apply_vel"):
-                    self._apply_vel_smart()
+                    with self._profile("logic_apply_vel"):
+                        self._apply_vel_smart()
                 
-                with self._profile("logic_update_state"):
                     if self.contact_L and self.contact_R:
                         self.strike_state = StrikeState.PRESSING
                         self.stage_start_time = time.time()
@@ -201,10 +199,9 @@ class StrikeController:
                     pressing_timeout = self.env.cfg.strike.pressing_timeout
                     force_balance_gain = self.env.cfg.strike.force_balance_gain
 
-                with self._profile("logic_get_resistance"):
-                    force_L, force_R = self.robot.get_resistance_forces()
+                    with self._profile("logic_get_resistance"):
+                        force_L, force_R = self.robot.get_resistance_forces()
                 
-                with self._profile("logic_update_state"):
                     pos_L = self.robot.left_gripper.get_pos()
                     pos_R = self.robot.right_gripper.get_pos()
                     # GPU calculation
