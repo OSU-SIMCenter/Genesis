@@ -212,6 +212,8 @@ class StrikeController:
                     
                     if self.contact_width > 1e-6:
                          # contact_width_tensor saved in transition
+                         # Use GPU tensor for reference width to avoid hybrid ops if possible, 
+                         # though contact_width_tensor is already a 0-dim tensor.
                         current_strain_tensor = (self.contact_width_tensor - current_width_tensor) / self.contact_width_tensor
                     else:
                         current_strain_tensor = torch.tensor(0.0, device=self.env.device)
