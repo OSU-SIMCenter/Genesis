@@ -212,14 +212,10 @@ class SurfaceReconstructor:
                 return
 
             # FIX #7: Check if rebind needed periodically
-            # STRATEGY: "Periodic Rebind" (Safe Mode)
-            # Since we removed plastic "flow", we must rebind frequently to avoid stretching.
-            # 1. Every 15 frames (approx 4Hz) guarantees fresh topology.
-            # 2. Immediately if Quality > 4.0 (Panic Reset).
-            if self._global_frame % 15 == 0:
-                should_rebind = True
-            elif self._global_frame % self._rebind_check_interval == 0:
-                 # Intermediate check for panic quality
+            # STRATEGY: Drift-based Rebind (Optimized)
+            # We rely on drift metric or panic quality check.
+            if self._global_frame % self._rebind_check_interval == 0:
+                 # Intermediate check for panic quality (spaghetti prevention)
                  if self._compute_mesh_quality() > 4.0:
                      should_rebind = True
                  else:
