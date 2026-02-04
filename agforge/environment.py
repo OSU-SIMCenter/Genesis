@@ -167,7 +167,7 @@ class AgilityForgeManipulator:
         Positive value means resistance (pushing back against squeeze).
         
         Returns:
-            tuple[float, float]: (Force_L, Force_R) resistance forces for each gripper
+            tuple[torch.Tensor, torch.Tensor]: (Force_L, Force_R) resistance forces for each gripper
         """
         # Get orientation of clamp_bar (parent of grippers)
         # quat is (n_envs, 4) or (4,)
@@ -197,9 +197,9 @@ class AgilityForgeManipulator:
         resist_L = -torch.sum(force_L * global_squeeze_L, dim=-1)
         resist_R = -torch.sum(force_R * global_squeeze_R, dim=-1)
         
-        # Return tuple of floats for single environment (compatibility with teleop_socket)
+        # Return tuple of tensors for single environment (compatibility with teleop_socket)
         # Assuming batch size 1 for teleop
-        return resist_L[0].item(), resist_R[0].item()
+        return resist_L[0], resist_R[0]
 
     @property
     def ee_pose(self) -> torch.Tensor:
@@ -274,7 +274,7 @@ class AgilityForgeEnv:
             surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
         )
         self.scene.add_entity(
-            morph=gs.morphs.Box(size=self.cfg.robot.target_shape_bounds[1] - self.cfg.robot.target_shape_bounds[0], pos=(self.cfg.robot.target_shape_bounds[0] + self.cfg.robot.target_shape_bounds[1]) / 2, fixed=True, collision=False),
+            morph=gs.morphs.Box(size=(self.cfg.robot.target_shape_bounds[1] - self.cfg.robot.target_shape_bounds[0]).cpu(), pos=((self.cfg.robot.target_shape_bounds[0] + self.cfg.robot.target_shape_bounds[1]) / 2).cpu(), fixed=True, collision=False),
             surface=gs.surfaces.Default(color=(1.0, 0.0, 0.0, 0.4)),
         )
 
