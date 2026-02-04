@@ -195,6 +195,7 @@ class AgilityForgeOptions(Options):
             dt=1.4e-6 * 8,
             substeps=8,
             gravity=(0, 0, 0),
+            check_bounds=not self.performance_mode,
         )
         self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt)
         self.mpm = MPMOptions(

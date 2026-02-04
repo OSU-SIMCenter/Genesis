@@ -48,6 +48,7 @@ class SimOptions(Options):
     gravity: Vec3FType = (0.0, 0.0, -9.81)
     floor_height: float = 0.0
     requires_grad: StrictBool = False
+    check_bounds: StrictBool = True
 
     _steps_local: int | None = PrivateAttr(default=None)
 
