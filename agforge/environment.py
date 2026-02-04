@@ -1,7 +1,8 @@
 import torch
-import os
-import sys
+import numpy as np
 import genesis as gs
+import sys
+import os
 from agforge.options import (
     AgilityForgeOptions,
     RobotOptions,
@@ -33,6 +34,11 @@ class AgilityForgeManipulator:
         self.ee_link = self.entity.get_link("clamp_bar")
         self.left_gripper = self.entity.get_link("left_gripper")
         self.right_gripper = self.entity.get_link("right_gripper")
+        
+        # Cache indices for fast access
+        self._left_gripper_link_idx = self.entity.get_link("left_gripper").idx
+        self._right_gripper_link_idx = self.entity.get_link("right_gripper").idx
+        self._coupler = None # Will cache on first access or setup
         
         # Calculate indices relative to the entity start for force lookup
         self.left_gripper_idx = self.left_gripper.idx - self.entity.link_start
@@ -113,8 +119,8 @@ class AgilityForgeManipulator:
         coupler = self.scene.sim.coupler
         if hasattr(coupler, 'link_coupling_forces'):
              # Get global indices
-             idx_L = self.entity.get_link("left_gripper").idx
-             idx_R = self.entity.get_link("right_gripper").idx
+             idx_L = self._left_gripper_link_idx
+             idx_R = self._right_gripper_link_idx
              
              # Optimization: Direct GPU access to Taichi field
              # shape: (n_links, n_envs, 3) or similar? 
