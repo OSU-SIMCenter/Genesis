@@ -111,34 +111,41 @@ class AgilityForgeManipulator:
         
         # Add MPM forces if available (from LegacyCoupler accumulator)
         coupler = self.scene.sim.coupler
-        if hasattr(coupler, 'get_link_coupling_forces'):
+        if hasattr(coupler, 'link_coupling_forces'):
              # Get global indices
              idx_L = self.entity.get_link("left_gripper").idx
              idx_R = self.entity.get_link("right_gripper").idx
              
-             # Fetch accumulated MPM coupling forces
-             mpm_L_np = coupler.get_link_coupling_forces(link_idx=idx_L, envs_idx=0)
-             mpm_R_np = coupler.get_link_coupling_forces(link_idx=idx_R, envs_idx=0)
+             # Optimization: Direct GPU access to Taichi field
+             # shape: (n_links, n_envs, 3) or similar? 
+             # Check legacy_coupler.py: shape=(rigid_solver.n_links_, sim._B)
+             # Wait, field is Vector(3). shape is (n_links, n_envs).
+             # .to_torch() will return shape (n_links, n_envs, 3)
              
-             if mpm_L_np is not None and mpm_R_np is not None:
-                 mpm_L = torch.tensor(mpm_L_np, device=self.device, dtype=torch.float32)
-                 mpm_R = torch.tensor(mpm_R_np, device=self.device, dtype=torch.float32)
+             # We want to avoid pulling the WHOLE field if possible, but to_torch usually pulls all.
+             # However, pulling ~100 links (tiny) on GPU is much faster than CPU sync.
+             
+             all_forces = coupler.link_coupling_forces.to_torch(device=self.device)
+             
+             # Select specific links for env 0
+             # (n_links, n_envs, 3) -> (n_links, 3) for env 0
+             forces_L = all_forces[idx_L, 0]
+             forces_R = all_forces[idx_R, 0]
+             
+             # Stack [L, R] -> (2, 3) -> unsqueeze -> (1, 2, 3)
+             mpm_stack = torch.stack([forces_L, forces_R]).unsqueeze(0)
+             
+             # Expand to match batch size if needed
+             if rigid_forces.shape[0] > 1:
+                  mpm_stack = mpm_stack.expand(rigid_forces.shape[0], -1, -1)
+             
+             # Normalize accumulated forces by substeps
+             if hasattr(self.scene.sim, '_substeps'):
+                 substeps = self.scene.sim._substeps
+             else:
+                 substeps = 1 # Fallback
                  
-                 # Stack [L, R] -> (2, 3) -> unsqueeze -> (1, 2, 3)
-                 mpm_stack = torch.stack([mpm_L, mpm_R]).unsqueeze(0)
-                 
-                 # Expand to match batch size if needed
-                 if rigid_forces.shape[0] > 1:
-                      mpm_stack = mpm_stack.expand(rigid_forces.shape[0], -1, -1)
-                 
-                 # Normalize accumulated forces by substeps
-                 # LegacyCoupler accumulates forces over all substeps in a step
-                 if hasattr(self.scene.sim, '_substeps'):
-                     substeps = self.scene.sim._substeps
-                 else:
-                     substeps = 1 # Fallback
-                     
-                 return rigid_forces + (mpm_stack / substeps)
+             return rigid_forces + (mpm_stack / substeps)
              
         return rigid_forces
 
