@@ -17,7 +17,7 @@ class StrikeState(enum.Enum):
 
 # Configuration constants
 MAX_CHECKPOINTS = 50  # Maximum number of checkpoints to retain
-VERBOSE_LOGGING = True  # Enable per-frame logging during strike (set to False to disable)
+VERBOSE_LOGGING = False  # Enable per-frame logging during strike (set to False to disable)
 LOG_EVERY_N_FRAMES = 3  # Log every Nth frame (1=every frame, 10=every 10th frame)
 
 class StrikeController:
@@ -148,26 +148,36 @@ class StrikeController:
                         return
                 
                 with self._profile("logic_get_resistance"):
+                    # force_L, force_R are now TENSORS
                     force_L, force_R = self.robot.get_resistance_forces()
                 
                 with self._profile("logic_update_state"):
-                    if not self.contact_L and force_L > contact_threshold:
+                    # Batch contact check sync: Combine predicates
+                    # We need to know specific contacts to set velocity
+                    # contacts = [L_hit, R_hit]
+                    contacts_tensor = torch.stack([force_L > contact_threshold, force_R > contact_threshold])
+                    contacts_list = contacts_tensor.tolist() # 1 Sync
+                    
+                    new_contact_L = contacts_list[0]
+                    new_contact_R = contacts_list[1]
+
+                    if not self.contact_L and new_contact_L:
                         self.contact_L = True
-                        gs.logger.info(f"  Left gripper CONTACT (force={force_L:.4f})")
+                        gs.logger.info(f"  Left gripper CONTACT (force={force_L.item():.4f})")
                         
-                    if not self.contact_R and force_R > contact_threshold:
+                    if not self.contact_R and new_contact_R:
                         self.contact_R = True
-                        gs.logger.info(f"  Right gripper CONTACT (force={force_R:.4f})")
+                        gs.logger.info(f"  Right gripper CONTACT (force={force_R.item():.4f})")
                     
                     if VERBOSE_LOGGING and self.strike_step_count % LOG_EVERY_N_FRAMES == 0:
-                        gs.logger.info(f"APPROACHING[{self.strike_step_count}]: F=[{force_L:.3f},{force_R:.3f}], contact=[{self.contact_L}, {self.contact_R}]")
+                        gs.logger.info(f"APPROACHING[{self.strike_step_count}]: F=[{force_L.item():.3f},{force_R.item():.3f}], contact=[{self.contact_L}, {self.contact_R}]")
 
                     self._vel_cmd.zero_()
                     self._vel_cmd[2] = 0.0 if self.contact_L else approach_speed
                     self._vel_cmd[3] = 0.0 if self.contact_R else approach_speed
                 
                 with self._profile("logic_apply_vel"):
-                    self._apply_vel_dedup()
+                    self._apply_vel_smart()
                 
                 with self._profile("logic_update_state"):
                     if self.contact_L and self.contact_R:
@@ -176,7 +186,9 @@ class StrikeController:
                         
                         pos_L = self.robot.left_gripper.get_pos()
                         pos_R = self.robot.right_gripper.get_pos()
-                        self.contact_width = torch.norm(pos_L - pos_R).item()
+                        # Keep as tensor for GPU strain calc
+                        self.contact_width_tensor = torch.norm(pos_L - pos_R)
+                        self.contact_width = self.contact_width_tensor.item() # Sync once for logging/logic
                         
                         gs.logger.info(f"Strike -> PRESSING (width={self.contact_width:.4f}, steps={self.strike_step_count})")
                     
@@ -195,51 +207,66 @@ class StrikeController:
                 with self._profile("logic_update_state"):
                     pos_L = self.robot.left_gripper.get_pos()
                     pos_R = self.robot.right_gripper.get_pos()
-                    current_width = torch.norm(pos_L - pos_R).item()
+                    # GPU calculation
+                    current_width_tensor = torch.norm(pos_L - pos_R)
                     
                     if self.contact_width > 1e-6:
-                        current_strain = (self.contact_width - current_width) / self.contact_width
+                         # contact_width_tensor saved in transition
+                        current_strain_tensor = (self.contact_width_tensor - current_width_tensor) / self.contact_width_tensor
                     else:
-                        current_strain = 0.0
+                        current_strain_tensor = torch.tensor(0.0, device=self.env.device)
                     
-                    # Warn about unusual conditions
-                    if current_strain < -0.01:
-                        gs.logger.warning(f"Negative strain detected ({current_strain:.4f}) - grippers moving apart?")
-                    if force_L < 0 or force_R < 0:
-                        gs.logger.warning(f"Negative force detected: F_L={force_L:.4f}, F_R={force_R:.4f}")
+                    # --- Logic Batching ---
+                    # Conditions to check: Target Strain, Max Force
+                    # We combine them into a single sync
                     
+                    # Check 1: Strain (Tensor)
+                    cond_strain = current_strain_tensor >= target_strain
+                    
+                    # Check 2: Max Force (Tensor)
+                    cond_force = (force_L > max_force) | (force_R > max_force)
+                    
+                    # Check 3: Timeout (CPU - cheap)
                     elapsed_time = time.time() - self.stage_start_time
-
-                    stop_reason = None
-                    if current_strain >= target_strain:
-                        stop_reason = "Target Strain"
-                    elif force_L > max_force or force_R > max_force:
-                        stop_reason = "Max Force"
-                    elif elapsed_time > pressing_timeout:
-                        stop_reason = "Timeout"
+                    is_timeout = elapsed_time > pressing_timeout
                     
-                    if stop_reason:
-                        gs.logger.info(f"Strike -> RELEASE ({stop_reason}, strain={current_strain:.4f}, steps={self.strike_step_count}, time={elapsed_time:.2f}s)")
+                    # Stack GPU conditions
+                    stop_flags = torch.stack([cond_strain, cond_force])
+                    
+                    # Single Sync: Check if any stop condition is met
+                    # We pull as int to see WHICH flag triggered if we wanted, or just any().item()
+                    stop_any = stop_flags.any().item() or is_timeout
+                    
+                    if stop_any:
+                        # Determine reason (Now we can sync values for logging since we are stopping)
+                        if cond_strain.item(): stop_reason = "Target Strain"
+                        elif cond_force.item(): stop_reason = "Max Force"
+                        elif is_timeout: stop_reason = "Timeout"
+                        else: stop_reason = "Unknown"
+                        
+                        strain_val = current_strain_tensor.item()
+                        gs.logger.info(f"Strike -> RELEASE ({stop_reason}, strain={strain_val:.4f}, steps={self.strike_step_count}, time={elapsed_time:.2f}s)")
                         self.strike_state = StrikeState.RELEASE
                         self.stage_start_time = time.time()
                         self._stop_motors()
                         return
 
+                    # Physics Update (Tensor Ops)
                     imbalance = force_L - force_R
                     correction = imbalance * force_balance_gain
                     
-                    v_L = max(0.0, pressing_speed - correction)
-                    v_R = max(0.0, pressing_speed + correction)
+                    v_L = torch.clamp(pressing_speed - correction, min=0.0)
+                    v_R = torch.clamp(pressing_speed + correction, min=0.0)
                     
                     if VERBOSE_LOGGING and self.strike_step_count % LOG_EVERY_N_FRAMES == 0:
-                        gs.logger.info(f"PRESSING[{self.strike_step_count}]: F=[{force_L:.3f},{force_R:.3f}] dF={imbalance:.4f}, v=[{v_L:.4f},{v_R:.4f}] corr={correction:.4f}, strain={current_strain:.3f}/{target_strain:.3f}")
+                        gs.logger.info(f"PRESSING[{self.strike_step_count}]: F=[{force_L.item():.3f},{force_R.item():.3f}] dF={imbalance.item():.4f}, v=[{v_L.item():.4f},{v_R.item():.4f}] corr={correction.item():.4f}")
                     
                     self._vel_cmd.zero_()
                     self._vel_cmd[2] = v_L
                     self._vel_cmd[3] = v_R
                 
                 with self._profile("logic_apply_vel"):
-                    self._apply_vel_dedup()
+                    self._apply_vel_smart()
 
             # --- RELEASE STAGE ---
             elif self.strike_state == StrikeState.RELEASE:
@@ -267,17 +294,21 @@ class StrikeController:
                     v_R = v_open + correction
                     
                     if VERBOSE_LOGGING and self.strike_step_count % LOG_EVERY_N_FRAMES == 0:
-                        gs.logger.info(f"RELEASE[{self.strike_step_count}]: F=[{force_L:.3f},{force_R:.3f}] dF={imbalance:.4f}, thresh={contact_threshold:.4f}, v=[{v_L:.4f},{v_R:.4f}] corr={correction:.4f}")
+                        gs.logger.info(f"RELEASE[{self.strike_step_count}]: F=[{force_L.item():.3f},{force_R.item():.3f}] dF={imbalance.item():.4f}")
                     
                     self._vel_cmd.zero_()
                     self._vel_cmd[2] = v_L
                     self._vel_cmd[3] = v_R
                 
                 with self._profile("logic_apply_vel"):
-                    self._apply_vel_dedup()
+                    self._apply_vel_smart()
                 
                 with self._profile("logic_update_state"):
-                    if abs(force_L) < contact_threshold and abs(force_R) < contact_threshold:
+                    # Batch check for release completion
+                    # cond: abs(force) < threshold
+                    is_free = (torch.abs(force_L) < contact_threshold) & (torch.abs(force_R) < contact_threshold)
+                    
+                    if is_free.item(): # 1 Sync
                         # Calculate final stats
                         pos_L = self.robot.left_gripper.get_pos()
                         pos_R = self.robot.right_gripper.get_pos()
@@ -312,19 +343,15 @@ class StrikeController:
 
     def _stop_motors(self):
         self._vel_cmd.zero_()
-        self._apply_vel_dedup()
+        self._apply_vel_smart()
 
-    def _apply_vel_dedup(self):
+    def _apply_vel_smart(self):
         """
-        Applies velocity only if the command has changed from the last step.
-        Reduces overhead of repeated identical calls (e.g. during APPROACHING).
+        Applies velocity without checking for equality on CPU to avoid sync.
+        Trusts the solver to handle updates efficiently.
         """
-        if not self._force_next_apply and torch.equal(self._vel_cmd, self._last_vel_cmd):
-            return
-
         self.robot.apply_velocity(self._vel_cmd, dofs_idx_local=self._dofs_idx_local)
-        self._last_vel_cmd.copy_(self._vel_cmd)
-        self._force_next_apply = False
+        self._force_next_apply = False # Flag not really needed anymore but kept for compat checking
 
     def _force_idle_reset(self):
          self._stop_motors()
