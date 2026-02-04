@@ -155,6 +155,7 @@ class SurfaceReconstructor:
         self.bind_offsets = None
         self.smoothing_matrix = None
         self._use_dense_smoothing = False
+        self.reconstructed_vertices_tensor = None
 
     def get_mesh_data(self):
         """Returns the current mesh and its vertices/faces."""
@@ -681,14 +682,27 @@ class SurfaceReconstructor:
                 gs.logger.warning("No active particles for reconstruction")
                 return
 
-            self.reconstructed_mesh = pu.particles_to_mesh(
+            mesh = pu.particles_to_mesh(
                 positions=particles,
                 radius=radius,
                 backend='splashsurf'
             )
             
+            self.reconstructed_mesh = mesh
+            
+            # FIX: Sync the tensor version of vertices immediately
+            # This ensures that even if we don't skin this frame, the cache used by 
+            # StrikeController matches the new topology.
+            if len(mesh.vertices) > 0:
+                self.reconstructed_vertices_tensor = torch.from_numpy(mesh.vertices).float().to(self.device)
+            else:
+                self.reconstructed_vertices_tensor = None
+
+            # Reset skinning state (will be re-initialized if enabled)
+            self._invalidate_skinning()
+            
         except Exception as e:
-            gs.logger.error(f"Surface reconstruction failed: {e}")
+            gs.logger.error(f"Reconstruction failed: {e}")
             self.reconstructed_mesh = trimesh.Trimesh()
 
     def _compute_sample_indices(self, particles: torch.Tensor, k: int) -> torch.Tensor:
