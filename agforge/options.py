@@ -30,7 +30,7 @@ class MaterialOptions(Options):
     """Parameters for the elasto-plastic material."""
     E: float = 200.e9 * 0.25
     nu: float = 0.28
-    rho: float = 8000. * 100. # Mass Scaling 100x
+    rho: float = 8000.
     von_mises_yield_stress: float = 190.e6 * 0.1
 
 class EnvOptions(Options):
@@ -73,6 +73,7 @@ class GeneralOptions(Options):
     """General settings for visualization, logging, and recording."""
     show_viewer: bool = True
     record: bool = False
+    verbose: bool = True # Enable detailed logging
     log_dir: str = "logs/agforge_parametric"
 
 class RobotOptions(Options):
@@ -153,7 +154,7 @@ class RobotOptions(Options):
         ])
 
         
-        kp_val = 1.0 * 100.0 # Scientifically tuned stiffness (100.0 total)
+        kp_val = 0.2
         kv_val = 2. * ((kp_val * 10.) ** 0.5)
         self._kp = kp_val * ureg.newton * ureg.meter
         self._kv = kv_val * ureg.newton * ureg.meter * ureg.second
@@ -191,10 +192,9 @@ class AgilityForgeOptions(Options):
 
     def model_post_init(self, __context: any) -> None:
         # --- Perform all calculations first ---
-        # Mass Scaling 100x -> 10x larger dt allowed
         self.sim = SimOptions(
-            dt=1.4e-5, # Tuned for 100x Mass
-            substeps=10,
+            dt=1.4e-6 * 8,
+            substeps=8,
             gravity=(0, 0, 0),
             check_bounds=not self.performance_mode,
         )
@@ -257,16 +257,16 @@ class TrainingOptions(AgilityForgeOptions):
 
 class StrikeOptions(Options):
     """Parameters for the approaching and pressing stage."""
-    approach_speed: float = 5.0 # m/s (Fast approach validated)
-    contact_force_threshold: float = 150.0 * 100.0 # Scale threshold by 100x
+    approach_speed: float = 4.e1
+    contact_force_threshold: float = 150.0 # Force threshold to detect contact
     
     # Pressing Stage
-    pressing_speed: float = 0.2 # m/s (Tuned for < 5% Energy Ratio with 100x mass)
+    pressing_speed: float = 1.e1 # m/s
     force_balance_gain: float = 1.e-4 # (m/s) / N. Start with 0.0 for constant velocity testing as requested.
     target_strain: float = 0.5 # 50% compression
-    max_force: float = 50000.0 * 100.0 # Scale max force by 100x
-    pressing_timeout: float = 15.0 # seconds
-    approaching_timeout: float = 10.0 # seconds
+    max_force: float = 50000.0 # N
+    pressing_timeout: float = 30.0 # seconds (Increased to avoid timeout)
+    approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     release_timeout: float = 10.0 # seconds
     post_release_steps: int = 10 # steps
     
