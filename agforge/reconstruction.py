@@ -74,6 +74,9 @@ class SurfaceReconstructor:
         
         # Level 2: Movement limiting - track previous vertex positions
         self._prev_verts = None
+        
+        # Grid-velocity advection mode (alternative to LBS for smoother motion)
+        self._use_grid_advection = False  # Set True to enable grid-based advection
 
     def get_state(self):
         """Returns a snapshot of the current mesh and skinning state (for checkpoints)."""
@@ -237,7 +240,13 @@ class SurfaceReconstructor:
                     return
             
             with profiler.time("recon_update_skinning"):
-                self.update_skinning()
+                if self._use_grid_advection:
+                    # Use grid-velocity advection for smoother motion
+                    dt = self.env.scene.sim.dt
+                    self.update_skinning_via_grid(dt)
+                else:
+                    # Use standard LBS skinning
+                    self.update_skinning()
             return
 
         # Fallback to full reconstruction if not skinned or explicitly requested
@@ -519,6 +528,135 @@ class SurfaceReconstructor:
         except Exception as e:
             gs.logger.error(f"Skinning update failed: {e}")
             self._invalidate_skinning()
+
+    def update_skinning_via_grid(self, dt: float):
+        """
+        Alternative to LBS skinning: Advect vertices using MPM grid velocity.
+        
+        This provides smoother motion than particle-based skinning because the
+        grid velocity is already filtered/smoothed by the MPM solver.
+        
+        Args:
+            dt: Timestep for advection (typically scene.sim.dt)
+        """
+        if self.reconstructed_mesh is None or len(self.reconstructed_mesh.vertices) == 0:
+            return
+            
+        try:
+            mpm_solver = self.env.scene.sim.mpm_solver
+            
+            # Get current vertex positions
+            verts = torch.tensor(
+                self.reconstructed_mesh.vertices, 
+                dtype=torch.float32, 
+                device=self.device
+            )
+            
+            # Sample grid velocity at each vertex position
+            # Using PyTorch grid_sample for trilinear interpolation
+            velocities = self._sample_grid_velocity(verts, mpm_solver)
+            
+            if velocities is None:
+                return
+                
+            # Advect vertices: pos += vel * dt
+            new_verts = verts + velocities * dt
+            
+            # Apply Taubin smoothing if enabled
+            if self.smoothing_matrix is not None:
+                lamb, mu = 0.5, -0.53
+                for _ in range(2):
+                    if self._use_dense_smoothing:
+                        smoothed = self.smoothing_matrix @ new_verts
+                    else:
+                        smoothed = torch.sparse.mm(self.smoothing_matrix, new_verts)
+                    laplacian = (smoothed - new_verts) * 2.0
+                    temp_verts = new_verts + laplacian * lamb
+                    
+                    if self._use_dense_smoothing:
+                        smoothed_temp = self.smoothing_matrix @ temp_verts
+                    else:
+                        smoothed_temp = torch.sparse.mm(self.smoothing_matrix, temp_verts)
+                    laplacian_temp = (smoothed_temp - temp_verts) * 2.0
+                    new_verts = temp_verts + laplacian_temp * mu
+            
+            # Update mesh
+            self.reconstructed_mesh.vertices = new_verts.cpu().numpy()
+            
+        except Exception as e:
+            gs.logger.warning(f"Grid advection failed, falling back to LBS: {e}")
+            self.update_skinning()
+    
+    def _sample_grid_velocity(self, positions: torch.Tensor, mpm_solver) -> Optional[torch.Tensor]:
+        """
+        Sample MPM grid velocity at given positions using trilinear interpolation.
+        
+        Args:
+            positions: (N, 3) tensor of world positions
+            mpm_solver: Genesis MPM solver with grid field
+            
+        Returns:
+            (N, 3) tensor of velocities, or None on failure
+        """
+        try:
+            # Get grid parameters from solver
+            inv_dx = mpm_solver._inv_dx
+            grid_offset = mpm_solver._grid_offset
+            grid_res = mpm_solver._grid_res
+            
+            # Convert positions to grid coordinates
+            # Note: positions are in world space, grid uses offset coordinates
+            pos_np = positions.cpu().numpy()
+            
+            # Calculate base grid cell (same as MPM g2p kernel)
+            base = np.floor(pos_np * inv_dx - 0.5).astype(np.int32)
+            fx = pos_np * inv_dx - base.astype(np.float32)
+            
+            # Quadratic B-spline weights (same as MPM)
+            w0 = 0.5 * (1.5 - fx) ** 2
+            w1 = 0.75 - (fx - 1.0) ** 2
+            w2 = 0.5 * (fx - 0.5) ** 2
+            
+            # Sample grid velocity with 3x3x3 stencil
+            n_verts = len(positions)
+            velocities = np.zeros((n_verts, 3), dtype=np.float32)
+            
+            # Access grid field (frame 0, batch 0)
+            # Using numpy interface for safety (not Taichi kernel)
+            grid_vel = mpm_solver.grid.to_numpy()  # Shape: [substeps+1, gx, gy, gz, batch, fields]
+            
+            for i_v in range(n_verts):
+                vel = np.zeros(3, dtype=np.float32)
+                total_weight = 0.0
+                
+                for i_x in range(3):
+                    for i_y in range(3):
+                        for i_z in range(3):
+                            # Grid index with offset
+                            idx = base[i_v] - grid_offset + np.array([i_x, i_y, i_z])
+                            
+                            # Bounds check
+                            if (idx >= 0).all() and (idx[0] < grid_res[0] and 
+                                                      idx[1] < grid_res[1] and 
+                                                      idx[2] < grid_res[2]):
+                                weight = w0[i_v, i_x] * w1[i_v, i_y] * w2[i_v, i_z]
+                                
+                                # Access vel_out from grid struct
+                                # grid_vel shape depends on Taichi field layout
+                                # For SOA layout: [substeps, *grid_res, batch][field]
+                                grid_v = grid_vel[0, idx[0], idx[1], idx[2], 0]['vel_out']
+                                
+                                vel += weight * grid_v
+                                total_weight += weight
+                
+                if total_weight > 0:
+                    velocities[i_v] = vel / total_weight
+                    
+            return torch.from_numpy(velocities).to(self.device)
+            
+        except Exception as e:
+            gs.logger.debug(f"Grid velocity sampling failed: {e}")
+            return None
 
     def _get_active_particles(self, use_cache: bool = True, apply_subsampling: bool = True):
         """Helper to fetch particles with consistent logic and caching."""
