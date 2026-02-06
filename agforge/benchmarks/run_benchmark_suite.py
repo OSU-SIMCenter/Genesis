@@ -20,6 +20,8 @@ async def run_benchmark():
     parser = argparse.ArgumentParser()
     parser.add_argument("--visualize", action="store_true", help="Enable viewer")
     parser.add_argument("--output_dir", default="benchmark_data", help="Directory to save results")
+    parser.add_argument("--single", action="store_true", help="Run only Production config with default soft params (no sweep)")
+    parser.add_argument("--loops", type=int, default=1, help="Number of loops per config (0 = infinite, Ctrl+C to stop)")
     args = parser.parse_args()
 
     results_dir = os.path.join(os.path.dirname(__file__), args.output_dir)
@@ -33,7 +35,7 @@ async def run_benchmark():
     default_substeps = default_opts.sim.substeps
     
     # "Hard" params require rebuilding the environment
-    HARD_CONFIGS = [
+    HARD_CONFIGS_ALL = [
         # Exact Teleop Settings
         {"name": "Production", "grid_density": default_grid_density, "particle_multiplier": 1.0, "substeps": default_substeps},
         
@@ -42,10 +44,19 @@ async def run_benchmark():
     ]
     
     # "Soft" params can be applied at runtime via reset
-    SOFT_CONFIGS = [
+    SOFT_CONFIGS_ALL = [
         {"name": "Default_Press", "speed": 1.0, "force_param": 0.5}, # 50% Strain
         # {"name": "High_Force_Press", "speed": 1.0, "force_param": 0.8}, 
     ]
+    
+    # Apply --single mode: use only first config of each
+    if args.single:
+        HARD_CONFIGS = [HARD_CONFIGS_ALL[0]]
+        SOFT_CONFIGS = [SOFT_CONFIGS_ALL[0]]
+        print(f"[Single Mode] Using Production config only, {args.loops if args.loops > 0 else 'infinite'} loop(s)")
+    else:
+        HARD_CONFIGS = HARD_CONFIGS_ALL
+        SOFT_CONFIGS = SOFT_CONFIGS_ALL
 
     results = []
     
@@ -136,100 +147,114 @@ async def run_benchmark():
                 env.cfg.strike.approach_speed = base_approach * soft_cfg["speed"]
                 env.cfg.strike.pressing_speed = base_pressing * soft_cfg["speed"]
                 
-                # Reset
-                await controller.reset_simulation()
-                
-                # Warmup
-                controller.env.scene.step()
-                
-                # Trigger Strike
-                await controller.trigger_strike(soft_cfg["force_param"])
-                
-                # Run Loop until IDLE
-                start_time = time.time()
-                step_count = 0
-                profiler = env.scene.profiling_options.profiler
-                profiler.reset()
-                
-                max_steps = 5000 
-                
-                while controller.strike_state != StrikeState.IDLE and step_count < max_steps:
-                    # Root Frame
-                    with profiler.time("teleop_step"):
-                        # Logic + Physics + Render
-                        await controller.step_simulation()
-                        
-                        # Reconstruction
-                        await controller.update_and_get_recon_data()
-                        
-                        # Update Viewer Context explicitly if visualizing
-                        # Update Viewer Context explicitly if visualizing
-                        if args.visualize and env.scene.visualizer:
-                             if hasattr(env.scene.visualizer, 'render'):
-                                 env.scene.visualizer.render()
-                             elif hasattr(env.scene.visualizer, 'viewer') and hasattr(env.scene.visualizer.viewer, 'render'):
-                                 env.scene.visualizer.viewer.render()
+                # Loop iterations (for --loops argument)
+                loop_iter = 0
+                while True:
+                    loop_iter += 1
+                    if args.loops > 0:
+                        print(f"    [Loop {loop_iter}/{args.loops}]")
+                    else:
+                        print(f"    [Loop {loop_iter} (infinite, Ctrl+C to stop)]")
                     
-                    step_count += 1
+                    # Reset
+                    await controller.reset_simulation()
                     
-                    if step_count % 100 == 0:
-                         pass
+                    # Warmup
+                    controller.env.scene.step()
+                    
+                    # Trigger Strike
+                    await controller.trigger_strike(soft_cfg["force_param"])
+                
+                    # Run Loop until IDLE
+                    start_time = time.time()
+                    step_count = 0
+                    profiler = env.scene.profiling_options.profiler
+                    profiler.reset()
+                    
+                    max_steps = 5000 
+                    
+                    while controller.strike_state != StrikeState.IDLE and step_count < max_steps:
+                        # Root Frame
+                        with profiler.time("teleop_step"):
+                            # Logic + Physics + Render
+                            await controller.step_simulation()
+                            
+                            # Reconstruction
+                            await controller.update_and_get_recon_data()
+                            
+                            # Update Viewer Context explicitly if visualizing
+                            if args.visualize and env.scene.visualizer:
+                                 if hasattr(env.scene.visualizer, 'render'):
+                                     env.scene.visualizer.render()
+                                 elif hasattr(env.scene.visualizer, 'viewer') and hasattr(env.scene.visualizer.viewer, 'render'):
+                                     env.scene.visualizer.viewer.render()
+                        
+                        step_count += 1
+                        
+                        if step_count % 100 == 0:
+                             pass
 
-                duration = time.time() - start_time
-                fps = step_count / duration if duration > 0 else 0
-                
-                print(f"    Done: {step_count} steps in {duration:.2f}s ({fps:.1f} FPS)")
-                
-                # Detailed Profiler Output (Rich Table)
-                print("\n    --- Detailed Profiling Stats (Rich Table - Full) ---")
-                profiler.rich_table(min_pct=0.0)
-                
-                # Detailed Profiler Output (ASCII Tree)
-                print("\n    --- Detailed Profiling Hierarchy (ASCII Tree - >2%) ---")
-                profiler.print_tree(min_pct=2.0)
-                
-                # Detailed Profiler Output (Flat Hot Spots)
-                print("\n    --- Profiling Hot-Spots (Flat - >1.5%) ---")
-                profiler.print_flat(sort_by="self", min_pct=1.5)
-                print("    --------------------------------\n")
+                    duration = time.time() - start_time
+                    fps = step_count / duration if duration > 0 else 0
+                    
+                    print(f"    Done: {step_count} steps in {duration:.2f}s ({fps:.1f} FPS)")
+                    
+                    # Detailed Profiler Output (Rich Table)
+                    print("\n    --- Detailed Profiling Stats (Rich Table - Full) ---")
+                    profiler.rich_table(min_pct=0.0)
+                    
+                    # Detailed Profiler Output (ASCII Tree)
+                    print("\n    --- Detailed Profiling Hierarchy (ASCII Tree - >2%) ---")
+                    profiler.print_tree(min_pct=2.0)
+                    
+                    # Detailed Profiler Output (Flat Hot Spots)
+                    print("\n    --- Profiling Hot-Spots (Flat - >1.5%) ---")
+                    profiler.print_flat(sort_by="self", min_pct=1.5)
+                    print("    --------------------------------\n")
 
-                # Collect Metrics
-                run_data = {
-                    "timestamp": int(time.time()),
-                    "config_name": f"{hard_cfg['name']}_{soft_cfg['name']}",
-                    "hard_config": hard_cfg,
-                    "soft_config": soft_cfg,
-                    "metrics": {
-                        "steps": step_count,
-                        "duration_sec": duration,
-                        "fps": fps,
-                        "final_state": controller.strike_state.name
-                    },
-                    "profiler": {}
-                }
-                
-                # Extract profiler stats (backward compatibility map)
-                for name, stat in profiler.stats.items():
-                    run_data["profiler"][name] = {
-                        "count": stat.count,
-                        "total": stat.total,
-                        "mean": stat.mean,  
-                        "std": stat.std,    
-                        "min": stat.min,    
-                        "max": stat.max,    
-                        "avg": stat.mean
+                    # Collect Metrics
+                    run_data = {
+                        "timestamp": int(time.time()),
+                        "loop_iter": loop_iter,
+                        "config_name": f"{hard_cfg['name']}_{soft_cfg['name']}",
+                        "hard_config": hard_cfg,
+                        "soft_config": soft_cfg,
+                        "metrics": {
+                            "steps": step_count,
+                            "duration_sec": duration,
+                            "fps": fps,
+                            "final_state": controller.strike_state.name
+                        },
+                        "profiler": {}
                     }
                     
-                results.append(run_data)
-                
-                # Incremental Save - Standard JSON
-                fname = f"result_{hard_cfg['name']}_{soft_cfg['name']}_{run_data['timestamp']}.json"
-                with open(os.path.join(results_dir, fname), "w") as f:
-                    json.dump(run_data, f, indent=2)
+                    # Extract profiler stats (backward compatibility map)
+                    for name, stat in profiler.stats.items():
+                        run_data["profiler"][name] = {
+                            "count": stat.count,
+                            "total": stat.total,
+                            "mean": stat.mean,  
+                            "std": stat.std,    
+                            "min": stat.min,    
+                            "max": stat.max,    
+                            "avg": stat.mean
+                        }
+                        
+                    results.append(run_data)
+                    
+                    # Incremental Save - Standard JSON
+                    fname = f"result_{hard_cfg['name']}_{soft_cfg['name']}_loop{loop_iter}_{run_data['timestamp']}.json"
+                    with open(os.path.join(results_dir, fname), "w") as f:
+                        json.dump(run_data, f, indent=2)
 
-                # Save Speedscope Profile
-                profile_fname = f"profile_{hard_cfg['name']}_{soft_cfg['name']}_{run_data['timestamp']}.speedscope.json"
-                profiler.save_speedscope(os.path.join(results_dir, profile_fname))
+                    # Save Speedscope Profile
+                    profile_fname = f"profile_{hard_cfg['name']}_{soft_cfg['name']}_loop{loop_iter}_{run_data['timestamp']}.speedscope.json"
+                    profiler.save_speedscope(os.path.join(results_dir, profile_fname))
+                    
+                    # Check loop break condition
+                    if args.loops > 0 and loop_iter >= args.loops:
+                        break
+                    print("    (Resetting for next loop...)")
 
         except Exception as e:
             print(f"Error running config {hard_cfg}: {e}")
