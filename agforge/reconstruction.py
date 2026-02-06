@@ -76,7 +76,10 @@ class SurfaceReconstructor:
         self._prev_verts = None
         
         # Grid-velocity advection mode (alternative to LBS for smoother motion)
-        self._use_grid_advection = False  # Set True to enable grid-based advection
+        # TODO: Grid advection disabled - Taichi grid field export has indexing issues.
+        # The grid[f, x, y, z, batch] access pattern returns tuples instead of data.
+        # Needs investigation of correct Taichi SOA field numpy export format.
+        self._use_grid_advection = False
 
     def get_state(self):
         """Returns a snapshot of the current mesh and skinning state (for checkpoints)."""
@@ -557,6 +560,9 @@ class SurfaceReconstructor:
             velocities = self._sample_grid_velocity(verts, mpm_solver)
             
             if velocities is None:
+                # Fallback to LBS if grid sampling failed
+                gs.logger.debug("Grid velocity sampling failed, using LBS fallback")
+                self.update_skinning()
                 return
                 
             # Advect vertices: pos += vel * dt
@@ -655,7 +661,7 @@ class SurfaceReconstructor:
             return torch.from_numpy(velocities).to(self.device)
             
         except Exception as e:
-            gs.logger.debug(f"Grid velocity sampling failed: {e}")
+            gs.logger.warning(f"Grid velocity sampling failed: {e}")
             return None
 
     def _get_active_particles(self, use_cache: bool = True, apply_subsampling: bool = True):
