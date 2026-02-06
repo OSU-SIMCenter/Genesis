@@ -203,6 +203,7 @@ class AgilityForgeOptions(Options):
             particle_size=0.8 * 0.01 * 64.0 / self.robot.base_grid_density,
             lower_bound=self.robot.mpm_lower_bound,
             upper_bound=self.robot.mpm_upper_bound,
+            enable_CPIC=True,  # Improved rigid-MPM contact accuracy
         )
         self.env = EnvOptions(
             num_envs=1,
