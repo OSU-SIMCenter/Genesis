@@ -80,6 +80,12 @@ class SurfaceReconstructor:
         # The grid[f, x, y, z, batch] access pattern returns tuples instead of data.
         # Needs investigation of correct Taichi SOA field numpy export format.
         self._use_grid_advection = False
+        
+        # Edge splitting for dynamic remeshing during deformation
+        self._edge_split_enabled = True  # Enable dynamic edge splitting
+        self._max_edge_length = None  # Auto-computed based on initial mesh (set in init_skinning)
+        self._edge_split_check_interval = 5  # Check every N frames
+        self._last_vertex_count = 0
 
     def get_state(self):
         """Returns a snapshot of the current mesh and skinning state (for checkpoints)."""
@@ -250,6 +256,14 @@ class SurfaceReconstructor:
                 else:
                     # Use standard LBS skinning
                     self.update_skinning()
+            
+            # [Edge Splitting] Dynamic remeshing check
+            if self._edge_split_enabled and (self._global_frame % self._edge_split_check_interval == 0):
+                # If edges were split, we need to rebind immediately (handled inside method)
+                # But we might want to update skinning positions again or just wait for next frame
+                # The method calls init_skinning() if splits happen, so positions are reset to current particles
+                self.subdivide_long_edges()
+            return
             return
 
         # Fallback to full reconstruction if not skinned or explicitly requested
@@ -392,6 +406,22 @@ class SurfaceReconstructor:
 
             # Precompute smoothing matrix
             self._compute_laplacian_matrix(lamb=0.5)
+
+            # [Edge Splitting] Compute initial edge length stats for dynamic remeshing
+            if self._edge_split_enabled:
+                if hasattr(self.reconstructed_mesh, 'edges_unique_length'):
+                    # Trimesh provides cached property
+                    lengths = self.reconstructed_mesh.edges_unique_length
+                else:
+                    # Fallback manual calculation
+                    edges = self.reconstructed_mesh.edges_unique
+                    verts = self.reconstructed_mesh.vertices
+                    lengths = np.linalg.norm(verts[edges[:, 0]] - verts[edges[:, 1]], axis=1)
+                
+                median_len = np.median(lengths)
+                self._max_edge_length = median_len * 2.0
+                gs.logger.info(f"Dynamic Remeshing: Max edge length set to {self._max_edge_length:.6f} (median: {median_len:.6f})")
+
             
             self.skinning_enabled = True
             gs.logger.info("Skinning initialized successfully.")
@@ -531,6 +561,60 @@ class SurfaceReconstructor:
         except Exception as e:
             gs.logger.error(f"Skinning update failed: {e}")
             self._invalidate_skinning()
+
+    def subdivide_long_edges(self) -> bool:
+        """
+        Check for overly stretched edges and subdivide them using trimesh.
+        
+        This enables dynamic remeshing during deformation - new vertices are
+        added where triangles stretch beyond a threshold, maintaining mesh quality.
+        
+        Returns:
+            True if mesh was modified (new vertices added), False otherwise
+        """
+        if not self._edge_split_enabled:
+            return False
+            
+        if self.reconstructed_mesh is None or len(self.reconstructed_mesh.vertices) < 3:
+            return False
+            
+        if self._max_edge_length is None:
+            return False
+        
+        try:
+            from trimesh.remesh import subdivide_to_size
+            
+            verts = self.reconstructed_mesh.vertices
+            faces = self.reconstructed_mesh.faces
+            orig_vert_count = len(verts)
+            
+            # Subdivide edges that exceed threshold  
+            # Use 1.5x the initial max edge length as threshold
+            threshold = self._max_edge_length * 1.5
+            
+            new_verts, new_faces = subdivide_to_size(
+                verts, faces, max_edge=threshold, max_iter=2
+            )
+            
+            new_vert_count = len(new_verts)
+            
+            if new_vert_count == orig_vert_count:
+                # No subdivision needed
+                return False
+                
+            # Update mesh with new geometry
+            self.reconstructed_mesh.vertices = new_verts
+            self.reconstructed_mesh.faces = new_faces
+            
+            # Re-initialize skinning for new vertices
+            gs.logger.info(f"Edge split: {orig_vert_count} -> {new_vert_count} vertices")
+            self.init_skinning()
+            
+            return True
+            
+        except Exception as e:
+            gs.logger.warning(f"Edge splitting failed: {e}")
+            return False
 
     def update_skinning_via_grid(self, dt: float):
         """
