@@ -231,11 +231,13 @@ class SurfaceReconstructor:
             
             should_rebind = False
             if self._global_frame % self._rebind_check_interval == 0:
+                 # DISABLED (User Request): Relying purely on edge splitting
                  # Intermediate check for panic quality
-                 if self._compute_mesh_quality() > 4.0:
-                     should_rebind = True
-                 else:
-                     should_rebind = self._should_rebind()
+                 # if self._compute_mesh_quality() > 4.0:
+                 #    should_rebind = True
+                 # else:
+                 #    should_rebind = self._should_rebind()
+                 should_rebind = False
             else:
                  should_rebind = False
 

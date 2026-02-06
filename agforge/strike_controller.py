@@ -293,11 +293,12 @@ class StrikeController:
                         
                         # RESTORED: Full reconstruction after strike to fix skinning drift
                         # This gives the user a "perfect" result after the action completes.
-                        recon_start = time.time()
-                        self.reconstructor.create_reconstructed_mesh()
-                        self.reconstructor.init_skinning() # REQUIRED to sync weights with new mesh
-                        recon_time = (time.time() - recon_start) * 1000
-                        gs.logger.info(f"  Post-strike reconstruction: {recon_time:.1f}ms")
+                        # DISABLED (User Request): Relying purely on edge splitting
+                        # recon_start = time.time()
+                        # self.reconstructor.create_reconstructed_mesh()
+                        # self.reconstructor.init_skinning() # REQUIRED to sync weights with new mesh
+                        # recon_time = (time.time() - recon_start) * 1000
+                        # gs.logger.info(f"  Post-strike reconstruction: {recon_time:.1f}ms")
 
                         # Save checkpoint
                         await self.save_checkpoint()
