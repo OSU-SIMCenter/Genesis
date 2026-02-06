@@ -17,7 +17,7 @@ class StrikeState(enum.Enum):
 
 # Configuration constants
 MAX_CHECKPOINTS = 50  # Maximum number of checkpoints to retain
-VERBOSE_LOGGING = False  # Enable per-frame logging during strike (set to False to disable)
+VERBOSE_LOGGING = True  # Enable per-frame logging during strike (set to False to disable)
 LOG_EVERY_N_FRAMES = 3  # Log every Nth frame (1=every frame, 10=every 10th frame)
 
 class StrikeController:
