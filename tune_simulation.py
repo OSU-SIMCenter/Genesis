@@ -85,6 +85,8 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--visualize", action="store_true", help="Enable viewer")
     parser.add_argument("--best-only", action="store_true", help="Run only best config")
+    parser.add_argument("--once", action="store_true", help="Run single episode (alias for --loops 1)")
+    parser.add_argument("--loops", type=int, default=0, help="Number of loops (0=infinite)")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu)
@@ -108,8 +110,14 @@ async def main():
         env = build_env(cfg)
         controller = StrikeController(env)
         
+        loop_count = 0
         while True:
             await run_episode(env, controller, cfg, args.visualize)
+            loop_count += 1
+            if args.loops > 0 and loop_count >= args.loops:
+                break
+            if args.once: # Backward compatibility or alias
+                break
             print("Looping... (Ctrl+C to stop)")
             
     except Exception as e:
