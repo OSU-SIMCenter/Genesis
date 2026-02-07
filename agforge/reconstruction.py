@@ -594,64 +594,69 @@ class SurfaceReconstructor:
             from trimesh.remesh import subdivide_to_size
             import trimesh
             
-            verts = self.reconstructed_mesh.vertices
-            faces = self.reconstructed_mesh.faces
-            orig_vert_count = len(verts)
+            # 1. Snapshot State (for rollback)
+            old_verts = self.reconstructed_mesh.vertices
+            old_faces = self.reconstructed_mesh.faces
+            old_weights = self.bind_weights
+            old_indices = self.bind_indices
+            orig_vert_count = len(old_verts)
             
             # Subdivide edges that exceed threshold  
-            # Use 1.5x the initial max edge length as threshold
             threshold = self._max_edge_length * 1.5
             
             new_verts, new_faces = subdivide_to_size(
-                verts, faces, max_edge=threshold, max_iter=2
+                old_verts, old_faces, max_edge=threshold, max_iter=2
             )
             
-            new_vert_count = len(new_verts)
-            
-            if new_vert_count == orig_vert_count:
-                # No subdivision needed
+            if len(new_verts) == len(old_verts):
                 return False
                 
-            # FIX: Create a NEW mesh instead of mutating in-place.
-            # FIX 2: Enable process=True to weld vertices.
-            # "subdivide_to_size" returns a triangle soup (disconnected faces).
-            # We MUST merge vertices aggressively to reconnect them into a manifold mesh.
-            self.reconstructed_mesh = trimesh.Trimesh(
+            # FIX: Create a NEW mesh to force welding (process=True), then fix normals
+            # We create a temporary mesh first to ensure geometry is sound before transfer
+            temp_mesh = trimesh.Trimesh(
                 vertices=new_verts,
                 faces=new_faces,
                 process=True 
             )
             
-            # Aggressive welding: "process=True" above already does significant merging.
-            # Manual merge_vertices call caused API error and is likely redundant with process=True.
-            # If we need tighter tolerance later, we can use trimesh.grouping.unique_rows with specific precision.
-            
             # --- WEIGHT TRANSFER (Fix for Mesh Holes) ---
-            # ...
+            # Use dynamic tolerance (10% of max edge length)
+            transfer_tolerance = self._max_edge_length * 0.1 if self._max_edge_length else 1e-3
             
             new_weights, new_indices, new_offsets = self._transfer_skinning_data(
-                old_verts=verts,
-                old_faces=faces,
-                new_verts=self.reconstructed_mesh.vertices
+                old_verts=old_verts,
+                old_faces=old_faces, 
+                old_weights=old_weights,
+                old_indices=old_indices,
+                new_verts=temp_mesh.vertices,
+                tolerance=transfer_tolerance
             )
             
-            # 2. Update buffers
+            # --- SAFE ABORT CHECK ---
+            if new_weights is None:
+                gs.logger.warning("Weight transfer failed (Robustness check). Aborting edge split.")
+                return False
+                
+            if len(new_weights) != len(temp_mesh.vertices):
+                gs.logger.error(f"Weight mismatch (Mesh: {len(temp_mesh.vertices)}, W: {len(new_weights)}). Aborting.")
+                return False
+            
+            # Only commit if everything succeeded
+            self.reconstructed_mesh = temp_mesh
             self.bind_weights = new_weights
             self.bind_indices = new_indices
             self.bind_offsets = new_offsets
             
-            # 3. CRITICAL: Update Smoothing Matrix (Laplacian) for new topology
-            # The mesh size changed (e.g. 11050 -> 11038), so the old 11050x11050 matrix
-            # causes a shape mismatch crash in update_skinning().
+            # Ensure Normals are consistent
+            try:
+                self.reconstructed_mesh.fix_normals()
+            except Exception as e:
+                gs.logger.warning(f"Normal fix failed: {e}")
+            
+            # Update Smoothing Matrix
             self._compute_laplacian_matrix()
             
-            gs.logger.info(f"Edge split: {orig_vert_count} -> {len(self.reconstructed_mesh.vertices)} vertices (Weights interpolated)")
-            
-            # Validate
-            if len(self.bind_weights) != len(self.reconstructed_mesh.vertices):
-                gs.logger.error("Weight transfer size mismatch! Reverting to full rebind.")
-                self.init_skinning()
-            
+            gs.logger.info(f"Edge split: {orig_vert_count} -> {len(self.reconstructed_mesh.vertices)} vertices (Safe Transfer)")
             return True
             
         except Exception as e:
@@ -660,105 +665,111 @@ class SurfaceReconstructor:
             traceback.print_exc()
             return False
 
-    def _transfer_skinning_data(self, old_verts, old_faces, new_verts):
+    def _transfer_skinning_data(self, old_verts, old_faces, old_weights, old_indices, new_verts, tolerance=1e-4):
         """
-        Transfers skinning weights from old mesh to new vertices using barycentric interpolation.
-        Returns: (new_weights, new_indices, new_offsets)
+        Transfers skinning weights from old mesh to new vertices.
+        Uses Barycentric interpolation where possible, falls back to Nearest Neighbor for robustness.
+        Returns: (new_weights, new_indices, new_offsets) or (None, None, None) on failure.
         """
         import trimesh.proximity
         import trimesh.triangles
+        from scipy.spatial import cKDTree
         
         device = self.device
         
-        # 1. Check for NaNs in inputs to prevent cKDTree crash
+        # 1. Check for NaNs to prevent crashes
         if not np.isfinite(old_verts).all() or not np.isfinite(new_verts).all():
-            gs.logger.error("Non-finite vertices detected during transfer! Skipping.")
-            return self.bind_weights, self.bind_indices, self.bind_offsets
+            return None, None, None
 
-        # 2. Build query object for old mesh
-        old_mesh_obj = trimesh.Trimesh(vertices=old_verts, faces=old_faces, process=False)
+        # 2. Attempt Barycentric Transfer (High Quality)
+        try:
+            # Build query object for old mesh
+            old_mesh_obj = trimesh.Trimesh(vertices=old_verts, faces=old_faces, process=False)
+            
+            # Find closest point on old mesh
+            closest, distance, triangle_id = trimesh.proximity.closest_point(old_mesh_obj, new_verts)
+            
+            # Identify valid geometric mappings (not degenerate, reasonable distance)
+            # trimesh returns distance as (N,) float
+            valid_mask = distance < tolerance 
+            
+            # Log stats
+            pct_bary = (valid_mask.sum() / len(valid_mask)) * 100
+            gs.logger.debug(f"Transfer Stats: {pct_bary:.1f}% Barycentric (Tol={tolerance:.2e})")
+            
+            # Get face indices for mapped points
+            face_indices = old_faces[triangle_id] # (N, 3)
+            
+            # Compute Barycentric Coords
+            face_verts = old_verts[face_indices]
+            bary = trimesh.triangles.points_to_barycentric(face_verts, closest)
+            
+            # If trimesh returns NaNs for degenerate triangles, mark them invalid
+            bary_valid_mask = np.isfinite(bary).all(axis=1)
+            valid_mask = valid_mask & bary_valid_mask
+            
+        except Exception as e:
+            gs.logger.warning(f"Barycentric transfer failed: {e}. Falling back to Nearest Neighbor.")
+            # Treat all as invalid for barycentric, fall back to NN
+            valid_mask = np.zeros(len(new_verts), dtype=bool)
+
+        # 3. Robust Fallback: Nearest Neighbor (KDTree)
+        # We use this for any point where barycentric failed or is suspicious
+        tree = cKDTree(old_verts)
+        dists, nn_indices = tree.query(new_verts, k=1) # indices into old_verts
         
-        # 3. Find closest point on old mesh for EACH new vertex
-        # (Old vertices will map to themselves, new ones to the edge/face they split)
-        closest, distance, triangle_id = trimesh.proximity.closest_point(old_mesh_obj, new_verts)
+        # 4. Construct Final Weights
+        # Initialize with NN weights (Safe baseline)
+        k = old_weights.shape[1]
         
-        # 4. Get indices of the 3 corners of the mapped faces
-        # shape: (N_new, 3)
-        face_indices = old_faces[triangle_id]
-        
-        # 5. Compute Barycentric Coordinates
-        # shape: (N_new, 3)
-        # We need the vertex positions of those faces
-        face_verts = old_verts[face_indices]
-        bary = trimesh.triangles.points_to_barycentric(face_verts, closest)
-        
-        # Handle NaNs effectively: if barycentric failed (degenerate face), 
-        # fallback to using the first vertex (bary=[1, 0, 0])
-        # This acts as Nearest Neighbor for that degenerate triangle
-        bary = np.nan_to_num(bary, nan=0.0)
-        
-        # Normalize just in case row sum became 0
-        row_sums = bary.sum(axis=1, keepdims=True)
-        row_sums[row_sums == 0] = 1.0 # Prevent div/0
-        bary = bary / row_sums
-        
-        # Convert to torch
-        bary_t = torch.tensor(bary, dtype=torch.float32, device=device)   # (N, 3)
-        face_indices_t = torch.tensor(face_indices, dtype=torch.long, device=device) # (N, 3)
-        
-        # 5. Gather Old Weights & Indices
-        # self.bind_weights: (N_old, k)
-        # self.bind_indices: (N_old, k)
-        k = self.bind_weights.shape[1]
-        
-        # Get weights/indices for the 3 corners
-        # shapes: (N, 3, k)
-        w_corners = self.bind_weights[face_indices_t] 
-        i_corners = self.bind_indices[face_indices_t]
-        
-        # 6. Interpolate Weights (Sparse -> Dense -> TopK)
-        # Since indices can be different at each corner, we can't just sum vectors.
-        # We effectively have 3*k potential particles influencing each new vertex.
-        # We weight them by barycentric coords and take the top k.
-        
-        N = len(new_verts)
-        
-        # Flatten to (N, 3*k)
-        w_flat = w_corners.view(N, 3 * k)
-        i_flat = i_corners.view(N, 3 * k)
-        
-        # Scale weights by barycentric coord of their corner
-        # bary_t stores [u, v, w] for corners [0, 1, 2]
-        # We need to repeat bary weights k times for each corner
-        bary_expanded = bary_t.unsqueeze(2).repeat(1, 1, k).view(N, 3*k)
-        w_weighted = w_flat * bary_expanded
-        
-        # Top K strongest influences
-        best_w, best_local_idx = torch.topk(w_weighted, k=k, dim=1)
-        
-        # Map back to particle indices
-        final_indices = torch.gather(i_flat, 1, best_local_idx)
-        
-        # Re-normalize
-        w_sum = best_w.sum(dim=1, keepdim=True).clamp(min=1e-6)
-        final_weights = best_w / w_sum
-        
-        # 7. Re-compute Offsets
-        # Offset = Vertex_Pos - Particle_Pos
-        # We need current particle positions
+        # Gather NN weights/indices
+        nn_indices_t = torch.tensor(nn_indices, dtype=torch.long, device=device)
+        final_weights = old_weights[nn_indices_t]
+        final_indices = old_indices[nn_indices_t]
+
+        # 5. Apply Barycentric Interpolation where valid (Better quality)
+        # Only overwrite where valid_mask is True
+        if valid_mask.any():
+            valid_idxs = np.where(valid_mask)[0]
+            
+            # Data for valid points
+            bary_sub = torch.tensor(bary[valid_idxs], dtype=torch.float32, device=device) # (M, 3)
+            face_sub = torch.tensor(face_indices[valid_idxs], dtype=torch.long, device=device) # (M, 3)
+            
+            # Gather weights for the 3 corners
+            w_corners = old_weights[face_sub] # (M, 3, k)
+            i_corners = old_indices[face_sub] # (M, 3, k)
+            
+            M = len(valid_idxs)
+            w_flat = w_corners.view(M, 3*k)
+            i_flat = i_corners.view(M, 3*k)
+            
+            # Weight by barycentric coords
+            bary_expanded = bary_sub.unsqueeze(2).repeat(1, 1, k).view(M, 3*k)
+            w_weighted = w_flat * bary_expanded
+            
+            # Top K
+            best_w, best_local_idx = torch.topk(w_weighted, k=k, dim=1)
+            final_indices_sub = torch.gather(i_flat, 1, best_local_idx)
+            
+            # Normalize
+            w_sum = best_w.sum(dim=1, keepdim=True).clamp(min=1e-6)
+            final_weights_sub = best_w / w_sum
+            
+            # Overwrite in final tensors
+            valid_idxs_t = torch.tensor(valid_idxs, dtype=torch.long, device=device)
+            final_weights[valid_idxs_t] = final_weights_sub
+            final_indices[valid_idxs_t] = final_indices_sub
+
+        # 6. Re-compute Offsets (Standard)
         particles = self._get_active_particles(use_cache=True) 
         if isinstance(particles, np.ndarray):
             parts_t = torch.from_numpy(particles).float().to(device)
         else:
             parts_t = particles.to(device)
             
-        # Gather particle positions for the chosen indices
-        # shape: (N, k, 3)
-        neighbor_pos = parts_t[final_indices]
-        
-        # New vertex positions (tensor)
+        neighbor_pos = parts_t[final_indices] # (N, k, 3)
         new_verts_t = torch.tensor(new_verts, dtype=torch.float32, device=device).unsqueeze(1)
-        
         final_offsets = new_verts_t - neighbor_pos
         
         return final_weights, final_indices, final_offsets
