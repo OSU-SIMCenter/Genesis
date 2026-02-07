@@ -266,7 +266,6 @@ class SurfaceReconstructor:
                 # The method calls init_skinning() if splits happen, so positions are reset to current particles
                 self.subdivide_long_edges()
             return
-            return
 
         # Fallback to full reconstruction if not skinned or explicitly requested
         if not should_reconstruct:
@@ -420,9 +419,17 @@ class SurfaceReconstructor:
                     verts = self.reconstructed_mesh.vertices
                     lengths = np.linalg.norm(verts[edges[:, 0]] - verts[edges[:, 1]], axis=1)
                 
-                median_len = np.median(lengths)
-                self._max_edge_length = median_len * 2.0
-                gs.logger.info(f"Dynamic Remeshing: Max edge length set to {self._max_edge_length:.6f} (median: {median_len:.6f})")
+                if len(lengths) == 0:
+                    gs.logger.warning("Dynamic Remeshing: No edges found. Skipping max_edge_length calc.")
+                    self._max_edge_length = None
+                else:
+                    median_len = np.median(lengths)
+                    if np.isnan(median_len) or median_len <= 0:
+                         gs.logger.warning(f"Dynamic Remeshing: Invalid median edge length ({median_len}). Skipping.")
+                         self._max_edge_length = None
+                    else:
+                        self._max_edge_length = median_len * 2.0
+                        gs.logger.info(f"Dynamic Remeshing: Max edge length set to {self._max_edge_length:.6f} (median: {median_len:.6f})")
 
             
             self.skinning_enabled = True
@@ -585,6 +592,7 @@ class SurfaceReconstructor:
         
         try:
             from trimesh.remesh import subdivide_to_size
+            import trimesh
             
             verts = self.reconstructed_mesh.vertices
             faces = self.reconstructed_mesh.faces
@@ -604,9 +612,13 @@ class SurfaceReconstructor:
                 # No subdivision needed
                 return False
                 
-            # Update mesh with new geometry
-            self.reconstructed_mesh.vertices = new_verts
-            self.reconstructed_mesh.faces = new_faces
+            # FIX: Create a NEW mesh instead of mutating in-place.
+            # Mutating vertices/faces leaves 'visual' (colors) with stale shape, causing crash on copy.
+            self.reconstructed_mesh = trimesh.Trimesh(
+                vertices=new_verts,
+                faces=new_faces,
+                process=False # Don't auto-process/merge vertices
+            )
             
             # Re-initialize skinning for new vertices
             gs.logger.info(f"Edge split: {orig_vert_count} -> {new_vert_count} vertices")
@@ -616,6 +628,8 @@ class SurfaceReconstructor:
             
         except Exception as e:
             gs.logger.warning(f"Edge splitting failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def update_skinning_via_grid(self, dt: float):
