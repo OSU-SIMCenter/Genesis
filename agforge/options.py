@@ -33,6 +33,14 @@ class MaterialOptions(Options):
     rho: float = 8000.
     von_mises_yield_stress: float = 190.e6 * 0.1
 
+    # Johnson-Cook Parameters (Steel 4340 approx)
+    use_johnson_cook: bool = True     # Enable J-C by default for testing
+    jc_A: float = 792.e6
+    jc_B: float = 510.e6
+    jc_n: float = 0.26
+    jc_C: float = 0.014
+    jc_eps0: float = 1.0
+
 class EnvOptions(Options):
     """Parameters related to the RL environment and task."""
     num_envs: int = 1
