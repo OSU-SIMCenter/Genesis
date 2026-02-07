@@ -8,6 +8,7 @@ from agforge.options import (
     RobotOptions,
     GENERATED_ROBOT_XML_PATH,
 )
+from agforge.materials import JohnsonCookPlasticity
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -279,6 +280,12 @@ class AgilityForgeEnv:
             material=gs.materials.MPM.ElastoPlastic(
                 E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
                 von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress,
+                sampler=resource_path("pbs_samples/cylinder.ptc"),
+            ) if not getattr(self.cfg.mat, 'use_johnson_cook', False) else JohnsonCookPlasticity(
+                E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
+                # J-C Params
+                A=self.cfg.mat.jc_A, B=self.cfg.mat.jc_B, n=self.cfg.mat.jc_n,
+                C=self.cfg.mat.jc_C, eps0=self.cfg.mat.jc_eps0,
                 sampler=resource_path("pbs_samples/cylinder.ptc"),
             ),
             morph=gs.morphs.Cylinder(

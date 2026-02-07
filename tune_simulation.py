@@ -84,6 +84,7 @@ async def run_episode(env, controller, cfg, visualize):
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--visualize", action="store_true", help="Enable viewer")
+    parser.add_argument("--best-only", action="store_true", help="Run only best config")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu)
@@ -97,6 +98,7 @@ async def main():
     
     print("--- Running with Default Parameters (Manual Tuning Mode) ---")
     print(f"Rho: {cfg.mat.rho}")
+    print(f"J-C Enabled: {getattr(cfg.mat, 'use_johnson_cook', False)}")
     print(f"DT: {cfg.sim.dt}")
     print(f"Speeds: Approach={cfg.strike.approach_speed}, Press={cfg.strike.pressing_speed}")
     print(f"Timeouts: Approach={cfg.strike.approaching_timeout}, Press={cfg.strike.pressing_timeout}")
