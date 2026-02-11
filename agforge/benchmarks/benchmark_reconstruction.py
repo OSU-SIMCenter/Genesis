@@ -39,9 +39,16 @@ def run_reconstruction_benchmark():
         rr.init("surface_reconstruction_benchmark", spawn=True)
 
     configs = [
-        {"name": "Hybrid_128", "grid_res": 128, "backend": "hybrid", "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
-        {"name": "SplashSurf", "grid_res": 128, "backend": "splashsurf", "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
-        # {"name": "Hybrid_64", "grid_res": 64, "backend": "hybrid", "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
+        # Baseline (Hybrid 128^3, ~6k particles)
+        {"name": "Particles_6k", "grid_res": 128, "backend": "hybrid", "sampler": "default", "p_scale": 1.0, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
+        
+        # Scaling Tests (Hybrid 128^3, increased particles)
+        # Using 'regular' sampler with smaller particle size to increase count
+        # 0.5x size -> 8x particles (~48k)
+        {"name": "Particles_48k", "grid_res": 128, "backend": "hybrid", "sampler": "regular", "p_scale": 0.5, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
+        
+        # 0.35x size -> ~23x particles (~140k)
+        {"name": "Particles_140k", "grid_res": 128, "backend": "hybrid", "sampler": "regular", "p_scale": 0.35, "fraction": 1.0, "offset": [0.0, 0.0, 0.08]},
     ]
     
     results = {}
@@ -57,6 +64,12 @@ def run_reconstruction_benchmark():
         
         try:
             env_cfg = copy.deepcopy(cfg)
+            
+            # Apply Particle Scaling
+            env_cfg.env.particle_sampler = conf.get("sampler", "default")
+            if conf.get("p_scale", 1.0) != 1.0:
+                env_cfg.mpm.particle_size *= conf["p_scale"]
+                
             env = build_env(env_cfg)
             
             reconstructor = SurfaceReconstructor(

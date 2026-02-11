@@ -262,11 +262,15 @@ class AgilityForgeEnv:
 
     def _setup_entities(self):
         """Creates the MPM object and the target shape visual guide."""
+        sampler_src = resource_path("pbs_samples/cylinder.ptc")
+        if self.cfg.env.particle_sampler != "default":
+            sampler_src = self.cfg.env.particle_sampler
+
         self.mpm_entity = self.scene.add_entity(
             material=gs.materials.MPM.ElastoPlastic(
                 E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
                 von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress,
-                sampler=resource_path("pbs_samples/cylinder.ptc"),
+                sampler=sampler_src,
             ),
             morph=gs.morphs.Cylinder(
                 radius=self.cfg.robot.cylinder_radius, height=self.cfg.robot.cylinder_height, pos=self.cfg.robot.cylinder_pos, euler=self.cfg.robot.cylinder_euler

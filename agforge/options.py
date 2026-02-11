@@ -44,6 +44,7 @@ class EnvOptions(Options):
     action_upper_bounds: torch.Tensor
     fixed_region_bounds: torch.Tensor
     target_shape_bounds: torch.Tensor
+    particle_sampler: str = "default"
     class Config:
         arbitrary_types_allowed = True
 
