@@ -87,6 +87,7 @@ async def main():
     parser.add_argument("--best-only", action="store_true", help="Run only best config")
     parser.add_argument("--once", action="store_true", help="Run single episode (alias for --loops 1)")
     parser.add_argument("--loops", type=int, default=0, help="Number of loops (0=infinite)")
+    parser.add_argument("--profile", action="store_true", help="Print profiling stats on exit")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu)
@@ -125,6 +126,15 @@ async def main():
         import traceback
         traceback.print_exc()
     finally:
+        if args.profile and env:
+             profiler = env.scene.profiling_options.profiler
+             print("\n--- Detailed Profiling Stats (Rich Table - Full) ---")
+             profiler.rich_table(min_pct=0.0)
+             print("\n--- Detailed Profiling Hierarchy (ASCII Tree - >2%) ---")
+             profiler.print_tree(min_pct=2.0)
+             print("\n--- Profiling Hot-Spots (Flat - >1.5%) ---")
+             profiler.print_flat(sort_by="self", min_pct=1.5)
+
         if env:
             env.scene.destroy()
 
