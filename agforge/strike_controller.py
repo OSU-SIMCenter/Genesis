@@ -252,10 +252,27 @@ class StrikeController:
 
                     # Physics Update (Tensor Ops)
                     imbalance = force_L - force_R
+                    
+                    # --- ADVANCED PROTECTION: Feed Rate Modulation ---
+                    # If force imbalance exceeds threshold, slow down the main pressing speed
+                    # to allow the balance controller to catch up without fighting forward momentum.
+                    SAFETY_THRESHOLD = 20000.0 # 20kN (~10% of max force)
+                    adaptive_speed = pressing_speed
+                    
+                    imbalance_abs = torch.abs(imbalance)
+                    if imbalance_abs > SAFETY_THRESHOLD:
+                        # Linear decay: at 40kN imbalance, speed is 0.
+                        # decay = 1.0 - (imbalance - Threshold) / Range
+                        # Simple logic: If > 20kN, scale down.
+                        # factor = 20000 / imbalance
+                        scale_factor = SAFETY_THRESHOLD / (imbalance_abs + 1e-6)
+                        adaptive_speed = pressing_speed * scale_factor
+                        # gs.logger.debug(f"Protection Active: dF={imbalance.item():.0f}, speed={adaptive_speed:.2f}")
+
                     correction = imbalance * force_balance_gain
                     
-                    v_L = torch.clamp(pressing_speed - correction, min=0.0)
-                    v_R = torch.clamp(pressing_speed + correction, min=0.0)
+                    v_L = torch.clamp(adaptive_speed - correction, min=0.0)
+                    v_R = torch.clamp(adaptive_speed + correction, min=0.0)
                     
                     if VERBOSE_LOGGING and self.strike_step_count % LOG_EVERY_N_FRAMES == 0:
                         gs.logger.info(f"PRESSING[{self.strike_step_count}]: F=[{force_L.item():.3f},{force_R.item():.3f}] dF={imbalance.item():.4f}, v=[{v_L.item():.4f},{v_R.item():.4f}] corr={correction.item():.4f}")
