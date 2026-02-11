@@ -270,7 +270,7 @@ class StrikeOptions(Options):
     
     # Pressing Stage
     pressing_speed: float = 1.e1 # m/s
-    force_balance_gain: float = 0.1e-4 # (m/s) / N. Reverted to stable baseline
+    force_balance_gain: float = 5.0e-5 # (m/s) / N. Optimized via extended sweep (Step 1846)
     target_strain: float = 0.5 # 50% compression
     max_force: float = 200000.0 # 20 tons (200kN)
     pressing_timeout: float = 30.0 # seconds (Increased to avoid timeout)
