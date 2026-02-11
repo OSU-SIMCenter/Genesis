@@ -33,10 +33,10 @@ class MaterialOptions(Options):
     rho: float = 8000.
     von_mises_yield_stress: float = 190.e6 * 0.1
 
-    # Johnson-Cook Parameters (Steel 4340 approx)
-    use_johnson_cook: bool = True     # Enable J-C by default for testing
-    jc_A: float = 792.e6
-    jc_B: float = 510.e6
+    # Johnson-Cook Parameters (Hot Steel ~1200C)
+    use_johnson_cook: bool = True
+    jc_A: float = 40.e6   # ~40 MPa (Very Hot)
+    jc_B: float = 100.e6  # Reduced hardening
     jc_n: float = 0.26
     jc_C: float = 0.014
     jc_eps0: float = 1.0
@@ -272,7 +272,7 @@ class StrikeOptions(Options):
     pressing_speed: float = 1.e1 # m/s
     force_balance_gain: float = 1.e-4 # (m/s) / N. Start with 0.0 for constant velocity testing as requested.
     target_strain: float = 0.5 # 50% compression
-    max_force: float = 50000.0 # N
+    max_force: float = 200000.0 # 20 tons (200kN)
     pressing_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     release_timeout: float = 10.0 # seconds
