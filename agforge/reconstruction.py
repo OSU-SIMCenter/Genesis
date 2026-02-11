@@ -16,7 +16,7 @@ class SamplingMethod(Enum):
 
 @ti.data_oriented
 class SurfaceReconstructor:
-    def __init__(self, env):
+    def __init__(self, env, grid_res=128):
         self.env = env
         self.reconstructed_mesh = trimesh.Trimesh()
         self.recon_enabled = True
@@ -34,7 +34,7 @@ class SurfaceReconstructor:
         self._cached_particles = None
         
         # Grid Configuration
-        self.grid_res = 128
+        self.grid_res = grid_res
         self.density = ti.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
         
         # Constants

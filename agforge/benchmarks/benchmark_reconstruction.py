@@ -39,10 +39,9 @@ def run_reconstruction_benchmark():
         rr.init("surface_reconstruction_benchmark", spawn=True)
 
     configs = [
-        {"name": "Full_Reconstruction", "skinning": False, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
-        # {"name": "Downsampled_Recon", "skinning": False, "fraction": 0.5, "offset": [0.0, 0.0, 0.04]},
-        {"name": "Full_Skinning", "skinning": True, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]}, # Adjusted offset
-        # {"name": "Downsampled_Skinning", "skinning": True, "fraction": 0.5, "offset": [0.0, 0.0, 0.12]},
+        {"name": "Res_64", "grid_res": 64, "skinning": False, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
+        {"name": "Res_128", "grid_res": 128, "skinning": False, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
+        # {"name": "Res_256", "grid_res": 256, "skinning": False, "fraction": 1.0, "offset": [0.0, 0.0, 0.08]}, # Optional high-res test
     ]
     
     results = {}
@@ -60,7 +59,7 @@ def run_reconstruction_benchmark():
             env_cfg = copy.deepcopy(cfg)
             env = build_env(env_cfg)
             
-            reconstructor = SurfaceReconstructor(env)
+            reconstructor = SurfaceReconstructor(env, grid_res=conf.get("grid_res", 128))
             reconstructor.recon_enabled = True
             reconstructor.recon_frame_interval = 1 
             reconstructor.recon_particle_fraction = conf["fraction"]
