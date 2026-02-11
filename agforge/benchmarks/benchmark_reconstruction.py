@@ -208,7 +208,13 @@ def run_reconstruction_benchmark():
     print(f"{'Config':<25} | {'Init':<8} | {'Avg±Std':<15} | {'P95':<8} | {'Verts':<8} | {'Speedup':<8}")
     print("-" * 85)
     
-    base_time = results.get("Full_Reconstruction", {}).get("avg_ms", 1)
+    # Baseline is SplashSurf (if available) or the first available result
+    if "SplashSurf" in results:
+        base_time = results["SplashSurf"]["avg_ms"]
+    elif len(results) > 0:
+        base_time = list(results.values())[0]["avg_ms"]
+    else:
+        base_time = 1.0
     
     for name, m in results.items():
         speedup = base_time / m["avg_ms"] if m["avg_ms"] > 0 else 0
