@@ -304,3 +304,25 @@ class TeleopOptions(AgilityForgeOptions):
     @property
     def gripper_speed(self) -> float:
         return self._gripper_speed
+
+    def model_post_init(self, __context: any) -> None:
+        # Initialize base options (Sim, Robot, MPM, etc.)
+        super().model_post_init(__context)
+        
+        # Parametric Approach Speed Calculation
+        # User requested max safe ratio = 0.35
+        # v_approach = ratio * (dx / dt)
+        
+        target_cfl_ratio = 0.35
+        dx = 1.0 / self.robot.base_grid_density
+        dt = self.sim.dt
+        
+        # Calculate optimal safe speed
+        parametric_speed = target_cfl_ratio * (dx / dt)
+        
+        # Override default
+        self.strike.approach_speed = parametric_speed
+        
+        # We can also log this if we had a logger here, but simple assignment is fine.
+        # It will be visible in the StrikeController logs.
+
