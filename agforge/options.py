@@ -75,6 +75,12 @@ class GeneralOptions(Options):
     show_viewer: bool = True
     record: bool = False
     log_dir: str = "logs/agforge_parametric"
+    
+class ReconstructionOptions(Options):
+    """Parameters for surface reconstruction."""
+    grid_res: int = 128
+    backend: str = "hybrid"  # 'hybrid' or 'splashsurf'
+    enabled: bool = True
 
 class RobotOptions(Options):
     """Parameters for the robot arm in the MuJoCo XML file."""
@@ -175,6 +181,7 @@ class AgilityForgeOptions(Options):
     mat: MaterialOptions = MaterialOptions()
     sac: RLOptions = RLOptions()  # Note: Still named 'sac' for backwards compatibility
     adam: AdamOptions = AdamOptions()
+    reconstruction: ReconstructionOptions = ReconstructionOptions()
     performance_mode: bool = True
 
     # Declare fields for pydantic

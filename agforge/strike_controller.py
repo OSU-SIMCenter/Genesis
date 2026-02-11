@@ -55,7 +55,13 @@ class StrikeController:
         self._init_gripper_limits()
 
         # Surface Reconstruction
-        self.reconstructor = SurfaceReconstructor(env)
+        recon_cfg = env.cfg.reconstruction
+        self.reconstructor = SurfaceReconstructor(
+            env, 
+            grid_res=recon_cfg.grid_res, 
+            backend=recon_cfg.backend
+        )
+        self.reconstructor.recon_enabled = recon_cfg.enabled
         # Note: Reconstruction init mostly happens on demand or at start
         
         # Checkpointing
