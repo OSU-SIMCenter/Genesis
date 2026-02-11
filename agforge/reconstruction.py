@@ -4,6 +4,7 @@ import numpy as np
 import trimesh
 import gstaichi as ti
 import genesis as gs
+import genesis.utils.particle as pu
 from skimage.measure import marching_cubes
 from enum import Enum
 
@@ -16,7 +17,7 @@ class SamplingMethod(Enum):
 
 @ti.data_oriented
 class SurfaceReconstructor:
-    def __init__(self, env, grid_res=128):
+    def __init__(self, env, grid_res=128, backend='hybrid'):
         self.env = env
         self.reconstructed_mesh = trimesh.Trimesh()
         self.recon_enabled = True
@@ -29,6 +30,9 @@ class SurfaceReconstructor:
         self.skinning_enabled = False # Dummy flag
         self.bind_indices = None
         self.bind_weights = None
+        
+        # Backend Configuration
+        self.backend = backend # 'hybrid' or 'splashsurf'
         
         # Caching for Visualization
         self._cached_particles = None
@@ -96,9 +100,6 @@ class SurfaceReconstructor:
             active = mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
             parts = parts[active]
             
-            # Subsampling logic could go here if needed, but skipping for speed/simplicity
-            # The new method is fast enough to handle all particles
-            
             p_numpy = parts.cpu().numpy()
             self._cached_particles = p_numpy
             return p_numpy
@@ -149,6 +150,12 @@ class SurfaceReconstructor:
         self.create_reconstructed_mesh()
 
     def create_reconstructed_mesh(self):
+        # Legacy SplashSurf Path
+        if self.backend == 'splashsurf':
+            self._create_splashsurf_mesh()
+            return
+
+        # Hybrid Path
         try:
             mpm_entity = self.env.mpm_entity
             particles_pos = mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
@@ -204,3 +211,20 @@ class SurfaceReconstructor:
             
         except Exception as e:
             gs.logger.debug(f"Reconstruction skip: {e}")
+
+    def _create_splashsurf_mesh(self):
+        """Legacy SplashSurf reconstruction."""
+        try:
+            particles = self._get_active_particles(use_cache=False)
+            if particles is None or len(particles) == 0:
+                return
+                
+            # Use ~1.0x particle radius for reconstruction
+            # SplashSurf handles neighborhood search internally
+            self.reconstructed_mesh = pu.particles_to_mesh(
+                positions=particles,
+                radius=self.particle_radius * 1.5,
+                backend='splashsurf'
+            )
+        except Exception as e:
+            gs.logger.warning(f"SplashSurf failed: {e}")

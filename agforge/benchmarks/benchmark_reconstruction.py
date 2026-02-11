@@ -39,9 +39,9 @@ def run_reconstruction_benchmark():
         rr.init("surface_reconstruction_benchmark", spawn=True)
 
     configs = [
-        {"name": "Res_64", "grid_res": 64, "skinning": False, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
-        {"name": "Res_128", "grid_res": 128, "skinning": False, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
-        # {"name": "Res_256", "grid_res": 256, "skinning": False, "fraction": 1.0, "offset": [0.0, 0.0, 0.08]}, # Optional high-res test
+        {"name": "Hybrid_128", "grid_res": 128, "backend": "hybrid", "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
+        {"name": "SplashSurf", "grid_res": 128, "backend": "splashsurf", "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
+        # {"name": "Hybrid_64", "grid_res": 64, "backend": "hybrid", "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
     ]
     
     results = {}
@@ -59,13 +59,17 @@ def run_reconstruction_benchmark():
             env_cfg = copy.deepcopy(cfg)
             env = build_env(env_cfg)
             
-            reconstructor = SurfaceReconstructor(env, grid_res=conf.get("grid_res", 128))
+            reconstructor = SurfaceReconstructor(
+                env, 
+                grid_res=conf.get("grid_res", 128),
+                backend=conf.get("backend", 'hybrid')
+            )
             reconstructor.recon_enabled = True
             reconstructor.recon_frame_interval = 1 
             reconstructor.recon_particle_fraction = conf["fraction"]
             reconstructor.sampling_method = SamplingMethod.VOXEL_STRATIFIED
             
-            print(f"  > Sampling: {reconstructor.sampling_method.value}, Fraction: {conf['fraction']}, Skinning: {conf['skinning']}")
+            print(f"  > Sampling: {reconstructor.sampling_method.value}, Fraction: {conf['fraction']}, Skinning: {conf.get('skinning', False)}")
             
             env.robot.set_control_mode("TELEPORT")
             warmup_pos = torch.zeros(4, device=env.device)
@@ -84,7 +88,7 @@ def run_reconstruction_benchmark():
             
             t_start_init = time.time()
             reconstructor.create_reconstructed_mesh()
-            if conf["skinning"]:
+            if conf.get("skinning", False):
                 reconstructor.init_skinning()
             t_init = time.time() - t_start_init
             vertex_count = len(reconstructor.reconstructed_mesh.vertices)
@@ -189,7 +193,7 @@ def run_reconstruction_benchmark():
                 "p95_ms": np.percentile(update_times, 95),
                 "vertices": vertex_count,
                 "fraction": conf["fraction"],
-                "skinning": conf["skinning"],
+                "skinning": conf.get("skinning", False),
             }
             
             print(f"  > Result: {results[name]['avg_ms']:.2f} ± {results[name]['std_ms']:.2f} ms")
