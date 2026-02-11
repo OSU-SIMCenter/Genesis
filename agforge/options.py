@@ -78,7 +78,7 @@ class GeneralOptions(Options):
     
 class ReconstructionOptions(Options):
     """Parameters for surface reconstruction."""
-    grid_res: int = 128
+    grid_res: int = 64
     backend: str = "hybrid"  # 'hybrid' or 'splashsurf'
     enabled: bool = True
 

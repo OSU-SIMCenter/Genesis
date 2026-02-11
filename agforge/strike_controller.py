@@ -419,7 +419,10 @@ class StrikeController:
                 points = self._apply_transformation(particles)
                 vertices = self._apply_transformation(self.reconstructor.reconstructed_mesh.vertices)
             
-            triangles = self.reconstructor.reconstructed_mesh.faces
+            triangles = self.reconstructor.reconstructed_mesh.faces.copy()
+            # Since we flip X axis in transformation, we must flip triangle winding to keep normals correct
+            # Swap vertex 1 and 2 of each triangle
+            triangles[:, [1, 2]] = triangles[:, [2, 1]]
             
             return vertices, triangles, points
 
