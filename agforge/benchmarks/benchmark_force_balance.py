@@ -24,6 +24,9 @@ async def run_episode_with_gain(gain, visualize=False):
     if not visualize:
         cfg.vis.visualize_mpm_boundary = False
         cfg.vis.visualize_mpm_grid = False
+    else:
+        cfg.vis.visualize_mpm_boundary = True
+        cfg.vis.visualize_mpm_grid = True
         
     print(f"--- Running Gain: {gain:.1e} ---")
     
@@ -37,31 +40,54 @@ async def run_episode_with_gain(gain, visualize=False):
         # Warmup
         await controller.reset_simulation()
         
-        # Trigger Strike
-        await controller.trigger_strike(cfg.strike.target_strain)
+        # Sequence: 1. Straight Hit, 2. Angled Hit (15 degrees)
+        hits = [
+            {"angle": 0.0, "desc": "Straight"},
+            {"angle": 30.0, "desc": "Angled"}
+        ]
         
-        start_time = time.time()
-        max_time = cfg.strike.approaching_timeout + cfg.strike.pressing_timeout + 10.0
-        
-        while controller.strike_state != StrikeState.IDLE:
-            if time.time() - start_time > max_time:
-                print("Timeout!")
-                break
+        for hit_idx, hit in enumerate(hits):
+            print(f"  > Hit {hit_idx+1}: {hit['desc']} (Angle {hit['angle']} deg)")
+            
+            # Rotate Hinge if needed (Only during IDLE)
+            qpos = await controller.get_qpos()
+            qpos[0, 1] = np.deg2rad(hit['angle'])
+            await controller.set_qpos(qpos)
+            # Use entity to set qpos instead of set_dofs_position (which crashed comparison)
+            controller.robot.entity.set_qpos(qpos)
+            
+            # Trigger Strike
+            await controller.trigger_strike(cfg.strike.target_strain)
+            
+            start_time = time.time()
+            max_time = cfg.strike.approaching_timeout + cfg.strike.pressing_timeout + 10.0
+            
+            while controller.strike_state != StrikeState.IDLE:
+                if time.time() - start_time > max_time:
+                    print("Timeout!")
+                    break
+                    
+                # Step
+                await controller.step_simulation()
                 
-            # Step
-            await controller.step_simulation()
+                # Record Data only during PRESSING
+                if controller.strike_state == StrikeState.PRESSING:
+                    force_L, force_R = controller.robot.get_resistance_forces()
+                    f_L_mag = torch.norm(force_L).item()
+                    f_R_mag = torch.norm(force_R).item()
+                    dF = abs(f_L_mag - f_R_mag)
+                    dF_history.append(dF)
+                
+                if visualize and env.scene.visualizer:
+                     if hasattr(env.scene.visualizer, 'render'):
+                         env.scene.visualizer.render()
+                     elif hasattr(env.scene.visualizer, 'viewer') and hasattr(env.scene.visualizer.viewer, 'render'):
+                         env.scene.visualizer.viewer.render()
             
-            # Record Data only during PRESSING
-            if controller.strike_state == StrikeState.PRESSING:
-                force_L, force_R = controller.robot.get_resistance_forces()
-                f_L_mag = torch.norm(force_L).item()
-                f_R_mag = torch.norm(force_R).item()
-                dF = abs(f_L_mag - f_R_mag)
-                dF_history.append(dF)
+            # Wait a bit between hits? 
+            # Controller goes to IDLE automatically.
+            # We skip explicit wait, just proceed to next hit.
             
-            if visualize and env.scene.visualizer:
-                 env.scene.visualizer.render()
-
         # Compile Stats
         if dF_history:
             dF_mean = np.mean(dF_history)
