@@ -28,6 +28,7 @@ def run_reconstruction_benchmark():
     parser.add_argument("--visualize", action="store_true", help="Show Genesis viewer")
     parser.add_argument("--rerun", action="store_true", help="Log visualization to Rerun")
     parser.add_argument("--save-meshes", action="store_true", help="Save meshes to disk")
+    parser.add_argument("--save", action="store_true", help="Save benchmark results to JSON")
     args = parser.parse_args()
 
     print("--- Starting Surface Reconstruction Benchmark ---")
@@ -213,10 +214,11 @@ def run_reconstruction_benchmark():
     
     print("="*85)
     
-    results_path = os.path.join(current_dir, "benchmark_results.json")
-    with open(results_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"\nResults saved to: {results_path}")
+    if args.save:
+        results_path = os.path.join(current_dir, "benchmark_results.json")
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"\nResults saved to: {results_path}")
 
 
 if __name__ == "__main__":

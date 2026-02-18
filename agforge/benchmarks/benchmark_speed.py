@@ -33,9 +33,6 @@ async def run_episode(env, controller, cfg, speed, mode="approach", visualize=Fa
     
     # CRITICAL FIX: Ensure the environment/controller actually sees the updated config
     # cfg is passed by reference, so env.cfg should be the same object.
-    # But let's verify and force update if needed (though Python objs are ref).
-    # Printing to confirm what the controller sees.
-
     
     results = {}
     

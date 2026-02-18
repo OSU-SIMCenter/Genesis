@@ -22,6 +22,7 @@ async def run_benchmark():
     parser.add_argument("--output_dir", default="benchmark_data", help="Directory to save results")
     parser.add_argument("--single", action="store_true", help="Run only Production config with default soft params (no sweep)")
     parser.add_argument("--loops", type=int, default=1, help="Number of loops per config (0 = infinite, Ctrl+C to stop)")
+    parser.add_argument("--save", action="store_true", help="Save benchmark results and profiles")
     args = parser.parse_args()
 
     results_dir = os.path.join(os.path.dirname(__file__), args.output_dir)
@@ -242,14 +243,15 @@ async def run_benchmark():
                         
                     results.append(run_data)
                     
-                    # Incremental Save - Standard JSON
-                    fname = f"result_{hard_cfg['name']}_{soft_cfg['name']}_loop{loop_iter}_{run_data['timestamp']}.json"
-                    with open(os.path.join(results_dir, fname), "w") as f:
-                        json.dump(run_data, f, indent=2)
+                    if args.save:
+                        # Incremental Save - Standard JSON
+                        fname = f"result_{hard_cfg['name']}_{soft_cfg['name']}_loop{loop_iter}_{run_data['timestamp']}.json"
+                        with open(os.path.join(results_dir, fname), "w") as f:
+                            json.dump(run_data, f, indent=2)
 
-                    # Save Speedscope Profile
-                    profile_fname = f"profile_{hard_cfg['name']}_{soft_cfg['name']}_loop{loop_iter}_{run_data['timestamp']}.speedscope.json"
-                    profiler.save_speedscope(os.path.join(results_dir, profile_fname))
+                        # Save Speedscope Profile
+                        profile_fname = f"profile_{hard_cfg['name']}_{soft_cfg['name']}_loop{loop_iter}_{run_data['timestamp']}.speedscope.json"
+                        profiler.save_speedscope(os.path.join(results_dir, profile_fname))
                     
                     # Check loop break condition
                     if args.loops > 0 and loop_iter >= args.loops:
