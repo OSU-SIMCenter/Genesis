@@ -40,6 +40,9 @@ class SurfaceReconstructor:
         # Grid Configuration
         self.grid_res = grid_res
         self.density = ti.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
+        self.prev_density = ti.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
+        self.temporal_alpha = 0.35 # Blend factor (0.0 = history only, 1.0 = no smoothing)
+        self.density_initialized = False
         
         # Constants
         self.particle_radius = 0.005 
@@ -141,6 +144,22 @@ class SurfaceReconstructor:
                                     val = (1.0 - r2)**3
                                     self.density[ix, iy, iz] += val
 
+    @ti.kernel
+    def _blend_density_temporal(self, alpha: float):
+        """Smooth density field across frames to reduce aliasing (wavy patterns)."""
+        for I in ti.grouped(self.density):
+            current_val = self.density[I]
+            prev_val = self.prev_density[I]
+            
+            # Blend: alpha * new + (1-alpha) * old
+            # If prompt says alpha=0.3 means keep 70% history, then formula is:
+            # val = alpha * current + (1-alpha) * prev
+            
+            blended_val = alpha * current_val + (1.0 - alpha) * prev_val
+            
+            self.density[I] = blended_val
+            self.prev_density[I] = blended_val
+
     def update(self, should_reconstruct: bool):
         if not self.recon_enabled:
             return
@@ -191,6 +210,12 @@ class SurfaceReconstructor:
                 float(self.influence_radius)
             )
             
+            # Apply Temporal Blending
+            # Use alpha=1.0 for first frame to avoid ghosting from zero-init
+            alpha = 1.0 if not self.density_initialized else self.temporal_alpha
+            self._blend_density_temporal(alpha)
+            self.density_initialized = True
+            
             density_cpu = self.density.to_numpy()
             thresh = 0.5 
             
@@ -208,6 +233,26 @@ class SurfaceReconstructor:
                 vertex_normals=normals,
                 process=False
             )
+            
+            # Apply Mesh Smoothing (Fixes "bumpy" artifacts)
+            if len(self.reconstructed_mesh.vertices) > 0:
+                try:
+                    # Taubin smoothing is preferred as it preserves volume better than Laplacian
+                    import trimesh.smoothing
+                    trimesh.smoothing.filter_taubin(
+                        self.reconstructed_mesh, 
+                        iterations=5
+                    )
+                except Exception:
+                    # Fallback to Laplacian if Taubin fails or not available
+                    try:
+                        trimesh.smoothing.filter_laplacian(
+                            self.reconstructed_mesh,
+                            lamb=0.5,
+                            iterations=3
+                        )
+                    except Exception as e:
+                        gs.logger.debug(f"Smoothing failed: {e}")
             
         except Exception as e:
             gs.logger.debug(f"Reconstruction skip: {e}")
