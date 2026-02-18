@@ -1,0 +1,11 @@
+gain,mean_dF,max_dF,status,note
+1.0e-6,2746,10546,Success,Stable
+1.0e-5,2736,10700,Success,Stable
+5.0e-5,2591,9501,Success,Robust Choice
+7.5e-5,2535,9266,Success,Stable
+1.0e-4,2462,9202,Success,Optimal Balance
+1.5e-4,2318,9018,Success,Best Perf (Risk)
+1.6e-4,2337,8820,Success,Risk Zone
+1.7e-4,2422,8814,Success,Turnaround
+1.8e-4,2587,8712,Success,Degrading
+2.0e-4,3918,39736,Success,Unstable (Cliff)
