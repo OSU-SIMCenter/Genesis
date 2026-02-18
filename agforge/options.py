@@ -265,11 +265,12 @@ class TrainingOptions(AgilityForgeOptions):
 
 class StrikeOptions(Options):
     """Parameters for the approaching and pressing stage."""
-    approach_speed: float = 4.e1
+    # Approach speed is calculated parametrically in TeleopOptions.model_post_init based on CFL
+    approach_speed: float = 0.0 # Placeholder
     contact_force_threshold: float = 150.0 # Force threshold to detect contact
     
     target_strain: float = 0.5 # 50% reduction
-    pressing_speed: float = 10.0 # m/s
+    pressing_speed: float = 30.0 # m/s
     
     # Force Balance Control
     # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).
