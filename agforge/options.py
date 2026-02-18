@@ -268,10 +268,16 @@ class StrikeOptions(Options):
     approach_speed: float = 4.e1
     contact_force_threshold: float = 150.0 # Force threshold to detect contact
     
-    # Pressing Stage
-    pressing_speed: float = 1.e1 # m/s
-    force_balance_gain: float = 5.0e-5 # (m/s) / N. Optimized via extended sweep (Step 1846)
-    target_strain: float = 0.5 # 50% compression
+    target_strain: float = 0.5 # 50% reduction
+    pressing_speed: float = 10.0 # m/s
+    
+    # Force Balance Control
+    # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).
+    # User selected 1.5e-4 for maximum benchmark results.
+    force_balance_gain: float = 1.5e-4 
+    
+    # Safety Limits
+    max_force_imbalance: float = 20000.0 # 20 kN% compression
     max_force: float = 200000.0 # 20 tons (200kN)
     pressing_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
