@@ -115,7 +115,7 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--gains", type=str, default="0.1e-4,1.0e-4,2.0e-4,5.0e-4", help="Comma separated gains")
     parser.add_argument("--angles", type=str, default="0,30", help="Comma separated angles for hits")
-    parser.add_argument("--visualize", action="store_true")
+    parser.add_argument("--save", action="store_true", help="Save results to CSV")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu)
@@ -138,10 +138,11 @@ async def main():
     print(df.to_string(index=False))
     
     # Save to CSV
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    csv_filename = f"force_balance_results_{timestamp}.csv"
-    df.to_csv(csv_filename, index=False)
-    print(f"\nResults saved to {csv_filename}")
+    if args.save:
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        csv_filename = f"force_balance_results_{timestamp}.csv"
+        df.to_csv(csv_filename, index=False)
+        print(f"\nResults saved to {csv_filename}")
     
     # Analyze Best
     if not df.empty and 'mean_dF' in df.columns:
