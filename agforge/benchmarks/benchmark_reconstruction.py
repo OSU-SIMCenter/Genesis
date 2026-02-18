@@ -41,17 +41,17 @@ def run_reconstruction_benchmark():
     configs = [
         # Baseline (Hybrid 128^3, ~6k particles)
         {"name": "Hybrid_6k", "grid_res": 128, "backend": "hybrid", "sampler": "default", "p_scale": 1.0, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
-        {"name": "SplashSurf_6k", "grid_res": 128, "backend": "splashsurf", "sampler": "default", "p_scale": 1.0, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
+        # {"name": "SplashSurf_6k", "grid_res": 128, "backend": "splashsurf", "sampler": "default", "p_scale": 1.0, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
         
         # Scaling Tests (increased particles)
         # 0.5x size -> 8x particles (~48k)
-        {"name": "Hybrid_48k", "grid_res": 128, "backend": "hybrid", "sampler": "regular", "p_scale": 0.5, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
-        {"name": "SplashSurf_48k", "grid_res": 128, "backend": "splashsurf", "sampler": "regular", "p_scale": 0.5, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
+        # {"name": "Hybrid_48k", "grid_res": 128, "backend": "hybrid", "sampler": "regular", "p_scale": 0.5, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
+        # {"name": "SplashSurf_48k", "grid_res": 128, "backend": "splashsurf", "sampler": "regular", "p_scale": 0.5, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
 
         # 0.35x size -> ~23x particles (~140k)
-        {"name": "Hybrid_140k", "grid_res": 128, "backend": "hybrid", "sampler": "regular", "p_scale": 0.35, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
+        # {"name": "Hybrid_140k", "grid_res": 128, "backend": "hybrid", "sampler": "regular", "p_scale": 0.35, "fraction": 1.0, "offset": [0.0, 0.0, 0.0]},
         # Note: SplashSurf might be very slow at 140k, but including for completeness
-        {"name": "SplashSurf_140k", "grid_res": 128, "backend": "splashsurf", "sampler": "regular", "p_scale": 0.35, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
+        # {"name": "SplashSurf_140k", "grid_res": 128, "backend": "splashsurf", "sampler": "regular", "p_scale": 0.35, "fraction": 1.0, "offset": [0.0, 0.0, 0.04]},
     ]
     
     results = {}

@@ -1,7 +1,7 @@
-import time
 import torch
 import numpy as np
 import trimesh
+import trimesh.smoothing
 import gstaichi as ti
 import genesis as gs
 import genesis.utils.particle as pu
@@ -65,12 +65,14 @@ class SurfaceReconstructor:
         self.reconstructed_mesh = state['mesh'].copy()
         self.recon_enabled = state.get('recon_enabled', True)
         self.frame_counter = state.get('frame_counter', 0)
+        self.density_initialized = False
 
     def reset(self):
         self.reconstructed_mesh = trimesh.Trimesh()
         self.frame_counter = 0
         self._cached_particles = None
         self.skinning_enabled = False
+        self.density_initialized = False
 
     # --- Compatibility Interface ---
     def init_skinning(self):
@@ -146,17 +148,9 @@ class SurfaceReconstructor:
 
     @ti.kernel
     def _blend_density_temporal(self, alpha: float):
-        """Smooth density field across frames to reduce aliasing (wavy patterns)."""
+        """Exponential moving average over the density field: D = alpha*D_new + (1-alpha)*D_prev."""
         for I in ti.grouped(self.density):
-            current_val = self.density[I]
-            prev_val = self.prev_density[I]
-            
-            # Blend: alpha * new + (1-alpha) * old
-            # If prompt says alpha=0.3 means keep 70% history, then formula is:
-            # val = alpha * current + (1-alpha) * prev
-            
-            blended_val = alpha * current_val + (1.0 - alpha) * prev_val
-            
+            blended_val = alpha * self.density[I] + (1.0 - alpha) * self.prev_density[I]
             self.density[I] = blended_val
             self.prev_density[I] = blended_val
 
@@ -182,13 +176,22 @@ class SurfaceReconstructor:
             
             n_particles = particles_pos.shape[0]
             if n_particles == 0:
+                self.reconstructed_mesh = trimesh.Trimesh()
+                return
+
+            active_particles = particles_pos[particles_active]
+            n_active_particles = active_particles.shape[0]
+            if n_active_particles == 0:
+                gs.logger.warning(f"Reconstruction: 0 active of {n_particles} total particles")
+                self._cached_particles = np.empty((0, 3), dtype=np.float32)
+                self.reconstructed_mesh = trimesh.Trimesh()
                 return
 
             # Update cache for visualization
-            self._cached_particles = particles_pos[particles_active].cpu().numpy()
+            self._cached_particles = active_particles.cpu().numpy()
 
-            min_bound = particles_pos.min(dim=0).values.cpu().numpy()
-            max_bound = particles_pos.max(dim=0).values.cpu().numpy()
+            min_bound = active_particles.min(dim=0).values.cpu().numpy()
+            max_bound = active_particles.max(dim=0).values.cpu().numpy()
             
             padding = self.influence_radius * 2.0
             min_bound -= padding
@@ -201,6 +204,12 @@ class SurfaceReconstructor:
             dx = max_extent / (self.grid_res - 1)
             lower_bound_ti = ti.Vector([min_bound[0], min_bound[1], min_bound[2]])
             
+            gs.logger.info(
+                f"Reconstruction: {n_active_particles}/{n_particles} particles, "
+                f"grid_res={self.grid_res}, dx={dx:.6f}, influence_r={self.influence_radius:.6f}, "
+                f"alpha={'1.0 (init)' if not self.density_initialized else str(self.temporal_alpha)}"
+            )
+
             self._compute_density_kernel(
                 particles_pos, 
                 particles_active, 
@@ -217,45 +226,57 @@ class SurfaceReconstructor:
             self.density_initialized = True
             
             density_cpu = self.density.to_numpy()
-            thresh = 0.5 
-            
+            max_dens = density_cpu.max()
+            thresh = 0.5
+
+            gs.logger.info(f"Reconstruction: max_density={max_dens:.4f}, threshold={thresh}")
+
+            if max_dens < thresh:
+                gs.logger.warning(
+                    f"Reconstruction: max density {max_dens:.4f} below threshold {thresh}! "
+                    f"Mesh will be empty."
+                )
+                return
+
             verts, faces, normals, values = marching_cubes(
-                density_cpu, 
+                density_cpu,
                 level=thresh,
                 spacing=(dx, dx, dx),
                 allow_degenerate=False
             )
             verts += min_bound
-            
-            self.reconstructed_mesh = trimesh.Trimesh(
-                vertices=verts, 
-                faces=faces, 
+
+            mesh = trimesh.Trimesh(
+                vertices=verts,
+                faces=faces,
                 vertex_normals=normals,
                 process=False
             )
-            
-            # Apply Mesh Smoothing (Fixes "bumpy" artifacts)
-            if len(self.reconstructed_mesh.vertices) > 0:
+
+            # Taubin smoothing preserves volume better than Laplacian
+            if len(mesh.vertices) > 0:
                 try:
-                    # Taubin smoothing is preferred as it preserves volume better than Laplacian
-                    import trimesh.smoothing
-                    trimesh.smoothing.filter_taubin(
-                        self.reconstructed_mesh, 
-                        iterations=5
-                    )
+                    trimesh.smoothing.filter_taubin(mesh, iterations=3)
                 except Exception:
-                    # Fallback to Laplacian if Taubin fails or not available
                     try:
-                        trimesh.smoothing.filter_laplacian(
-                            self.reconstructed_mesh,
-                            lamb=0.5,
-                            iterations=3
-                        )
+                        trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=2)
                     except Exception as e:
                         gs.logger.debug(f"Smoothing failed: {e}")
+
+                if np.isnan(mesh.vertices).any():
+                    gs.logger.warning("Smoothing produced NaN vertices, using unsmoothed mesh")
+                    mesh = trimesh.Trimesh(
+                        vertices=verts, faces=faces,
+                        vertex_normals=normals, process=False
+                    )
+
+            gs.logger.info(f"Reconstruction: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
+            self.reconstructed_mesh = mesh
             
         except Exception as e:
-            gs.logger.debug(f"Reconstruction skip: {e}")
+            gs.logger.warning(f"Reconstruction failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _create_splashsurf_mesh(self):
         """Legacy SplashSurf reconstruction."""
