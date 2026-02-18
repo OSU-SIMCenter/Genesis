@@ -10,7 +10,7 @@ from agforge.options import TeleopOptions, RobotOptions, ureg
 from agforge.agforge_builder import build_env
 from agforge.strike_controller import StrikeController, StrikeState
 
-async def run_episode_with_gain(gain, visualize=False):
+async def run_episode_with_gain(gain, visualize=False, angles=[0.0, 30.0]):
     """
     Runs a single simulation episode with a specific force balance gain.
     Returns statistics on force difference (dF).
@@ -40,11 +40,9 @@ async def run_episode_with_gain(gain, visualize=False):
         # Warmup
         await controller.reset_simulation()
         
-        # Sequence: 1. Straight Hit, 2. Angled Hit (15 degrees)
-        hits = [
-            {"angle": 0.0, "desc": "Straight"},
-            {"angle": 30.0, "desc": "Angled"}
-        ]
+        hits = []
+        for a in angles:
+            hits.append({"angle": a, "desc": f"Hit {a} deg"})
         
         for hit_idx, hit in enumerate(hits):
             print(f"  > Hit {hit_idx+1}: {hit['desc']} (Angle {hit['angle']} deg)")
@@ -116,16 +114,18 @@ async def run_episode_with_gain(gain, visualize=False):
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--gains", type=str, default="0.1e-4,1.0e-4,2.0e-4,5.0e-4", help="Comma separated gains")
+    parser.add_argument("--angles", type=str, default="0,30", help="Comma separated angles for hits")
     parser.add_argument("--visualize", action="store_true")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu)
     
     gains = [float(g) for g in args.gains.split(",")]
+    angles = [float(a) for a in args.angles.split(",")]
     results = []
     
     for gain in gains:
-        res = await run_episode_with_gain(gain, args.visualize)
+        res = await run_episode_with_gain(gain, args.visualize, angles)
         results.append(res)
         # Re-init Genesis? No, just destroy scene is enough usually.
         # But Genesis might need full restart for clean options? 
@@ -136,6 +136,12 @@ async def main():
     df = pd.DataFrame(results)
     print("\n=== Force Balance Benchmark Results ===")
     print(df.to_string(index=False))
+    
+    # Save to CSV
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    csv_filename = f"force_balance_results_{timestamp}.csv"
+    df.to_csv(csv_filename, index=False)
+    print(f"\nResults saved to {csv_filename}")
     
     # Analyze Best
     if not df.empty and 'mean_dF' in df.columns:
