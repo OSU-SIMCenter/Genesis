@@ -204,7 +204,7 @@ class SurfaceReconstructor:
             dx = max_extent / (self.grid_res - 1)
             lower_bound_ti = ti.Vector([min_bound[0], min_bound[1], min_bound[2]])
             
-            gs.logger.info(
+            gs.logger.debug(
                 f"Reconstruction: {n_active_particles}/{n_particles} particles, "
                 f"grid_res={self.grid_res}, dx={dx:.6f}, influence_r={self.influence_radius:.6f}, "
                 f"alpha={'1.0 (init)' if not self.density_initialized else str(self.temporal_alpha)}"
@@ -229,7 +229,7 @@ class SurfaceReconstructor:
             max_dens = density_cpu.max()
             thresh = 0.5
 
-            gs.logger.info(f"Reconstruction: max_density={max_dens:.4f}, threshold={thresh}")
+            gs.logger.debug(f"Reconstruction: max_density={max_dens:.4f}, threshold={thresh}")
 
             if max_dens < thresh:
                 gs.logger.warning(
@@ -270,13 +270,11 @@ class SurfaceReconstructor:
                         vertex_normals=normals, process=False
                     )
 
-            gs.logger.info(f"Reconstruction: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
+            gs.logger.debug(f"Reconstruction: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
             self.reconstructed_mesh = mesh
             
         except Exception as e:
-            gs.logger.warning(f"Reconstruction failed: {e}")
-            import traceback
-            traceback.print_exc()
+            gs.logger.warning(f"Reconstruction failed: {e}", exc_info=True)
 
     def _create_splashsurf_mesh(self):
         """Legacy SplashSurf reconstruction."""
