@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import traceback
 import sys
@@ -103,7 +103,6 @@ async def simulation_loop(websocket, state: StrikeController):
                      continue
                  last_idle_time = time.time()
             
-            should_send = should_step or should_smooth_idle or pending_send
             should_send = should_step or pending_send
             
             if not should_send:
