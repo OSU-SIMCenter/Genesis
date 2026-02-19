@@ -74,8 +74,9 @@ class StrikeController:
         self._dofs_idx_local = torch.tensor([0, 1, 2, 3], device=self.env.device)
         self._force_next_apply = True
 
-        # Stability check counter (only check every N steps to avoid per-step GPU sync)
+        # Stability checking state
         self._physics_step_counter = 0
+        self._stability_grace_steps = 0  # Suppress checks after undo/reset to let state settle
 
     def _init_gripper_limits(self):
         # We can re-use the XML generator logic or just hardcode if standard.
@@ -439,11 +440,24 @@ class StrikeController:
         self._physics_step_counter += 1
 
         # 4b. Stability Check (separate from physics for accurate profiling)
-        # Also triggers if the physics step itself threw an exception.
+        # - Always fires on physics exceptions (regardless of grace period)
+        # - During active strikes: checks every step for fast detection
+        # - During idle: checks every check_interval steps to reduce GPU sync overhead
+        # - Suppressed during grace period after undo/reset (prevents cascading auto-undos
+        #   from residual elastic energy in the restored state)
         safety = getattr(self.env.cfg, 'safety', None)
-        needs_check = physics_failed or (
-            safety and safety.enabled and self._physics_step_counter % safety.check_interval == 0
-        )
+
+        if physics_failed:
+            needs_check = True
+        elif self._stability_grace_steps > 0:
+            self._stability_grace_steps -= 1
+            needs_check = False
+        elif safety and safety.enabled:
+            is_in_strike = self.strike_state not in (StrikeState.IDLE, StrikeState.HOLDING)
+            needs_check = is_in_strike or (self._physics_step_counter % safety.check_interval == 0)
+        else:
+            needs_check = False
+
         if needs_check:
             try:
                 if physics_failed:
@@ -587,15 +601,21 @@ class StrikeController:
 
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
+
+            # Suppress stability checks for a grace period so residual elastic
+            # energy in the restored state doesn't immediately trigger another undo.
+            safety = getattr(self.env.cfg, 'safety', None)
+            grace = safety.check_interval * 3 if safety else 30
+            self._stability_grace_steps = grace
             
             mesh_verts = len(self.reconstructor.reconstructed_mesh.vertices) if self.reconstructor.reconstructed_mesh.vertices is not None else 0
-            gs.logger.info(f"Undo complete (stack={len(self.checkpoints)}, mesh_verts={mesh_verts})")
+            gs.logger.info(f"Undo complete (stack={len(self.checkpoints)}, mesh_verts={mesh_verts}, grace={grace})")
 
     def _check_stability(self):
         """
         Checks for numerical instability in the simulation.
-        Uses get_particles_vel() instead of get_state() to avoid copying
-        the full particle state (positions, deformation gradients, etc.).
+        Uses lightweight per-field queries instead of get_state() to avoid
+        copying the full particle state (deformation gradients, etc.).
         Raises SimulationStabilityError if detected.
         """
         safety = getattr(self.env.cfg, 'safety', None)
@@ -605,9 +625,15 @@ class StrikeController:
         vels = self.env.mpm_entity.get_particles_vel()
 
         if safety.check_nan:
-            has_bad = torch.isnan(vels).any() | torch.isinf(vels).any()
+            pos = self.env.mpm_entity.get_particles_pos()
+            has_bad = (
+                torch.isnan(vels).any()
+                | torch.isinf(vels).any()
+                | torch.isnan(pos).any()
+                | torch.isinf(pos).any()
+            )
             if has_bad.item():
-                raise SimulationStabilityError("NaN/Inf detected in particle velocities")
+                raise SimulationStabilityError("NaN/Inf detected in particle state")
 
         if safety.max_particle_velocity > 0:
             if (torch.abs(vels) > safety.max_particle_velocity).any().item():
@@ -642,5 +668,9 @@ class StrikeController:
             
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
+
+            # Suppress stability checks while the freshly reset state settles
+            safety = getattr(self.env.cfg, 'safety', None)
+            self._stability_grace_steps = safety.check_interval * 3 if safety else 30
             
             gs.logger.info("Simulation reset")
