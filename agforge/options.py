@@ -284,7 +284,15 @@ class StrikeOptions(Options):
     approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     release_timeout: float = 10.0 # seconds
     post_release_steps: int = 10 # steps
-    
+
+class SafetyOptions(Options):
+    """Parameters for simulation stability checks."""
+    enabled: bool = True
+    max_particle_velocity: float = 500.0 # m/s - Higher than max stable speed but catches explosions
+    check_nan: bool = True
+    auto_reset: bool = True
+    check_interval: int = 10 # Only check every N physics steps (avoids per-step GPU sync)
+
 class AdaptiveControlConfig(Options):
     """Configuration for adaptive control gains."""
     base_kp: float = 5000.0
@@ -295,6 +303,7 @@ class TeleopOptions(AgilityForgeOptions):
     """Aggregated configuration for teleoperation."""
     strike: StrikeOptions = StrikeOptions()
     adaptive_control: AdaptiveControlConfig = AdaptiveControlConfig()
+    safety: SafetyOptions = SafetyOptions()
     print_profiling_on_exit: bool = True  # Print profiler visualizations on shutdown
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08

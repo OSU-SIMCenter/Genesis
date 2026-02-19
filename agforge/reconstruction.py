@@ -131,6 +131,15 @@ class SurfaceReconstructor:
         else:
             self._invalidate_skinning()
             
+        # Regenerate GPU tensor from restored mesh so update_and_get_recon_data
+        # doesn't read stale (potentially blown-up) data from the old tensor.
+        if self.reconstructed_mesh.vertices is not None and len(self.reconstructed_mesh.vertices) > 0:
+            self.reconstructed_vertices_tensor = torch.from_numpy(
+                self.reconstructed_mesh.vertices
+            ).float().to(self.device)
+        else:
+            self.reconstructed_vertices_tensor = None
+
         # Clear particle cache to ensure next fetch gets valid data for this restored time
         self._cached_particles = None
         self._cached_frame = -1

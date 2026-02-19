@@ -15,6 +15,10 @@ class StrikeState(enum.Enum):
     PRESSING = 3
     RELEASE = 4
 
+class SimulationStabilityError(Exception):
+    """Raised when simulation state becomes unstable (NaNs, Exploding velocities)."""
+    pass
+
 # Configuration constants
 MAX_CHECKPOINTS = 50  # Maximum number of checkpoints to retain
 VERBOSE_LOGGING = True  # Enable per-frame logging during strike (set to False to disable)
@@ -70,6 +74,9 @@ class StrikeController:
         self._dofs_idx_local = torch.tensor([0, 1, 2, 3], device=self.env.device)
         self._force_next_apply = True
 
+        # Stability check counter (only check every N steps to avoid per-step GPU sync)
+        self._physics_step_counter = 0
+
     def _init_gripper_limits(self):
         # We can re-use the XML generator logic or just hardcode if standard.
         # Since agforge_builder is where RobotXMLGenerator lives, we might need to import it
@@ -105,6 +112,11 @@ class StrikeController:
             if self.strike_state != StrikeState.IDLE:
                 gs.logger.warning(f"Strike requested but already in {self.strike_state.name}")
                 return
+            
+            # SAVE CHECKPOINT BEFORE STRIKE STARTS
+            # This ensures we can undo to the exact state before the attempt, 
+            # preserving the user's intended position/angle.
+            self._save_checkpoint_impl() 
             
             # Log initial state for debugging
             pos_L = self.robot.left_gripper.get_pos()
@@ -346,8 +358,9 @@ class StrikeController:
                         recon_time = (time.time() - recon_start) * 1000
                         gs.logger.info(f"  Post-strike reconstruction: {recon_time:.1f}ms")
 
-                        # Save checkpoint
-                        await self.save_checkpoint()
+                        # Replace the pre-strike checkpoint (saved in trigger_strike)
+                        # with this post-strike state so 1 undo = 1 strike reversal.
+                        await self.save_checkpoint(replace_last=True)
                         
                         # Flag to ensure updated mesh is sent to client
                         self.pending_mesh_send = True
@@ -415,11 +428,41 @@ class StrikeController:
             self.env.scene.sim.coupler.clear_link_coupling_forces()
 
         # 4. Physics Step
+        physics_failed = False
         with self._profile("teleop_physics"):
             try:
                 self.env.scene.step(update_visualizer=False)
             except Exception as e:
-                gs.logger.warning(f"Physics step skipped due to instability: {e}")
+                gs.logger.error(f"Physics step failed: {e}")
+                physics_failed = True
+
+        self._physics_step_counter += 1
+
+        # 4b. Stability Check (separate from physics for accurate profiling)
+        # Also triggers if the physics step itself threw an exception.
+        safety = getattr(self.env.cfg, 'safety', None)
+        needs_check = physics_failed or (
+            safety and safety.enabled and self._physics_step_counter % safety.check_interval == 0
+        )
+        if needs_check:
+            try:
+                if physics_failed:
+                    raise SimulationStabilityError("Physics step threw an exception")
+                self._check_stability()
+            except SimulationStabilityError as e:
+                gs.logger.error(f"CRITICAL STABILITY FAILURE: {e}")
+                if safety and safety.auto_reset:
+                    gs.logger.warning(">>> Auto-Undo Triggered by System Protection (Reverting to Checkpoint) <<<")
+                    if len(self.checkpoints) > 0:
+                        await self.load_checkpoint()
+                    else:
+                        gs.logger.warning("No checkpoint available for undo. Forcing full reset.")
+                        await self.reset_simulation()
+                    return
+                elif physics_failed:
+                    return
+                else:
+                    raise
 
         # 5. Render Update
         if self.env.scene.visualizer:
@@ -499,8 +542,10 @@ class StrikeController:
         mesh_verts = len(self.reconstructor.reconstructed_mesh.vertices) if self.reconstructor.reconstructed_mesh.vertices is not None else 0
         gs.logger.info(f"Checkpoint saved (stack={len(self.checkpoints)}, mesh_verts={mesh_verts})")
 
-    async def save_checkpoint(self):
+    async def save_checkpoint(self, replace_last=False):
         async with self.lock:
+            if replace_last and len(self.checkpoints) > 0:
+                self.checkpoints.pop()
             self._save_checkpoint_impl()
 
     async def load_checkpoint(self):
@@ -545,6 +590,30 @@ class StrikeController:
             
             mesh_verts = len(self.reconstructor.reconstructed_mesh.vertices) if self.reconstructor.reconstructed_mesh.vertices is not None else 0
             gs.logger.info(f"Undo complete (stack={len(self.checkpoints)}, mesh_verts={mesh_verts})")
+
+    def _check_stability(self):
+        """
+        Checks for numerical instability in the simulation.
+        Uses get_particles_vel() instead of get_state() to avoid copying
+        the full particle state (positions, deformation gradients, etc.).
+        Raises SimulationStabilityError if detected.
+        """
+        safety = getattr(self.env.cfg, 'safety', None)
+        if not safety:
+            return
+
+        vels = self.env.mpm_entity.get_particles_vel()
+
+        if safety.check_nan:
+            has_bad = torch.isnan(vels).any() | torch.isinf(vels).any()
+            if has_bad.item():
+                raise SimulationStabilityError("NaN/Inf detected in particle velocities")
+
+        if safety.max_particle_velocity > 0:
+            if (torch.abs(vels) > safety.max_particle_velocity).any().item():
+                raise SimulationStabilityError(
+                    f"Particle velocity exceeds safety limit {safety.max_particle_velocity} m/s"
+                )
 
     async def reset_simulation(self):
         async with self.lock:
