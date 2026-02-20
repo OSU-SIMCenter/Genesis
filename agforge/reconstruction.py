@@ -6,6 +6,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.particle as pu
 from skimage.measure import marching_cubes
+from scipy.ndimage import gaussian_filter
 from enum import Enum
 
 # Compatibility Enum
@@ -57,6 +58,9 @@ class SurfaceReconstructor:
         self._grid_coverage_ratio = 1.6
         self._fixed_dx = None
         self._prev_grid_origin = None
+        
+        # Density-space smoothing before marching cubes (sigma in grid cells)
+        self.density_blur_sigma = 0.75
 
     def get_state(self):
         return {
@@ -264,6 +268,11 @@ class SurfaceReconstructor:
             self.density_initialized = True
             
             density_cpu = self.density.to_numpy()
+            
+            # Density-space smoothing: suppress per-particle bumps and grid aliasing
+            if self.density_blur_sigma > 0:
+                density_cpu = gaussian_filter(density_cpu, sigma=self.density_blur_sigma)
+
             max_dens = density_cpu.max()
             thresh = 0.5
 
