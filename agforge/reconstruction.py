@@ -52,6 +52,11 @@ class SurfaceReconstructor:
         except Exception:
             pass
         self.influence_radius = self.particle_radius * 2.5
+        
+        # Grid snapping: fixed dx from physical scale, snapped origin
+        self._grid_coverage_ratio = 1.6
+        self._fixed_dx = None
+        self._prev_grid_origin = None
 
     def get_state(self):
         return {
@@ -66,6 +71,7 @@ class SurfaceReconstructor:
         self.recon_enabled = state.get('recon_enabled', True)
         self.frame_counter = state.get('frame_counter', 0)
         self.density_initialized = False
+        self._prev_grid_origin = None
 
     def reset(self):
         self.reconstructed_mesh = trimesh.Trimesh()
@@ -73,6 +79,8 @@ class SurfaceReconstructor:
         self._cached_particles = None
         self.skinning_enabled = False
         self.density_initialized = False
+        self._fixed_dx = None
+        self._prev_grid_origin = None
 
     # --- Compatibility Interface ---
     def init_skinning(self):
@@ -190,18 +198,48 @@ class SurfaceReconstructor:
             # Update cache for visualization
             self._cached_particles = active_particles.cpu().numpy()
 
-            min_bound = active_particles.min(dim=0).values.cpu().numpy()
-            max_bound = active_particles.max(dim=0).values.cpu().numpy()
-            
+            # Compute fixed dx from physical scale (once, then stable)
+            if self._fixed_dx is None:
+                self._fixed_dx = self.influence_radius / self._grid_coverage_ratio
+                gs.logger.info(
+                    f"Reconstruction: Fixed dx={self._fixed_dx:.6f} "
+                    f"(influence_r/dx={self.influence_radius / self._fixed_dx:.2f})"
+                )
+            dx = self._fixed_dx
+
+            # Compute raw bounds with padding
+            raw_min = active_particles.min(dim=0).values.cpu().numpy()
+            raw_max = active_particles.max(dim=0).values.cpu().numpy()
             padding = self.influence_radius * 2.0
-            min_bound -= padding
-            max_bound += padding
-            
+            raw_min -= padding
+            raw_max += padding
+
+            # Snap bounds to multiples of dx for temporal coherence
+            min_bound = np.floor(raw_min / dx) * dx
+            max_bound = np.ceil(raw_max / dx) * dx
+
+            # Verify grid capacity — fall back to dynamic dx if particles exceed grid
             extent = max_bound - min_bound
-            max_extent = np.max(extent)
-            if max_extent < 1e-4: max_extent = 1.0
-                
-            dx = max_extent / (self.grid_res - 1)
+            max_extent = float(np.max(extent))
+            if max_extent < 1e-4:
+                max_extent = 1.0
+            required_cells = int(np.ceil(max_extent / dx)) + 1
+            if required_cells > self.grid_res:
+                dx = max_extent / (self.grid_res - 1)
+                min_bound = np.floor(raw_min / dx) * dx
+                gs.logger.warning(
+                    f"Reconstruction: Particles exceed fixed grid ({required_cells} > {self.grid_res}), "
+                    f"adjusting dx={dx:.6f} (influence_r/dx={self.influence_radius / dx:.2f})"
+                )
+
+            # Detect grid origin shift — reset temporal blending when grid jumps
+            grid_origin = min_bound.copy()
+            if self._prev_grid_origin is not None:
+                if not np.allclose(grid_origin, self._prev_grid_origin, atol=dx * 0.01):
+                    self.density_initialized = False
+                    gs.logger.debug("Reconstruction: Grid origin shifted, resetting temporal blend")
+            self._prev_grid_origin = grid_origin
+
             lower_bound_ti = ti.Vector([min_bound[0], min_bound[1], min_bound[2]])
             
             gs.logger.debug(
