@@ -74,11 +74,11 @@ coacd = ">=1.0"                     # Convex decomposition improvements
 # FEATURE: CUDA (Linux/Windows GPU)
 # =============================================================================
 [feature.cuda.pypi-options]
-# Nightly cu130 wheels — latest CUDA 13.0 with Zstandard compression and optimizations
-extra-index-urls = ["https://download.pytorch.org/whl/nightly/cu130"]
+# Explicitly requested cu130 stable index
+extra-index-urls = ["https://download.pytorch.org/whl/cu130"]
 
 [feature.cuda.pypi-dependencies]
-torch = ">=2.9.2"
+torch = "*"
 torchvision = "*"
 torchaudio = "*"
 

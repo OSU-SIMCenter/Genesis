@@ -433,8 +433,13 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         else:
             mj_mat_img = None
         mj_rgba = np.asarray(mj_mat.rgba, dtype=np.float32)
-        mj_specular = np.full(3, float(mj_mat.specular), dtype=np.float32)
-        mj_glossiness = float(mj_mat.shininess) * 128.0
+        
+        # FIX: Ensure it's a scalar before parsing it into a full array
+        spec_val = float(mj_mat.specular.item()) if hasattr(mj_mat.specular, "item") else float(mj_mat.specular)
+        mj_specular = np.full(3, spec_val, dtype=np.float32)
+        
+        shine_val = float(mj_mat.shininess.item()) if hasattr(mj_mat.shininess, "item") else float(mj_mat.shininess)
+        mj_glossiness = shine_val * 128.0
         tmesh_mat = trimesh.visual.material.SimpleMaterial(
             image=mj_mat_img,
             diffuse=mj_rgba,
