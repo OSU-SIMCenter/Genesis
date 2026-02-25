@@ -415,6 +415,74 @@ class LegacyCoupler(RBC):
                             self.mpm_solver.grid[f, I, i_b].temp
                             / self.mpm_solver.grid[f, I, i_b].mass_thermal
                         )
+                        
+                        # --- Air Cooling (Convection) ---
+                        is_surface = 0
+                        I_left = I + ti.Vector([-1, 0, 0])
+                        I_right = I + ti.Vector([1, 0, 0])
+                        I_down = I + ti.Vector([0, -1, 0])
+                        I_up = I + ti.Vector([0, 1, 0])
+                        I_back = I + ti.Vector([0, 0, -1])
+                        I_front = I + ti.Vector([0, 0, 1])
+                        
+                        if I_left[0] < 0:
+                            is_surface = 1
+                        elif self.mpm_solver.grid[f, I_left, i_b].mass_thermal < gs.EPS:
+                            is_surface = 1
+
+                        if I_right[0] >= self.mpm_solver.grid_res[0]:
+                            is_surface = 1
+                        elif self.mpm_solver.grid[f, I_right, i_b].mass_thermal < gs.EPS:
+                            is_surface = 1
+
+                        if I_down[1] < 0:
+                            is_surface = 1
+                        elif self.mpm_solver.grid[f, I_down, i_b].mass_thermal < gs.EPS:
+                            is_surface = 1
+
+                        if I_up[1] >= self.mpm_solver.grid_res[1]:
+                            is_surface = 1
+                        elif self.mpm_solver.grid[f, I_up, i_b].mass_thermal < gs.EPS:
+                            is_surface = 1
+
+                        if I_back[2] < 0:
+                            is_surface = 1
+                        elif self.mpm_solver.grid[f, I_back, i_b].mass_thermal < gs.EPS:
+                            is_surface = 1
+
+                        if I_front[2] >= self.mpm_solver.grid_res[2]:
+                            is_surface = 1
+                        elif self.mpm_solver.grid[f, I_front, i_b].mass_thermal < gs.EPS:
+                            is_surface = 1
+                        
+                        if is_surface == 1:
+                            h_air = self.mpm_solver._h_air
+                            # k = h * A / (M * Cp) -> approx A = dx^2 for a cell face
+                            k_air = (h_air * (self.mpm_solver.dx ** 2)) / (self.mpm_solver.grid[f, I, i_b].mass_thermal * self.mpm_solver._default_heat_capacity)
+                            decay_air = ti.exp(-k_air * self.mpm_solver.substep_dt)
+                            T_air = 293.15 # Room temp
+                            self.mpm_solver.grid[f, I, i_b].temp = T_air + (self.mpm_solver.grid[f, I, i_b].temp - T_air) * decay_air
+                        
+                        # --- Contact Cooling (Conduction with Rigid Bodies) ---
+                        if ti.static(self.rigid_solver.is_active):
+                            pos_world = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
+                            for i_g in range(self.rigid_solver.n_geoms):
+                                if geoms_info.needs_coup[i_g]:
+                                    signed_dist = sdf.sdf_func_world(
+                                        geoms_state=geoms_state,
+                                        geoms_info=geoms_info,
+                                        sdf_info=sdf_info,
+                                        pos_world=pos_world,
+                                        geom_idx=i_g,
+                                        batch_idx=i_b,
+                                    )
+                                    # If within 1 grid cell of the surface, apply contact cooling (overrides air)
+                                    if signed_dist < self.mpm_solver.dx:
+                                        h_contact = self.mpm_solver._h_contact
+                                        k_contact = (h_contact * (self.mpm_solver.dx ** 2)) / (self.mpm_solver.grid[f, I, i_b].mass_thermal * self.mpm_solver._default_heat_capacity)
+                                        decay_contact = ti.exp(-k_contact * self.mpm_solver.substep_dt)
+                                        T_rigid = 293.15 # Rigid bodies are assumed infinite heat sinks
+                                        self.mpm_solver.grid[f, I, i_b].temp = T_rigid + (self.mpm_solver.grid[f, I, i_b].temp - T_rigid) * decay_contact
 
                 # gravity
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
