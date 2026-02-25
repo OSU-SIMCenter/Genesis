@@ -5,6 +5,7 @@ import trimesh.smoothing
 import gstaichi as ti
 import genesis as gs
 import genesis.utils.particle as pu
+import pyvista as pv
 from scipy.ndimage import gaussian_filter
 from enum import Enum
 
@@ -303,7 +304,6 @@ class SurfaceReconstructor:
                 )
                 return
 
-            import pyvista as pv
             # Create PyVista grid (near zero-copy through VTK data adapters)
             grid = pv.ImageData()
             grid.dimensions = np.array(density_cpu.shape)  # grid points = density array shape
@@ -342,10 +342,7 @@ class SurfaceReconstructor:
             # Taubin smoothing preserves volume better than Laplacian
             if len(mesh.vertices) > 0:
                 try:
-                    # Subdivide to break grid-edge vertex constraint (1 iteration = 4x faces)
-                    mesh = mesh.subdivide()
-                    
-                    trimesh.smoothing.filter_taubin(mesh, iterations=5)
+                    trimesh.smoothing.filter_taubin(mesh, iterations=3)
                 except Exception:
                     try:
                         trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=2)
