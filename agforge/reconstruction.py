@@ -322,9 +322,15 @@ class SurfaceReconstructor:
 
             verts = np.array(contour.points)
             # PyVista uses VTK face format: [num_verts, v0, v1, v2, ...]
+            # Our density field has maximum density inside the object, so the isosurface gradient 
+            # points INWARD. We must reverse the winding order (v0, v1, v2 -> v2, v1, v0) 
+            # so the normals point OUTWARD for Unity.
             faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
+            faces = faces[:, ::-1]  # Reverse columns to flip winding
             
-            normals = np.array(contour.point_data["Normals"]) if "Normals" in contour.point_data else None
+            # Since we flipped the winding, we must let trimesh recompute the normals automatically 
+            # from the new face orientations, rather than using the inverted ones from PyVista.
+            normals = None
 
             mesh = trimesh.Trimesh(
                 vertices=verts,
