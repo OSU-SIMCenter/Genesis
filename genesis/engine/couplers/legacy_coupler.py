@@ -412,6 +412,14 @@ class LegacyCoupler(RBC):
                 # Momentum to velocity
                 vel_mpm = (1 / self.mpm_solver.grid[f, I, i_b].mass) * self.mpm_solver.grid[f, I, i_b].vel_in
 
+                # Thermal: normalize mass-weighted temperature
+                if ti.static(self.mpm_solver._enable_thermal):
+                    if self.mpm_solver.grid[f, I, i_b].mass_thermal > 0:
+                        self.mpm_solver.grid[f, I, i_b].temp = (
+                            self.mpm_solver.grid[f, I, i_b].temp
+                            / self.mpm_solver.grid[f, I, i_b].mass_thermal
+                        )
+
                 # gravity
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
 

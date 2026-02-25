@@ -36,21 +36,33 @@ class ElastoPlastic(Base):
     yield_higher: NonNegativeFloat = 4.5e-3
     use_von_mises: StrictBool = True
     von_mises_yield_stress: PositiveFloat = 10000.0
+    T_ref: ValidFloat = 293.15
+    T_melt: ValidFloat = 1793.0
+    jc_m: ValidFloat = 1.03
 
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
         self.update_F_S_Jp = self._update_F_S_Jp_elasto_plastic
 
     @qd.func
-    def _update_F_S_Jp_elasto_plastic(self, J, F_tmp, U, S, V, Jp):
+    def _update_F_S_Jp_elasto_plastic(self, J, F_tmp, U, S, V, Jp, temp):
         F_new = qd.Matrix.zero(gs.qd_float, 3, 3)
         S_new = qd.Matrix.zero(gs.qd_float, 3, 3)
+        delta_gamma_out = qd.cast(0.0, gs.qd_float)
+        effective_yield_out = qd.cast(0.0, gs.qd_float)
+
         if qd.static(self.use_von_mises):
             S_new = qd.max(S, 0.05)  # to prevent NaN
             epsilon = qd.Vector([qd.log(S_new[0, 0]), qd.log(S_new[1, 1]), qd.log(S_new[2, 2])])
             epsilon_hat = epsilon - (epsilon.sum() / 3)
             epsilon_hat_norm = epsilon_hat.norm(gs.EPS)
-            delta_gamma = epsilon_hat_norm - self.von_mises_yield_stress / (2 * self.mu)
+            # Temperature-dependent yield (Johnson-Cook thermal term)
+            T_star = (temp - self.T_ref) / (self.T_melt - self.T_ref)
+            T_star = qd.max(0.0, qd.min(1.0, T_star))
+            thermal_softening = 1.0 - qd.pow(T_star, self.jc_m)
+            effective_yield = self.von_mises_yield_stress * thermal_softening
+
+            delta_gamma = epsilon_hat_norm - effective_yield / (2 * self.mu)
 
             if delta_gamma > 0:  # Yields
                 epsilon -= (delta_gamma / epsilon_hat_norm) * epsilon_hat
@@ -58,6 +70,8 @@ class ElastoPlastic(Base):
                 for d in qd.static(range(3)):
                     S_new[d, d] = qd.exp(epsilon[d])
                 F_new = U @ S_new @ V.transpose()
+                delta_gamma_out = delta_gamma
+                effective_yield_out = effective_yield
             else:
                 F_new = F_tmp
 
@@ -68,4 +82,4 @@ class ElastoPlastic(Base):
             F_new = U @ S_new @ V.transpose()
 
         Jp_new = Jp
-        return F_new, S_new, Jp_new
+        return F_new, S_new, Jp_new, delta_gamma_out, effective_yield_out

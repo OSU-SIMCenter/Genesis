@@ -87,8 +87,12 @@ class Base(Material["MPMEntity"]):
         if self.update_stress is None:
             self.update_stress = self._update_stress_default
 
+    @classmethod
+    def _repr_type(cls):
+        return f"<gs.materials.MPM.{cls.__name__}>"
+
     @qd.func
-    def _update_F_S_Jp_noop(self, J, F_tmp, U, S, V, Jp):
+    def _update_F_S_Jp_noop(self, J, F_tmp, U, S, V, Jp, temp):
         raise NotImplementedError
 
     @qd.func

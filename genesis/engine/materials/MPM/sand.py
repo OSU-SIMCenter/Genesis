@@ -66,10 +66,10 @@ class Sand(Base):
         return S_out, Jp_new
 
     @qd.func
-    def _update_F_S_Jp_sand(self, J, F_tmp, U, S, V, Jp):
+    def _update_F_S_Jp_sand(self, J, F_tmp, U, S, V, Jp, temp):
         S_new, Jp_new = self._sand_projection(S, Jp)
         F_new = U @ S_new @ V.transpose()
-        return F_new, S_new, Jp_new
+        return F_new, S_new, Jp_new, 0.0, 0.0
 
     @qd.func
     def _update_stress_sand(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):

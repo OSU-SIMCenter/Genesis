@@ -35,11 +35,11 @@ class Liquid(Base):
         self.update_stress = self._update_stress_liquid
 
     @qd.func
-    def _update_F_S_Jp_liquid(self, J, F_tmp, U, S, V, Jp):
+    def _update_F_S_Jp_liquid(self, J, F_tmp, U, S, V, Jp, temp):
         F_new = qd.Matrix.identity(gs.qd_float, 3) * qd.pow(J, 1.0 / 3.0)
         S_new = S
         Jp_new = Jp
-        return F_new, S_new, Jp_new
+        return F_new, S_new, Jp_new, 0.0, 0.0
 
     @qd.func
     def _update_stress_liquid(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):

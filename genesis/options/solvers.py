@@ -568,10 +568,10 @@ class MPMOptions(Options):
         Upper bound of the simulation domain. Defaults to (1.0, 1.0, 1.0).
     use_sparse_grid : bool, optional
         This option is deprecated.
+    use_legacy_solver : bool, optional
+        Whether to use the legacy monolithic MPM solver instead of the thermal derived solver. Defaults to True.
     leaf_block_size : int, optional
         This option is deprecated.
-    use_legacy_solver : bool, optional
-        Whether to use the legacy MPM solver. Defaults to True.
     """
 
     dt: PositiveFloat | None = None
@@ -583,6 +583,15 @@ class MPMOptions(Options):
     # These will later be converted to discrete grid bound. The actual grid boundary could be slightly tighter.
     lower_bound: Vec3FType = (-1.0, -1.0, 0.0)
     upper_bound: Vec3FType = (1.0, 1.0, 1.0)
+
+    # Thermal physics
+    default_initial_temperature: float = 293.15  # Kelvin
+    default_thermal_diffusivity: float = 1.1e-5  # m^2/s (Steel)
+    default_heat_capacity: float = 450.0  # J/(kg K) (Steel)
+    thermal_contact_conductivity: float = 5000.0  # W/(m^2 K)
+    thermal_air_conductivity: float = 50.0  # W/(m^2 K)
+    T_ref: float = 293.15  # Reference temperature for Johnson-Cook
+    T_melt: float = 1793.0  # Melting point for 4340 steel
 
     use_legacy_solver: bool = True
 
