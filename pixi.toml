@@ -69,6 +69,7 @@ orjson = ">=3.10"                   # ~10x faster JSON parsing for config/assets
 # --- Spatial/Collision ---
 rtree = ">=1.3"                     # Faster spatial indexing for ray casting
 coacd = ">=1.0"                     # Convex decomposition improvements
+pyvista = ">=0.47.1, <0.48"
 
 # =============================================================================
 # FEATURE: CUDA (Linux/Windows GPU)

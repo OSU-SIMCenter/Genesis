@@ -5,7 +5,6 @@ import trimesh.smoothing
 import gstaichi as ti
 import genesis as gs
 import genesis.utils.particle as pu
-from skimage.measure import marching_cubes
 from scipy.ndimage import gaussian_filter
 from enum import Enum
 
@@ -52,15 +51,15 @@ class SurfaceReconstructor:
             gs.logger.info(f"Reconstruction: Inferred particle radius: {self.particle_radius}")
         except Exception:
             pass
-        self.influence_radius = self.particle_radius * 2.5
+        self.influence_radius = self.particle_radius * 3.0
         
         # Grid snapping: fixed dx from physical scale, snapped origin
-        self._grid_coverage_ratio = 1.6
+        self._grid_coverage_ratio = 3.0
         self._fixed_dx = None
         self._prev_grid_origin = None
         
         # Density-space smoothing before marching cubes (sigma in grid cells)
-        self.density_blur_sigma = 0.75
+        self.density_blur_sigma = 1.25
 
     def get_state(self):
         return {
@@ -261,9 +260,28 @@ class SurfaceReconstructor:
                 float(self.influence_radius)
             )
             
-            # Apply Temporal Blending
-            # Use alpha=1.0 for first frame to avoid ghosting from zero-init
-            alpha = 1.0 if not self.density_initialized else self.temporal_alpha
+            # Apply Adaptive Temporal Blending
+            if not self.density_initialized:
+                alpha = 1.0
+            else:
+                try:
+                    # Estimate deformation rate from particle velocity
+                    particle_velocities = mpm_entity.get_particles_vel(envs_idx=0).squeeze(0)
+                    active_vels = particle_velocities[particles_active]
+                    vel_magnitude = active_vels.norm(dim=1).mean().item()
+
+                    # Adaptive alpha: high during motion, low at rest
+                    # vel_threshold: typical pressing speed ~0.01 m/s
+                    vel_threshold = 0.005
+                    alpha_rest = 0.2    # Heavy smoothing when still
+                    alpha_motion = 0.8  # Fast response during deformation
+                    t = min(vel_magnitude / vel_threshold, 1.0)
+                    alpha = alpha_rest + t * (alpha_motion - alpha_rest)
+                    gs.logger.debug(f"Reconstruction: Adaptive Alpha vel={vel_magnitude:.5f}, alpha={alpha:.2f}")
+                except Exception as e:
+                    gs.logger.warning(f"Reconstruction: Failed to compute adaptive alpha: {e}. Falling back.")
+                    alpha = self.temporal_alpha
+
             self._blend_density_temporal(alpha)
             self.density_initialized = True
             
@@ -274,24 +292,39 @@ class SurfaceReconstructor:
                 density_cpu = gaussian_filter(density_cpu, sigma=self.density_blur_sigma)
 
             max_dens = density_cpu.max()
-            thresh = 0.5
+            thresh = max_dens * 0.4
 
             gs.logger.debug(f"Reconstruction: max_density={max_dens:.4f}, threshold={thresh}")
 
-            if max_dens < thresh:
+            if max_dens < 1e-4:
                 gs.logger.warning(
-                    f"Reconstruction: max density {max_dens:.4f} below threshold {thresh}! "
+                    f"Reconstruction: max density {max_dens:.4f} is functionally empty! "
                     f"Mesh will be empty."
                 )
                 return
 
-            verts, faces, normals, values = marching_cubes(
-                density_cpu,
-                level=thresh,
-                spacing=(dx, dx, dx),
-                allow_degenerate=False
-            )
-            verts += min_bound
+            import pyvista as pv
+            # Create PyVista grid (near zero-copy through VTK data adapters)
+            grid = pv.ImageData()
+            grid.dimensions = np.array(density_cpu.shape)  # grid points = density array shape
+            grid.spacing = (dx, dx, dx)
+            grid.origin = min_bound
+            
+            # flatten using Fortran order to match VTK's Z-Y-X array layout expectation
+            grid.point_data["density"] = density_cpu.flatten(order="F")
+
+            # Flying Edges contouring
+            contour = grid.contour(isosurfaces=[thresh], scalars="density", method='flying_edges')
+
+            if contour.n_points == 0:
+                self.reconstructed_mesh = trimesh.Trimesh()
+                return
+
+            verts = np.array(contour.points)
+            # PyVista uses VTK face format: [num_verts, v0, v1, v2, ...]
+            faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
+            
+            normals = np.array(contour.point_data["Normals"]) if "Normals" in contour.point_data else None
 
             mesh = trimesh.Trimesh(
                 vertices=verts,
@@ -303,7 +336,10 @@ class SurfaceReconstructor:
             # Taubin smoothing preserves volume better than Laplacian
             if len(mesh.vertices) > 0:
                 try:
-                    trimesh.smoothing.filter_taubin(mesh, iterations=3)
+                    # Subdivide to break grid-edge vertex constraint (1 iteration = 4x faces)
+                    mesh = mesh.subdivide()
+                    
+                    trimesh.smoothing.filter_taubin(mesh, iterations=5)
                 except Exception:
                     try:
                         trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=2)
@@ -321,7 +357,9 @@ class SurfaceReconstructor:
             self.reconstructed_mesh = mesh
             
         except Exception as e:
-            gs.logger.warning(f"Reconstruction failed: {e}", exc_info=True)
+            import traceback
+            gs.logger.warning(f"Reconstruction failed: {e}")
+            traceback.print_exc()
 
     def _create_splashsurf_mesh(self):
         """Legacy SplashSurf reconstruction."""
