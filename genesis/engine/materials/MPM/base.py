@@ -79,7 +79,7 @@ class Base(Material):
         return f"<gs.materials.MPM.{cls.__name__}>"
 
     @ti.func
-    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
+    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp, temp):
         raise NotImplementedError
 
     @ti.func

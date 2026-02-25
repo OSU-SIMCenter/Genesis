@@ -40,6 +40,13 @@ class BaseMPMSolver(Solver):
         self._enable_CPIC = options.enable_CPIC
         self._constraints_initialized = False
 
+        # Thermal config
+        self._enable_thermal = not options.use_legacy_solver
+        self._default_initial_temperature = options.default_initial_temperature
+        self._default_heat_capacity = options.default_heat_capacity
+        self._h_contact = options.thermal_contact_conductivity
+        self._h_air = options.thermal_air_conductivity
+
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
 
         # `_particle_volume_scale` is used to avoid potential numerical instability, as the actual `_particle_volume` may be very small.
@@ -80,43 +87,63 @@ class BaseMPMSolver(Solver):
             upper=self._upper_bound - self.boundary_padding,
         )
 
+    def _make_particle_state_template(self):
+        template = {
+            "pos": gs.ti_vec3,  # position
+            "vel": gs.ti_vec3,  # velocity
+            "C": gs.ti_mat3,  # affine velocity field
+            "F": gs.ti_mat3,  # deformation gradient
+            "F_tmp": gs.ti_mat3,  # temp deformation gradient
+            "U": gs.ti_mat3,  # SVD
+            "V": gs.ti_mat3,  # SVD
+            "S": gs.ti_mat3,  # SVD
+            "actu": gs.ti_float,  # actuation
+            "Jp": gs.ti_float,  # volume ratio
+        }
+        if self._enable_thermal:
+            template.update({
+                "temp": gs.ti_float,
+                "plastic_strain": gs.ti_float,
+                "plastic_work": gs.ti_float,
+            })
+        return template
+
+    def _make_particle_state_ng_template(self):
+        return {
+            "active": gs.ti_bool,
+        }
+
+    def _make_particle_info_template(self):
+        return {
+            "material_idx": gs.ti_int,
+            "mass": gs.ti_float,
+            "default_Jp": gs.ti_float,
+            "free": gs.ti_bool,
+            # for muscle
+            "muscle_group": gs.ti_int,
+            "muscle_direction": gs.ti_vec3,
+        }
+
+    def _make_particle_state_render_template(self):
+        return {
+            "pos": gs.ti_vec3,
+            "vel": gs.ti_vec3,
+            "active": gs.ti_bool,
+        }
+
     def init_particle_fields(self):
         # dynamic particle state
-        struct_particle_state = ti.types.struct(
-            pos=gs.ti_vec3,  # position
-            vel=gs.ti_vec3,  # velocity
-            C=gs.ti_mat3,  # affine velocity field
-            F=gs.ti_mat3,  # deformation gradient
-            F_tmp=gs.ti_mat3,  # temp deformation gradient
-            U=gs.ti_mat3,  # SVD
-            V=gs.ti_mat3,  # SVD
-            S=gs.ti_mat3,  # SVD
-            actu=gs.ti_float,  # actuation
-            Jp=gs.ti_float,  # volume ratio
-        )
+        struct_particle_state = ti.types.struct(**self._make_particle_state_template())
+        self._zero_particle_state = struct_particle_state.filled_with_scalar(0.0)
 
         # dynamic particle state without gradient
-        struct_particle_state_ng = ti.types.struct(
-            active=gs.ti_bool,
-        )
+        struct_particle_state_ng = ti.types.struct(**self._make_particle_state_ng_template())
 
         # static particle info
-        struct_particle_info = ti.types.struct(
-            material_idx=gs.ti_int,
-            mass=gs.ti_float,
-            default_Jp=gs.ti_float,
-            free=gs.ti_bool,
-            # for muscle
-            muscle_group=gs.ti_int,
-            muscle_direction=gs.ti_vec3,
-        )
+        struct_particle_info = ti.types.struct(**self._make_particle_info_template())
 
         # single frame particle state for rendering
-        struct_particle_state_render = ti.types.struct(
-            pos=gs.ti_vec3,
-            vel=gs.ti_vec3,
-            active=gs.ti_bool,
-        )
+        struct_particle_state_render = ti.types.struct(**self._make_particle_state_render_template())
 
         # construct fields
         self.particles = struct_particle_state.field(
@@ -135,13 +162,25 @@ class BaseMPMSolver(Solver):
         self.particles_render = struct_particle_state_render.field(
             shape=(self._n_particles, self._B), needs_grad=False, layout=ti.Layout.SOA
         )
+        if self._enable_thermal:
+            self.particles.temp.fill(self._default_initial_temperature)
+
+    def _make_grid_cell_state_template(self):
+        template = {
+            "mass": gs.ti_float,  # mass
+            "vel_in": gs.ti_vec3,  # input momentum/velocity
+            "vel_out": gs.ti_vec3,  # output momentum/velocity
+        }
+        if self._enable_thermal:
+            template.update({
+                "temp": gs.ti_float,
+                "mass_thermal": gs.ti_float,
+            })
+        return template
 
     def init_grid_fields(self):
-        grid_cell_state = ti.types.struct(
-            mass=gs.ti_float,  # mass
-            vel_in=gs.ti_vec3,  # input momentum/velocity
-            vel_out=gs.ti_vec3,  # output momentum/velocity
-        )
+        grid_cell_state = ti.types.struct(**self._make_grid_cell_state_template())
+        self._zero_grid_cell_state = grid_cell_state.filled_with_scalar(0.0)
         self.grid = grid_cell_state.field(
             shape=(self._sim.substeps_local + 1, *self._grid_res, self._B),
             needs_grad=True,
@@ -283,6 +322,49 @@ class BaseMPMSolver(Solver):
     def stencil_range(self):
         return ti.ndrange(3, 3, 3)
 
+    @ti.func
+    def get_particle_thermal_state(self, f: ti.i32, i_p: ti.i32, i_b: ti.i32):
+        temp = gs.ti_float(293.15)
+        plastic_strain = gs.ti_float(0.0)
+        plastic_work = gs.ti_float(0.0)
+        if ti.static(self._enable_thermal):
+            temp = self.particles[f, i_p, i_b].temp
+            plastic_strain = self.particles[f, i_p, i_b].plastic_strain
+            plastic_work = self.particles[f, i_p, i_b].plastic_work
+        return temp, plastic_strain, plastic_work
+
+    @ti.func
+    def p2g_post_constitutive(self, f, i_p, i_b, delta_gamma, effective_yield):
+        if ti.static(self._enable_thermal):
+            fraction = 0.9
+            rho = self.particles_info[i_p].mass / ti.max(self._particle_volume, gs.EPS)
+            Cp = self._default_heat_capacity
+            if delta_gamma > 0.0:
+                vol_work = effective_yield * delta_gamma
+                self.particles[f, i_p, i_b].plastic_strain += delta_gamma
+                self.particles[f, i_p, i_b].plastic_work += vol_work
+                dT = fraction * vol_work / (rho * Cp)
+                self.particles[f + 1, i_p, i_b].temp = self.particles[f, i_p, i_b].temp + dT
+            else:
+                self.particles[f + 1, i_p, i_b].temp = self.particles[f, i_p, i_b].temp
+
+    @ti.func
+    def p2g_transfer_extra_fields(self, f, i_p, idx: ti.template(), i_b, weight):
+        if ti.static(self._enable_thermal):
+            mass = self.particles_info[i_p].mass
+            self.grid[f, idx, i_b].mass_thermal += weight * mass
+            self.grid[f, idx, i_b].temp += weight * mass * self.particles[f + 1, i_p, i_b].temp
+
+    @ti.func
+    def g2p_prologue(self, f, i_p, i_b):
+        if ti.static(self._enable_thermal):
+            self.particles[f + 1, i_p, i_b].temp = 0.0
+
+    @ti.func
+    def g2p_transfer_extra_fields(self, f, i_p, i_b, weight, grid_index: ti.template()):
+        if ti.static(self._enable_thermal):
+            self.particles[f + 1, i_p, i_b].temp += weight * self.grid[f, grid_index, i_b].temp
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- simulation -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -316,6 +398,113 @@ class BaseMPMSolver(Solver):
                     self.particles[f, i_p, i_b].V,
                 )
 
+    @ti.func
+    def p2g_helper(
+        self,
+        f: ti.i32,
+        i_p: ti.i32,
+        i_b: ti.i32,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        sdf_info: array_class.SDFInfo,
+        collider_static_config: ti.template(),
+    ):
+        # A. update F (deformation gradient), S (Sigma from SVD(F), essentially represents volume) and Jp
+        # (volume compression ratio) based on material type
+        J = self.particles[f, i_p, i_b].S.determinant()
+        F_new = ti.Matrix.zero(gs.ti_float, 3, 3)
+        S_new = ti.Matrix.zero(gs.ti_float, 3, 3)
+        Jp_new = gs.ti_float(1.0)
+        p_temp, _, _ = self.get_particle_thermal_state(f, i_p, i_b)
+        
+        for material_idx in ti.static(self._materials_idx):
+            if self.particles_info[i_p].material_idx == material_idx:
+                F_new, S_new, Jp_new, delta_gamma, effective_yield = self._materials_update_F_S_Jp[material_idx](
+                    J=J,
+                    F_tmp=self.particles[f, i_p, i_b].F_tmp,
+                    U=self.particles[f, i_p, i_b].U,
+                    S=self.particles[f, i_p, i_b].S,
+                    V=self.particles[f, i_p, i_b].V,
+                    Jp=self.particles[f, i_p, i_b].Jp,
+                    temp=p_temp,
+                )
+                self.p2g_post_constitutive(f, i_p, i_b, delta_gamma, effective_yield)
+                
+        self.particles[f + 1, i_p, i_b].F = F_new
+        self.particles[f + 1, i_p, i_b].Jp = Jp_new
+
+        # B. compute stress
+        # NOTE:
+        # 1. Here we pass in both F_tmp and the updated F_new because in the official taichi example, F_new is
+        # used for stress computation. However, although this works for both elastic and elasto-plastic
+        # materials, it is mathematically incorrect for liquid material with non-zero viscosity (mu). In the
+        # latter case, stress computation needs to be based on the F_tmp (deformation gradient before resetting
+        # to identity).
+        # 2. Jp is only used by Snow material, and it uses Jp from the previous frame, not the updated one.
+        stress = ti.Matrix.zero(gs.ti_float, 3, 3)
+        for material_idx in ti.static(self._materials_idx):
+            if self.particles_info[i_p].material_idx == material_idx:
+                stress = self._materials_update_stress[material_idx](
+                    U=self.particles[f, i_p, i_b].U,
+                    S=S_new,
+                    V=self.particles[f, i_p, i_b].V,
+                    F_tmp=self.particles[f, i_p, i_b].F_tmp,
+                    F_new=F_new,
+                    J=J,
+                    Jp=self.particles[f, i_p, i_b].Jp,
+                    actu=self.particles[f, i_p, i_b].actu,
+                    m_dir=self.particles_info[i_p].muscle_direction,
+                )
+        stress = (-self.substep_dt * self._particle_volume * 4 * self._inv_dx * self._inv_dx) * stress
+        affine = stress + self.particles_info[i_p].mass * self.particles[f, i_p, i_b].C
+
+        # C. project onto grid
+        base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
+        fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
+        w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
+        for offset in ti.static(ti.grouped(self.stencil_range())):
+            dpos = (offset.cast(gs.ti_float) - fx) * self._dx
+            weight = gs.ti_float(1.0)
+            for d in ti.static(range(3)):
+                weight *= w[offset[d]][d]
+
+            sep_geom_idx = -1
+            if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
+                # check if particle and cell center are at different side of any thin object
+                cell_pos = (base + offset) * self._dx
+
+                for i_g in range(self.sim.rigid_solver.n_geoms):
+                    if geoms_info.needs_coup[i_g]:
+                        sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
+                        sdf_normal_cell = sdf.sdf_func_normal_world(
+                            geoms_state=geoms_state,
+                            geoms_info=geoms_info,
+                            rigid_global_info=rigid_global_info,
+                            collider_static_config=collider_static_config,
+                            sdf_info=sdf_info,
+                            pos_world=cell_pos,
+                            geom_idx=i_g,
+                            batch_idx=i_b,
+                        )
+
+                        if sdf_normal_particle.dot(sdf_normal_cell) < 0:  # separated by geom i_g
+                            sep_geom_idx = i_g
+                            break
+                self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b] = sep_geom_idx
+            if sep_geom_idx == -1:
+                self.grid[f, base - self._grid_offset + offset, i_b].vel_in += weight * (
+                    self.particles_info[i_p].mass * self.particles[f, i_p, i_b].vel + affine @ dpos
+                )
+                self.grid[f, base - self._grid_offset + offset, i_b].mass += (
+                    weight * self.particles_info[i_p].mass
+                )
+                self.p2g_transfer_extra_fields(f, i_p, base - self._grid_offset + offset, i_b, weight)
+
+            if not self.particles_info[i_p].free:  # non-free particles behave as boundary conditions
+                self.grid[f, base - self._grid_offset + offset, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
+
     @ti.kernel
     def p2g(
         self,
@@ -329,94 +518,61 @@ class BaseMPMSolver(Solver):
     ):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
-                # A. update F (deformation gradient), S (Sigma from SVD(F), essentially represents volume) and Jp
-                # (volume compression ratio) based on material type
-                J = self.particles[f, i_p, i_b].S.determinant()
-                F_new = ti.Matrix.zero(gs.ti_float, 3, 3)
-                S_new = ti.Matrix.zero(gs.ti_float, 3, 3)
-                Jp_new = gs.ti_float(1.0)
-                for material_idx in ti.static(self._materials_idx):
-                    if self.particles_info[i_p].material_idx == material_idx:
-                        F_new, S_new, Jp_new = self._materials_update_F_S_Jp[material_idx](
-                            J=J,
-                            F_tmp=self.particles[f, i_p, i_b].F_tmp,
-                            U=self.particles[f, i_p, i_b].U,
-                            S=self.particles[f, i_p, i_b].S,
-                            V=self.particles[f, i_p, i_b].V,
-                            Jp=self.particles[f, i_p, i_b].Jp,
-                        )
-                self.particles[f + 1, i_p, i_b].F = F_new
-                self.particles[f + 1, i_p, i_b].Jp = Jp_new
+                self.p2g_helper(f, i_p, i_b, geoms_state, geoms_info, links_state, rigid_global_info, sdf_info, collider_static_config)
 
-                # B. compute stress
-                # NOTE:
-                # 1. Here we pass in both F_tmp and the updated F_new because in the official taichi example, F_new is
-                # used for stress computation. However, although this works for both elastic and elasto-plastic
-                # materials, it is mathematically incorrect for liquid material with non-zero viscosity (mu). In the
-                # latter case, stress computation needs to be based on the F_tmp (deformation gradient before resetting
-                # to identity).
-                # 2. Jp is only used by Snow material, and it uses Jp from the previous frame, not the updated one.
-                stress = ti.Matrix.zero(gs.ti_float, 3, 3)
-                for material_idx in ti.static(self._materials_idx):
-                    if self.particles_info[i_p].material_idx == material_idx:
-                        stress = self._materials_update_stress[material_idx](
-                            U=self.particles[f, i_p, i_b].U,
-                            S=S_new,
-                            V=self.particles[f, i_p, i_b].V,
-                            F_tmp=self.particles[f, i_p, i_b].F_tmp,
-                            F_new=F_new,
-                            J=J,
-                            Jp=self.particles[f, i_p, i_b].Jp,
-                            actu=self.particles[f, i_p, i_b].actu,
-                            m_dir=self.particles_info[i_p].muscle_direction,
-                        )
-                stress = (-self.substep_dt * self._particle_volume * 4 * self._inv_dx * self._inv_dx) * stress
-                affine = stress + self.particles_info[i_p].mass * self.particles[f, i_p, i_b].C
+    @ti.func
+    def g2p_helper(
+        self,
+        f: ti.i32,
+        i_p: ti.i32,
+        i_b: ti.i32,
+        geoms_info: array_class.GeomsInfo,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+    ):
+        self.g2p_prologue(f, i_p, i_b)
+        base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
+        fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
+        w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0) ** 2, 0.5 * (fx - 0.5) ** 2]
+        new_vel = ti.Vector.zero(gs.ti_float, 3)
+        new_C = ti.Matrix.zero(gs.ti_float, 3, 3)
+        for offset in ti.static(ti.grouped(self.stencil_range())):
+            dpos = offset.cast(gs.ti_float) - fx
+            grid_vel = self.grid[f, base - self._grid_offset + offset, i_b].vel_out
+            weight = gs.ti_float(1.0)
+            for d in ti.static(range(3)):
+                weight *= w[offset[d]][d]
 
-                # C. project onto grid
-                base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
-                fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
-                w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
-                for offset in ti.static(ti.grouped(self.stencil_range())):
-                    dpos = (offset.cast(gs.ti_float) - fx) * self._dx
-                    weight = gs.ti_float(1.0)
-                    for d in ti.static(range(3)):
-                        weight *= w[offset[d]][d]
+            if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
+                sep_geom_idx = self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b]
+                if sep_geom_idx != -1:
+                    grid_vel = self.sim.coupler._func_collide_in_rigid_geom(
+                        self.particles[f, i_p, i_b].pos,
+                        self.particles[f, i_p, i_b].vel,
+                        self.particles_info[i_p].mass * weight / self._particle_volume_scale,
+                        self._coupler.mpm_rigid_normal[i_p, sep_geom_idx, i_b],
+                        1.0,
+                        sep_geom_idx,
+                        i_b,
+                        geoms_info=geoms_info,
+                        links_state=links_state,
+                        rigid_global_info=rigid_global_info,
+                    )
 
-                    sep_geom_idx = -1
-                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
-                        # check if particle and cell center are at different side of any thin object
-                        cell_pos = (base + offset) * self._dx
+            new_vel += weight * grid_vel
+            new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
+            self.g2p_transfer_extra_fields(f, i_p, i_b, weight, base - self._grid_offset + offset)
 
-                        for i_g in range(self.sim.rigid_solver.n_geoms):
-                            if geoms_info.needs_coup[i_g]:
-                                sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
-                                sdf_normal_cell = sdf.sdf_func_normal_world(
-                                    geoms_state=geoms_state,
-                                    geoms_info=geoms_info,
-                                    rigid_global_info=rigid_global_info,
-                                    collider_static_config=collider_static_config,
-                                    sdf_info=sdf_info,
-                                    pos_world=cell_pos,
-                                    geom_idx=i_g,
-                                    batch_idx=i_b,
-                                )
+        # compute actual new_pos with new_vel
+        new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
 
-                                if sdf_normal_particle.dot(sdf_normal_cell) < 0:  # separated by geom i_g
-                                    sep_geom_idx = i_g
-                                    break
-                        self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b] = sep_geom_idx
-                    if sep_geom_idx == -1:
-                        self.grid[f, base - self._grid_offset + offset, i_b].vel_in += weight * (
-                            self.particles_info[i_p].mass * self.particles[f, i_p, i_b].vel + affine @ dpos
-                        )
-                        self.grid[f, base - self._grid_offset + offset, i_b].mass += (
-                            weight * self.particles_info[i_p].mass
-                        )
+        # impose boundary for safety, in case simulation explodes and tries to access illegal cell address
+        new_pos, new_vel = self.boundary.impose_pos_vel(new_pos, new_vel)
 
-                    if not self.particles_info[i_p].free:  # non-free particles behave as boundary conditions
-                        self.grid[f, base - self._grid_offset + offset, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
-
+        # advect to next frame
+        self.particles[f + 1, i_p, i_b].vel = new_vel
+        self.particles[f + 1, i_p, i_b].C = new_C
+        self.particles[f + 1, i_p, i_b].pos = new_pos
     @ti.kernel
     def g2p(
         self,
@@ -427,53 +583,9 @@ class BaseMPMSolver(Solver):
     ):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
-                base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
-                fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
-                w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0) ** 2, 0.5 * (fx - 0.5) ** 2]
-                new_vel = ti.Vector.zero(gs.ti_float, 3)
-                new_C = ti.Matrix.zero(gs.ti_float, 3, 3)
-                for offset in ti.static(ti.grouped(self.stencil_range())):
-                    dpos = offset.cast(gs.ti_float) - fx
-                    grid_vel = self.grid[f, base - self._grid_offset + offset, i_b].vel_out
-                    weight = gs.ti_float(1.0)
-                    for d in ti.static(range(3)):
-                        weight *= w[offset[d]][d]
-
-                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
-                        sep_geom_idx = self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b]
-                        if sep_geom_idx != -1:
-                            grid_vel = self.sim.coupler._func_collide_in_rigid_geom(
-                                self.particles[f, i_p, i_b].pos,
-                                self.particles[f, i_p, i_b].vel,
-                                self.particles_info[i_p].mass * weight / self._particle_volume_scale,
-                                self._coupler.mpm_rigid_normal[i_p, sep_geom_idx, i_b],
-                                1.0,
-                                sep_geom_idx,
-                                i_b,
-                                geoms_info=geoms_info,
-                                links_state=links_state,
-                                rigid_global_info=rigid_global_info,
-                            )
-
-                    new_vel += weight * grid_vel
-                    new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
-
-                # compute actual new_pos with new_vel
-                new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
-
-                # impose boundary for safety, in case simulation explodes and tries to access illegal cell address
-                new_pos, new_vel = self.boundary.impose_pos_vel(new_pos, new_vel)
-
-                # advect to next frame
-                self.particles[f + 1, i_p, i_b].vel = new_vel
-                self.particles[f + 1, i_p, i_b].C = new_C
-                self.particles[f + 1, i_p, i_b].pos = new_pos
+                self.g2p_helper(f, i_p, i_b, geoms_info, links_state, rigid_global_info)
             else:
-                self.particles[f + 1, i_p, i_b].vel = self.particles[f, i_p, i_b].vel
-                self.particles[f + 1, i_p, i_b].pos = self.particles[f, i_p, i_b].pos
-                self.particles[f + 1, i_p, i_b].C = self.particles[f, i_p, i_b].C
-                self.particles[f + 1, i_p, i_b].F = self.particles[f, i_p, i_b].F
-                self.particles[f + 1, i_p, i_b].Jp = self.particles[f, i_p, i_b].Jp
+                self.copy_frame_helper(f, f + 1, i_p, i_b)
 
             self.particles_ng[f + 1, i_p, i_b].active = self.particles_ng[f, i_p, i_b].active
 
@@ -566,38 +678,56 @@ class BaseMPMSolver(Solver):
             self.sim.coupler.rigid_solver._rigid_global_info,
         )
 
+    @ti.func
+    def copy_frame_helper(self, source: ti.i32, target: ti.i32, i_p: ti.i32, i_b: ti.i32):
+        self.particles[target, i_p, i_b].pos = self.particles[source, i_p, i_b].pos
+        self.particles[target, i_p, i_b].vel = self.particles[source, i_p, i_b].vel
+        self.particles[target, i_p, i_b].F = self.particles[source, i_p, i_b].F
+        self.particles[target, i_p, i_b].C = self.particles[source, i_p, i_b].C
+        self.particles[target, i_p, i_b].Jp = self.particles[source, i_p, i_b].Jp
+        if ti.static(self._enable_thermal):
+            self.particles[target, i_p, i_b].temp = self.particles[source, i_p, i_b].temp
+            self.particles[target, i_p, i_b].plastic_strain = self.particles[source, i_p, i_b].plastic_strain
+            self.particles[target, i_p, i_b].plastic_work = self.particles[source, i_p, i_b].plastic_work
+        self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
+
     @ti.kernel
     def copy_frame(self, source: ti.i32, target: ti.i32):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            self.particles[target, i_p, i_b].pos = self.particles[source, i_p, i_b].pos
-            self.particles[target, i_p, i_b].vel = self.particles[source, i_p, i_b].vel
-            self.particles[target, i_p, i_b].F = self.particles[source, i_p, i_b].F
-            self.particles[target, i_p, i_b].C = self.particles[source, i_p, i_b].C
-            self.particles[target, i_p, i_b].Jp = self.particles[source, i_p, i_b].Jp
+            self.copy_frame_helper(source, target, i_p, i_b)
 
-            self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
+    @ti.func
+    def copy_grad_helper(self, source: ti.i32, target: ti.i32, i_p: ti.i32, i_b: ti.i32):
+        self.particles.grad[target, i_p, i_b].pos = self.particles.grad[source, i_p, i_b].pos
+        self.particles.grad[target, i_p, i_b].vel = self.particles.grad[source, i_p, i_b].vel
+        self.particles.grad[target, i_p, i_b].F = self.particles.grad[source, i_p, i_b].F
+        self.particles.grad[target, i_p, i_b].C = self.particles.grad[source, i_p, i_b].C
+        self.particles.grad[target, i_p, i_b].Jp = self.particles.grad[source, i_p, i_b].Jp
+        if ti.static(self._enable_thermal):
+            self.particles.grad[target, i_p, i_b].temp = self.particles.grad[source, i_p, i_b].temp
+            self.particles.grad[target, i_p, i_b].plastic_strain = self.particles.grad[source, i_p, i_b].plastic_strain
+            self.particles.grad[target, i_p, i_b].plastic_work = self.particles.grad[source, i_p, i_b].plastic_work
+        self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
 
     @ti.kernel
     def copy_grad(self, source: ti.i32, target: ti.i32):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            self.particles.grad[target, i_p, i_b].pos = self.particles.grad[source, i_p, i_b].pos
-            self.particles.grad[target, i_p, i_b].vel = self.particles.grad[source, i_p, i_b].vel
-            self.particles.grad[target, i_p, i_b].F = self.particles.grad[source, i_p, i_b].F
-            self.particles.grad[target, i_p, i_b].C = self.particles.grad[source, i_p, i_b].C
-            self.particles.grad[target, i_p, i_b].Jp = self.particles.grad[source, i_p, i_b].Jp
-            self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
+            self.copy_grad_helper(source, target, i_p, i_b)
+
+    @ti.func
+    def reset_grid_helper(self, f: ti.i32, i: ti.i32, j: ti.i32, k: ti.i32, i_b: ti.i32):
+        self.grid[f, i, j, k, i_b] = self._zero_grid_cell_state
+
+    @ti.func
+    def reset_grid_grad_helper(self, f: ti.i32, i: ti.i32, j: ti.i32, k: ti.i32, i_b: ti.i32):
+        self.grid.grad[f, i, j, k, i_b] = self._zero_grid_cell_state
 
     @ti.kernel
     def reset_grid_and_grad(self, f: ti.i32):
         # Zero out the grid at frame f for *all* grid cells and *all* batch indices
         for i, j, k, i_b in ti.ndrange(*self._grid_res, self._B):
-            self.grid[f, i, j, k, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
-            self.grid[f, i, j, k, i_b].mass = gs.ti_float(0.0)
-            self.grid[f, i, j, k, i_b].vel_out = ti.Vector.zero(gs.ti_float, 3)
-
-            self.grid.grad[f, i, j, k, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
-            self.grid.grad[f, i, j, k, i_b].mass = gs.ti_float(0.0)
-            self.grid.grad[f, i, j, k, i_b].vel_out = ti.Vector.zero(gs.ti_float, 3)
+            self.reset_grid_helper(f, i, j, k, i_b)
+            self.reset_grid_grad_helper(f, i, j, k, i_b)
 
     @ti.kernel
     def reset_grad_till_frame(self, f: ti.i32):
@@ -849,6 +979,10 @@ class BaseMPMSolver(Solver):
             self.particles[f, i_p, i_b].C = ti.Matrix.zero(gs.ti_float, 3, 3)
             self.particles[f, i_p, i_b].Jp = mat_default_Jp
             self.particles[f, i_p, i_b].actu = gs.ti_float(0.0)
+            if ti.static(self._enable_thermal):
+                self.particles[f, i_p, i_b].temp = self._default_initial_temperature
+                self.particles[f, i_p, i_b].plastic_strain = 0.0
+                self.particles[f, i_p, i_b].plastic_work = 0.0
 
     @ti.kernel
     def _kernel_set_particles_pos(
@@ -870,6 +1004,10 @@ class BaseMPMSolver(Solver):
             self.particles[f, i_p, i_b].F = ti.Matrix.identity(gs.ti_float, 3)
             self.particles[f, i_p, i_b].C.fill(0.0)
             self.particles[f, i_p, i_b].Jp = self.particles_info[i_p].default_Jp
+            if ti.static(self._enable_thermal):
+                self.particles[f, i_p, i_b].temp = self._default_initial_temperature
+                self.particles[f, i_p, i_b].plastic_strain = 0.0
+                self.particles[f, i_p, i_b].plastic_work = 0.0
 
     @ti.kernel
     def _kernel_set_particles_pos_grad(

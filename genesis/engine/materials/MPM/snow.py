@@ -60,14 +60,14 @@ class Snow(ElastoPlastic):
         )
 
     @ti.func
-    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
+    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp, temp):
         S_new = ti.Matrix.zero(gs.ti_float, 3, 3)
         Jp_new = Jp
         for d in ti.static(range(3)):
             S_new[d, d] = min(max(S[d, d], 1 - self._yield_lower), 1 + self._yield_higher)
             Jp_new *= S[d, d] / S_new[d, d]
         F_new = U @ S_new @ V.transpose()
-        return F_new, S_new, Jp_new
+        return F_new, S_new, Jp_new, 0.0, 0.0
 
     @ti.func
     def update_stress(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):

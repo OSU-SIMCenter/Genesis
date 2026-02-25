@@ -45,11 +45,11 @@ class Liquid(Base):
             self._mu = 0.0
 
     @ti.func
-    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
+    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp, temp):
         F_new = ti.Matrix.identity(gs.ti_float, 3) * ti.pow(J, 1.0 / 3.0)
         S_new = S
         Jp_new = Jp
-        return F_new, S_new, Jp_new
+        return F_new, S_new, Jp_new, 0.0, 0.0
 
     @ti.func
     def update_stress(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
