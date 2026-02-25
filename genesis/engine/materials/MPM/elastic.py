@@ -57,11 +57,11 @@ class Elastic(Base):
         self._model = model
 
     @qd.func
-    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
+    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp, temp):
         F_new = F_tmp
         S_new = S
         Jp_new = Jp
-        return F_new, S_new, Jp_new
+        return F_new, S_new, Jp_new, 0.0, 0.0
 
     @qd.func
     def update_stress_corotation(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):

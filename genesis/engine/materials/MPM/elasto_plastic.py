@@ -52,6 +52,9 @@ class ElastoPlastic(Base):
         yield_higher=4.5e-3,
         use_von_mises=True,  # von Mises yield criterion
         von_mises_yield_stress=10000.0,
+        T_ref=293.15,  # Reference temperature for Johnson-Cook
+        T_melt=1793.0,  # Melting point for 4340 steel
+        jc_m=1.03,  # Johnson-Cook thermal softening exponent
     ):
         super().__init__(E, nu, rho, lam, mu, sampler)
 
@@ -59,17 +62,30 @@ class ElastoPlastic(Base):
         self._yield_higher = yield_higher
         self._use_von_mises = use_von_mises
         self._von_mises_yield_stress = von_mises_yield_stress
+        self._T_ref = T_ref
+        self._T_melt = T_melt
+        self._jc_m = jc_m
 
     @qd.func
-    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
+    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp, temp):
         F_new = qd.Matrix.zero(gs.qd_float, 3, 3)
         S_new = qd.Matrix.zero(gs.qd_float, 3, 3)
+        delta_gamma_out = qd.cast(0.0, gs.qd_float)
+        effective_yield_out = qd.cast(0.0, gs.qd_float)
+
         if qd.static(self.use_von_mises):
             S_new = qd.max(S, 0.05)  # to prevent NaN
             epsilon = qd.Vector([qd.log(S_new[0, 0]), qd.log(S_new[1, 1]), qd.log(S_new[2, 2])])
             epsilon_hat = epsilon - (epsilon.sum() / 3)
             epsilon_hat_norm = epsilon_hat.norm(gs.EPS)
-            delta_gamma = epsilon_hat_norm - self._von_mises_yield_stress / (2 * self._mu)
+
+            # Temperature-dependent yield (Johnson-Cook thermal term)
+            T_star = (temp - self._T_ref) / (self._T_melt - self._T_ref)
+            T_star = qd.max(0.0, qd.min(1.0, T_star))
+            thermal_softening = 1.0 - qd.pow(T_star, self._jc_m)
+            effective_yield = self._von_mises_yield_stress * thermal_softening
+
+            delta_gamma = epsilon_hat_norm - effective_yield / (2 * self._mu)
 
             if delta_gamma > 0:  # Yields
                 epsilon -= (delta_gamma / epsilon_hat_norm) * epsilon_hat
@@ -77,6 +93,8 @@ class ElastoPlastic(Base):
                 for d in qd.static(range(3)):
                     S_new[d, d] = qd.exp(epsilon[d])
                 F_new = U @ S_new @ V.transpose()
+                delta_gamma_out = delta_gamma
+                effective_yield_out = effective_yield
             else:
                 F_new = F_tmp
 
@@ -87,7 +105,7 @@ class ElastoPlastic(Base):
             F_new = U @ S_new @ V.transpose()
 
         Jp_new = Jp
-        return F_new, S_new, Jp_new
+        return F_new, S_new, Jp_new, delta_gamma_out, effective_yield_out
 
     @property
     def yield_lower(self):

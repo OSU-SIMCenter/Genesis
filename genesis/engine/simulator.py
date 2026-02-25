@@ -24,8 +24,8 @@ from genesis.repr_base import RBC
 from .entities import HybridEntity
 from .solvers import (
     KinematicSolver,
+    BaseMPMSolver,
     FEMSolver,
-    MPMSolver,
     PBDSolver,
     RigidSolver,
     SFSolver,
@@ -117,7 +117,7 @@ class Simulator(RBC):
         self.tool_solver = ToolSolver(self.scene, self, self.tool_options)
         self.rigid_solver = RigidSolver(self.scene, self, self.rigid_options)
         self.kinematic_solver = KinematicSolver(self.scene, self, self.kinematic_options)
-        self.mpm_solver = MPMSolver(self.scene, self, self.mpm_options)
+        self.mpm_solver = BaseMPMSolver(self.scene, self, self.mpm_options)
         self.sph_solver = SPHSolver(self.scene, self, self.sph_options)
         self.pbd_solver = PBDSolver(self.scene, self, self.pbd_options)
         self.fem_solver = FEMSolver(self.scene, self, self.fem_options)

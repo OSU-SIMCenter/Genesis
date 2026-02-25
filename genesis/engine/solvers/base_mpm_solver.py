@@ -42,6 +42,13 @@ class BaseMPMSolver(Solver):
         self._enable_CPIC = options.enable_CPIC
         self._constraints_initialized = False
 
+        # Thermal config
+        self._enable_thermal = not options.use_legacy_solver
+        self._default_initial_temperature = options.default_initial_temperature
+        self._default_heat_capacity = options.default_heat_capacity
+        self._h_contact = options.thermal_contact_conductivity
+        self._h_air = options.thermal_air_conductivity
+
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
 
         # `_particle_volume_scale` is used to avoid potential numerical instability, as the actual `_particle_volume` may be very small.
@@ -82,43 +89,62 @@ class BaseMPMSolver(Solver):
             upper=self._upper_bound - self.boundary_padding,
         )
 
+    def _make_particle_state_template(self):
+        template = {
+            "pos": gs.qd_vec3,  # position
+            "vel": gs.qd_vec3,  # velocity
+            "C": gs.qd_mat3,  # affine velocity field
+            "F": gs.qd_mat3,  # deformation gradient
+            "F_tmp": gs.qd_mat3,  # temp deformation gradient
+            "U": gs.qd_mat3,  # SVD
+            "V": gs.qd_mat3,  # SVD
+            "S": gs.qd_mat3,  # SVD
+            "actu": gs.qd_float,  # actuation
+            "Jp": gs.qd_float,  # volume ratio
+        }
+        if self._enable_thermal:
+            template.update({
+                "temp": gs.qd_float,
+                "plastic_strain": gs.qd_float,
+                "plastic_work": gs.qd_float,
+            })
+        return template
+
+    def _make_particle_state_ng_template(self):
+        return {
+            "active": gs.qd_bool,
+        }
+
+    def _make_particle_info_template(self):
+        return {
+            "material_idx": gs.qd_int,
+            "mass": gs.qd_float,
+            "default_Jp": gs.qd_float,
+            "free": gs.qd_bool,
+            # for muscle
+            "muscle_group": gs.qd_int,
+            "muscle_direction": gs.qd_vec3,
+        }
+
+    def _make_particle_state_render_template(self):
+        return {
+            "pos": gs.qd_vec3,
+            "vel": gs.qd_vec3,
+            "active": gs.qd_bool,
+        }
+
     def init_particle_fields(self):
         # dynamic particle state
-        struct_particle_state = qd.types.struct(
-            pos=gs.qd_vec3,  # position
-            vel=gs.qd_vec3,  # velocity
-            C=gs.qd_mat3,  # affine velocity field
-            F=gs.qd_mat3,  # deformation gradient
-            F_tmp=gs.qd_mat3,  # temp deformation gradient
-            U=gs.qd_mat3,  # SVD
-            V=gs.qd_mat3,  # SVD
-            S=gs.qd_mat3,  # SVD
-            actu=gs.qd_float,  # actuation
-            Jp=gs.qd_float,  # volume ratio
-        )
+        struct_particle_state = qd.types.struct(**self._make_particle_state_template())
 
         # dynamic particle state without gradient
-        struct_particle_state_ng = qd.types.struct(
-            active=gs.qd_bool,
-        )
+        struct_particle_state_ng = qd.types.struct(**self._make_particle_state_ng_template())
 
         # static particle info
-        struct_particle_info = qd.types.struct(
-            material_idx=gs.qd_int,
-            mass=gs.qd_float,
-            default_Jp=gs.qd_float,
-            free=gs.qd_bool,
-            # for muscle
-            muscle_group=gs.qd_int,
-            muscle_direction=gs.qd_vec3,
-        )
+        struct_particle_info = qd.types.struct(**self._make_particle_info_template())
 
         # single frame particle state for rendering
-        struct_particle_state_render = qd.types.struct(
-            pos=gs.qd_vec3,
-            vel=gs.qd_vec3,
-            active=gs.qd_bool,
-        )
+        struct_particle_state_render = qd.types.struct(**self._make_particle_state_render_template())
 
         # construct fields
         self.particles = struct_particle_state.field(
@@ -137,13 +163,24 @@ class BaseMPMSolver(Solver):
         self.particles_render = struct_particle_state_render.field(
             shape=(self._n_particles, self._B), needs_grad=False, layout=qd.Layout.SOA
         )
+        if self._enable_thermal:
+            self.particles.temp.fill(self._default_initial_temperature)
+
+    def _make_grid_cell_state_template(self):
+        template = {
+            "mass": gs.qd_float,  # mass
+            "vel_in": gs.qd_vec3,  # input momentum/velocity
+            "vel_out": gs.qd_vec3,  # output momentum/velocity
+        }
+        if self._enable_thermal:
+            template.update({
+                "temp": gs.qd_float,
+                "mass_thermal": gs.qd_float,
+            })
+        return template
 
     def init_grid_fields(self):
-        grid_cell_state = qd.types.struct(
-            mass=gs.qd_float,  # mass
-            vel_in=gs.qd_vec3,  # input momentum/velocity
-            vel_out=gs.qd_vec3,  # output momentum/velocity
-        )
+        grid_cell_state = qd.types.struct(**self._make_grid_cell_state_template())
         self.grid = grid_cell_state.field(
             shape=(self._sim.substeps_local + 1, *self._grid_res, self._B),
             needs_grad=True,
@@ -289,6 +326,49 @@ class BaseMPMSolver(Solver):
     def stencil_range(self):
         return qd.ndrange(3, 3, 3)
 
+    @qd.func
+    def get_particle_thermal_state(self, f: qd.i32, i_p: qd.i32, i_b: qd.i32):
+        temp = gs.qd_float(293.15)
+        plastic_strain = gs.qd_float(0.0)
+        plastic_work = gs.qd_float(0.0)
+        if qd.static(self._enable_thermal):
+            temp = self.particles[f, i_p, i_b].temp
+            plastic_strain = self.particles[f, i_p, i_b].plastic_strain
+            plastic_work = self.particles[f, i_p, i_b].plastic_work
+        return temp, plastic_strain, plastic_work
+
+    @qd.func
+    def p2g_post_constitutive(self, f, i_p, i_b, delta_gamma, effective_yield):
+        if qd.static(self._enable_thermal):
+            fraction = 0.9
+            rho = self.particles_info[i_p].mass / qd.math.max(self._particle_volume, gs.EPS)
+            Cp = self._default_heat_capacity
+            if delta_gamma > 0.0:
+                vol_work = effective_yield * delta_gamma
+                self.particles[f, i_p, i_b].plastic_strain += delta_gamma
+                self.particles[f, i_p, i_b].plastic_work += vol_work
+                dT = fraction * vol_work / (rho * Cp)
+                self.particles[f + 1, i_p, i_b].temp = self.particles[f, i_p, i_b].temp + dT
+            else:
+                self.particles[f + 1, i_p, i_b].temp = self.particles[f, i_p, i_b].temp
+
+    @qd.func
+    def p2g_transfer_extra_fields(self, f, i_p, idx: qd.template(), i_b, weight):
+        if qd.static(self._enable_thermal):
+            mass = self.particles_info[i_p].mass
+            self.grid[f, idx, i_b].mass_thermal += weight * mass
+            self.grid[f, idx, i_b].temp += weight * mass * self.particles[f + 1, i_p, i_b].temp
+
+    @qd.func
+    def g2p_prologue(self, f, i_p, i_b):
+        if qd.static(self._enable_thermal):
+            self.particles[f + 1, i_p, i_b].temp = gs.qd_float(0.0)
+
+    @qd.func
+    def g2p_transfer_extra_fields(self, f, i_p, i_b, weight, grid_index: qd.template()):
+        if qd.static(self._enable_thermal):
+            self.particles[f + 1, i_p, i_b].temp += weight * self.grid[f, grid_index, i_b].temp
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- simulation -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -341,16 +421,21 @@ class BaseMPMSolver(Solver):
                 F_new = qd.Matrix.zero(gs.qd_float, 3, 3)
                 S_new = qd.Matrix.zero(gs.qd_float, 3, 3)
                 Jp_new = gs.qd_float(1.0)
+                p_temp, _, _ = self.get_particle_thermal_state(f, i_p, i_b)
+
                 for material_idx in qd.static(self._materials_idx):
                     if self.particles_info[i_p].material_idx == material_idx:
-                        F_new, S_new, Jp_new = self._materials_update_F_S_Jp[material_idx](
+                        F_new, S_new, Jp_new, delta_gamma, effective_yield = self._materials_update_F_S_Jp[material_idx](
                             J=J,
                             F_tmp=self.particles[f, i_p, i_b].F_tmp,
                             U=self.particles[f, i_p, i_b].U,
                             S=self.particles[f, i_p, i_b].S,
                             V=self.particles[f, i_p, i_b].V,
                             Jp=self.particles[f, i_p, i_b].Jp,
+                            temp=p_temp,
                         )
+                        self.p2g_post_constitutive(f, i_p, i_b, delta_gamma, effective_yield)
+                
                 self.particles[f + 1, i_p, i_b].F = F_new
                 self.particles[f + 1, i_p, i_b].Jp = Jp_new
 
@@ -419,6 +504,7 @@ class BaseMPMSolver(Solver):
                         self.grid[f, base - self._grid_offset + offset, i_b].mass += (
                             weight * self.particles_info[i_p].mass
                         )
+                        self.p2g_transfer_extra_fields(f, i_p, base - self._grid_offset + offset, i_b, weight)
 
                     if not self.particles_info[i_p].free:  # non-free particles behave as boundary conditions
                         self.grid[f, base - self._grid_offset + offset, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
@@ -433,6 +519,7 @@ class BaseMPMSolver(Solver):
     ):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
+                self.g2p_prologue(f, i_p, i_b)
                 base = qd.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.qd_int)
                 fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.qd_float)
                 w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0) ** 2, 0.5 * (fx - 0.5) ** 2]
@@ -463,6 +550,7 @@ class BaseMPMSolver(Solver):
 
                     new_vel += weight * grid_vel
                     new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
+                    self.g2p_transfer_extra_fields(f, i_p, i_b, weight, base - self._grid_offset + offset)
 
                 # compute actual new_pos with new_vel
                 new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
@@ -475,11 +563,7 @@ class BaseMPMSolver(Solver):
                 self.particles[f + 1, i_p, i_b].C = new_C
                 self.particles[f + 1, i_p, i_b].pos = new_pos
             else:
-                self.particles[f + 1, i_p, i_b].vel = self.particles[f, i_p, i_b].vel
-                self.particles[f + 1, i_p, i_b].pos = self.particles[f, i_p, i_b].pos
-                self.particles[f + 1, i_p, i_b].C = self.particles[f, i_p, i_b].C
-                self.particles[f + 1, i_p, i_b].F = self.particles[f, i_p, i_b].F
-                self.particles[f + 1, i_p, i_b].Jp = self.particles[f, i_p, i_b].Jp
+                self.copy_frame_helper(f, f + 1, i_p, i_b)
 
             self.particles_ng[f + 1, i_p, i_b].active = self.particles_ng[f, i_p, i_b].active
 
@@ -572,26 +656,41 @@ class BaseMPMSolver(Solver):
             self.sim.coupler.rigid_solver._rigid_global_info,
         )
 
+    @qd.func
+    def copy_frame_helper(self, source: qd.i32, target: qd.i32, i_p: qd.i32, i_b: qd.i32):
+        self.particles[target, i_p, i_b].pos = self.particles[source, i_p, i_b].pos
+        self.particles[target, i_p, i_b].vel = self.particles[source, i_p, i_b].vel
+        self.particles[target, i_p, i_b].F = self.particles[source, i_p, i_b].F
+        self.particles[target, i_p, i_b].C = self.particles[source, i_p, i_b].C
+        self.particles[target, i_p, i_b].Jp = self.particles[source, i_p, i_b].Jp
+        if qd.static(self._enable_thermal):
+            self.particles[target, i_p, i_b].temp = self.particles[source, i_p, i_b].temp
+            self.particles[target, i_p, i_b].plastic_strain = self.particles[source, i_p, i_b].plastic_strain
+            self.particles[target, i_p, i_b].plastic_work = self.particles[source, i_p, i_b].plastic_work
+        self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
+
     @qd.kernel
     def copy_frame(self, source: qd.i32, target: qd.i32):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
-            self.particles[target, i_p, i_b].pos = self.particles[source, i_p, i_b].pos
-            self.particles[target, i_p, i_b].vel = self.particles[source, i_p, i_b].vel
-            self.particles[target, i_p, i_b].F = self.particles[source, i_p, i_b].F
-            self.particles[target, i_p, i_b].C = self.particles[source, i_p, i_b].C
-            self.particles[target, i_p, i_b].Jp = self.particles[source, i_p, i_b].Jp
+            self.copy_frame_helper(source, target, i_p, i_b)
 
-            self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
+    @qd.func
+    def copy_grad_helper(self, source: qd.i32, target: qd.i32, i_p: qd.i32, i_b: qd.i32):
+        self.particles.grad[target, i_p, i_b].pos = self.particles.grad[source, i_p, i_b].pos
+        self.particles.grad[target, i_p, i_b].vel = self.particles.grad[source, i_p, i_b].vel
+        self.particles.grad[target, i_p, i_b].F = self.particles.grad[source, i_p, i_b].F
+        self.particles.grad[target, i_p, i_b].C = self.particles.grad[source, i_p, i_b].C
+        self.particles.grad[target, i_p, i_b].Jp = self.particles.grad[source, i_p, i_b].Jp
+        if qd.static(self._enable_thermal):
+            self.particles.grad[target, i_p, i_b].temp = self.particles.grad[source, i_p, i_b].temp
+            self.particles.grad[target, i_p, i_b].plastic_strain = self.particles.grad[source, i_p, i_b].plastic_strain
+            self.particles.grad[target, i_p, i_b].plastic_work = self.particles.grad[source, i_p, i_b].plastic_work
+        self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
 
     @qd.kernel
     def copy_grad(self, source: qd.i32, target: qd.i32):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
-            self.particles.grad[target, i_p, i_b].pos = self.particles.grad[source, i_p, i_b].pos
-            self.particles.grad[target, i_p, i_b].vel = self.particles.grad[source, i_p, i_b].vel
-            self.particles.grad[target, i_p, i_b].F = self.particles.grad[source, i_p, i_b].F
-            self.particles.grad[target, i_p, i_b].C = self.particles.grad[source, i_p, i_b].C
-            self.particles.grad[target, i_p, i_b].Jp = self.particles.grad[source, i_p, i_b].Jp
-            self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
+            self.copy_grad_helper(source, target, i_p, i_b)
 
     @qd.kernel
     def reset_grid_and_grad(self, f: qd.i32):
@@ -600,10 +699,16 @@ class BaseMPMSolver(Solver):
             self.grid[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
             self.grid[f, i, j, k, i_b].mass = gs.qd_float(0.0)
             self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
+            if qd.static(self._enable_thermal):
+                self.grid[f, i, j, k, i_b].temp = gs.qd_float(0.0)
+                self.grid[f, i, j, k, i_b].mass_thermal = gs.qd_float(0.0)
 
             self.grid.grad[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
             self.grid.grad[f, i, j, k, i_b].mass = gs.qd_float(0.0)
             self.grid.grad[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
+            if qd.static(self._enable_thermal):
+                self.grid.grad[f, i, j, k, i_b].temp = gs.qd_float(0.0)
+                self.grid.grad[f, i, j, k, i_b].mass_thermal = gs.qd_float(0.0)
 
     @qd.kernel
     def reset_grad_till_frame(self, f: qd.i32):
@@ -855,6 +960,10 @@ class BaseMPMSolver(Solver):
             self.particles[f, i_p, i_b].C = qd.Matrix.zero(gs.qd_float, 3, 3)
             self.particles[f, i_p, i_b].Jp = mat_default_Jp
             self.particles[f, i_p, i_b].actu = gs.qd_float(0.0)
+            if qd.static(self._enable_thermal):
+                self.particles[f, i_p, i_b].temp = self._default_initial_temperature
+                self.particles[f, i_p, i_b].plastic_strain = gs.qd_float(0.0)
+                self.particles[f, i_p, i_b].plastic_work = gs.qd_float(0.0)
 
     @qd.kernel
     def _kernel_set_particles_pos(
@@ -876,6 +985,10 @@ class BaseMPMSolver(Solver):
             self.particles[f, i_p, i_b].F = qd.Matrix.identity(gs.qd_float, 3)
             self.particles[f, i_p, i_b].C.fill(0.0)
             self.particles[f, i_p, i_b].Jp = self.particles_info[i_p].default_Jp
+            if qd.static(self._enable_thermal):
+                self.particles[f, i_p, i_b].temp = self._default_initial_temperature
+                self.particles[f, i_p, i_b].plastic_strain = gs.qd_float(0.0)
+                self.particles[f, i_p, i_b].plastic_work = gs.qd_float(0.0)
 
     @qd.kernel
     def _kernel_set_particles_pos_grad(
