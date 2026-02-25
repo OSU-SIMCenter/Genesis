@@ -123,6 +123,11 @@ torchaudio = "*"
 [feature.agf-server.pypi-dependencies]
 websockets = "*"
 pint = "*"
+h5py = "*"
+pandas = "*"
+pyarrow = "*"
+fastparquet = "*"
+duckdb = "*"
 
 # =============================================================================
 # FEATURE: Build Tools
