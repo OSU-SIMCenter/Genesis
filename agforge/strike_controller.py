@@ -406,7 +406,7 @@ class StrikeController:
             
             if should_reconstruct:
                 with self._profile("teleop_recon_update"):
-                    self.reconstructor.update(should_reconstruct)
+                    self.reconstructor.update(should_reconstruct, is_deforming=True)
                 with self._profile("teleop_recon_get_particles"):
                     particles = self.reconstructor.get_active_particle_cache()
                     if particles is None:

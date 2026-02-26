@@ -6,7 +6,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.particle as pu
 import pyvista as pv
-from scipy.ndimage import gaussian_filter
+import math
 from enum import Enum
 
 # Compatibility Enum
@@ -42,6 +42,7 @@ class SurfaceReconstructor:
         self.grid_res = grid_res
         self.density = ti.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
         self.prev_density = ti.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
+        self._blur_temp = ti.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
         self.temporal_alpha = 0.35 # Blend factor (0.0 = history only, 1.0 = no smoothing)
         self.density_initialized = False
         
@@ -61,6 +62,18 @@ class SurfaceReconstructor:
         
         # Density-space smoothing before marching cubes (sigma in grid cells)
         self.density_blur_sigma = 1.25
+        
+        # Pre-compute 1D Gaussian kernel weights for separable blur  
+        self._blur_radius = int(math.ceil(2.0 * self.density_blur_sigma))  # ~3 cells each side
+        ksize = 2 * self._blur_radius + 1
+        weights = np.array([math.exp(-0.5 * ((i - self._blur_radius) / self.density_blur_sigma) ** 2) 
+                           for i in range(ksize)], dtype=np.float32)
+        weights /= weights.sum()
+        self._blur_weights = ti.field(dtype=float, shape=(ksize,))
+        self._blur_weights.from_numpy(weights)
+        
+        # Cached PyVista grid (reused across frames)
+        self._pv_grid = None
 
     def get_state(self):
         return {
@@ -166,15 +179,68 @@ class SurfaceReconstructor:
             self.density[I] = blended_val
             self.prev_density[I] = blended_val
 
-    def update(self, should_reconstruct: bool):
+    @ti.kernel
+    def _blur_pass_x(self, radius: int):
+        """Separable Gaussian blur along X axis: density -> _blur_temp."""
+        for i, j, k in self._blur_temp:
+            acc = 0.0
+            for di in range(-radius, radius + 1):
+                ni = i + di
+                if 0 <= ni < self.grid_res:
+                    acc += self.density[ni, j, k] * self._blur_weights[di + radius]
+                else:
+                    acc += self.density[i, j, k] * self._blur_weights[di + radius]
+            self._blur_temp[i, j, k] = acc
+
+    @ti.kernel
+    def _blur_pass_y(self, radius: int):
+        """Separable Gaussian blur along Y axis: _blur_temp -> density."""
+        for i, j, k in self.density:
+            acc = 0.0
+            for di in range(-radius, radius + 1):
+                nj = j + di
+                if 0 <= nj < self.grid_res:
+                    acc += self._blur_temp[i, nj, k] * self._blur_weights[di + radius]
+                else:
+                    acc += self._blur_temp[i, j, k] * self._blur_weights[di + radius]
+            self.density[i, j, k] = acc
+
+    @ti.kernel
+    def _blur_pass_z(self, radius: int):
+        """Separable Gaussian blur along Z axis: density -> _blur_temp, then copy back."""
+        for i, j, k in self._blur_temp:
+            acc = 0.0
+            for di in range(-radius, radius + 1):
+                nk = k + di
+                if 0 <= nk < self.grid_res:
+                    acc += self.density[i, j, nk] * self._blur_weights[di + radius]
+                else:
+                    acc += self.density[i, j, k] * self._blur_weights[di + radius]
+            self._blur_temp[i, j, k] = acc
+
+    def _blur_density_gpu(self):
+        """Run 3-pass separable Gaussian blur entirely on GPU."""
+        r = self._blur_radius
+        self._blur_pass_x(r)       # density -> _blur_temp
+        self._blur_pass_y(r)       # _blur_temp -> density  
+        self._blur_pass_z(r)       # density -> _blur_temp
+        # Copy result back: _blur_temp -> density
+        self._copy_blur_to_density()
+
+    @ti.kernel
+    def _copy_blur_to_density(self):
+        for I in ti.grouped(self.density):
+            self.density[I] = self._blur_temp[I]
+
+    def update(self, should_reconstruct: bool, is_deforming: bool = False):
         if not self.recon_enabled:
             return
         self.frame_counter += 1
         if not should_reconstruct and (self.frame_counter % self.recon_frame_interval != 0):
             return
-        self.create_reconstructed_mesh()
+        self.create_reconstructed_mesh(is_deforming=is_deforming)
 
-    def create_reconstructed_mesh(self):
+    def create_reconstructed_mesh(self, is_deforming: bool = False):
         # Legacy SplashSurf Path
         if self.backend == 'splashsurf':
             self._create_splashsurf_mesh()
@@ -245,12 +311,6 @@ class SurfaceReconstructor:
             self._prev_grid_origin = grid_origin
 
             lower_bound_ti = ti.Vector([min_bound[0], min_bound[1], min_bound[2]])
-            
-            gs.logger.debug(
-                f"Reconstruction: {n_active_particles}/{n_particles} particles, "
-                f"grid_res={self.grid_res}, dx={dx:.6f}, influence_r={self.influence_radius:.6f}, "
-                f"alpha={'1.0 (init)' if not self.density_initialized else str(self.temporal_alpha)}"
-            )
 
             self._compute_density_kernel(
                 particles_pos, 
@@ -261,36 +321,23 @@ class SurfaceReconstructor:
                 float(self.influence_radius)
             )
             
-            # Apply Adaptive Temporal Blending
+            # Adaptive Temporal Blending (state-based, no extra GPU transfer)
             if not self.density_initialized:
                 alpha = 1.0
+            elif is_deforming:
+                alpha = 0.8  # Fast response during active deformation
             else:
-                try:
-                    # Estimate deformation rate from particle velocity
-                    particle_velocities = mpm_entity.get_particles_vel(envs_idx=0).squeeze(0)
-                    active_vels = particle_velocities[particles_active]
-                    vel_magnitude = active_vels.norm(dim=1).mean().item()
-
-                    # Adaptive alpha: high during motion, low at rest
-                    # vel_threshold: typical pressing speed ~0.01 m/s
-                    vel_threshold = 0.005
-                    alpha_rest = 0.2    # Heavy smoothing when still
-                    alpha_motion = 0.8  # Fast response during deformation
-                    t = min(vel_magnitude / vel_threshold, 1.0)
-                    alpha = alpha_rest + t * (alpha_motion - alpha_rest)
-                    gs.logger.debug(f"Reconstruction: Adaptive Alpha vel={vel_magnitude:.5f}, alpha={alpha:.2f}")
-                except Exception as e:
-                    gs.logger.warning(f"Reconstruction: Failed to compute adaptive alpha: {e}. Falling back.")
-                    alpha = self.temporal_alpha
+                alpha = 0.2  # Heavy smoothing at rest
 
             self._blend_density_temporal(alpha)
             self.density_initialized = True
             
-            density_cpu = self.density.to_numpy()
-            
-            # Density-space smoothing: suppress per-particle bumps and grid aliasing
+            # GPU Gaussian blur (separable, 3 passes on Taichi fields)
             if self.density_blur_sigma > 0:
-                density_cpu = gaussian_filter(density_cpu, sigma=self.density_blur_sigma)
+                self._blur_density_gpu()
+            
+            # Transfer blurred density to CPU
+            density_cpu = self.density.to_numpy()
 
             max_dens = density_cpu.max()
             thresh = max_dens * 0.4
