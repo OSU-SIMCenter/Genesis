@@ -12,7 +12,7 @@ def main():
     scene = gs.Scene(
         show_viewer=False,
         mpm_options=gs.options.MPMOptions(
-            use_legacy_solver=False,
+            enable_thermal=True,
             default_initial_temperature=1000.0,
             thermal_air_conductivity=5.0e3, # very low air cooling
             thermal_contact_conductivity=5.0e7, # very high floor cooling

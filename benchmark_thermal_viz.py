@@ -27,7 +27,7 @@ gs.init(backend=gs.gpu, logging_level="warning")
 scene = gs.Scene(
     show_viewer=False,
     mpm_options=gs.options.MPMOptions(
-        use_legacy_solver=False,
+        enable_thermal=True,
         default_initial_temperature=1000.0,
         lower_bound=(0.0, 0.0, 0.0),
         upper_bound=(1.0, 1.0, 1.0),
