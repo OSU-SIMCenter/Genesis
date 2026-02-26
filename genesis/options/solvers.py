@@ -459,6 +459,7 @@ class MPMOptions(Options):
     leaf_block_size: int = 8
 
     # Thermal physics
+    enable_thermal: bool = False
     default_initial_temperature: float = 293.15  # Kelvin
     default_thermal_diffusivity: float = 1.1e-5  # m^2/s (Steel)
     default_heat_capacity: float = 450.0  # J/(kg K) (Steel)

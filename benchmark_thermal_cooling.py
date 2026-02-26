@@ -12,7 +12,7 @@ def main():
     scene = gs.Scene(
         show_viewer=False,
         mpm_options=gs.options.MPMOptions(
-            use_legacy_solver=False,
+            enable_thermal=True,
             default_initial_temperature=1000.0,
             thermal_air_conductivity=5.0e5, # h_air (cranked up to see cooling in 3s of sim time)
             lower_bound=(0.0, 0.0, 0.0),

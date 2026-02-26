@@ -41,11 +41,12 @@ class BaseMPMSolver(Solver):
         self._constraints_initialized = False
 
         # Thermal config
-        self._enable_thermal = not options.use_legacy_solver
+        self._enable_thermal = options.enable_thermal
         self._default_initial_temperature = options.default_initial_temperature
         self._default_heat_capacity = options.default_heat_capacity
         self._h_contact = options.thermal_contact_conductivity
         self._h_air = options.thermal_air_conductivity
+        self._alpha_thermal = options.default_thermal_diffusivity
 
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
 
@@ -174,6 +175,7 @@ class BaseMPMSolver(Solver):
         if self._enable_thermal:
             template.update({
                 "temp": gs.ti_float,
+                "temp_diffused": gs.ti_float,
                 "mass_thermal": gs.ti_float,
             })
         return template
@@ -270,6 +272,14 @@ class BaseMPMSolver(Solver):
                     f"Current `substep_dt` ({self.substep_dt:.6g}) is greater than suggested_dt ({suggested_dt:.6g}, "
                     "calculated based on `grid_density`). Simulation might be unstable."
                 )
+                
+            if self._enable_thermal:
+                dt_cfl = self._dx ** 2 / (6.0 * self._alpha_thermal)
+                if self.substep_dt > dt_cfl:
+                    gs.logger.warning(
+                        f"Current `substep_dt` ({self.substep_dt:.6g}) exceeds the thermal diffusion CFL limit "
+                        f"({dt_cfl:.6g}) for alpha={self._alpha_thermal}. Heat diffusion may mathematically explode."
+                    )
 
         # Overwrite gravity because only field is supported for now
         if self._gravity is not None:
@@ -363,7 +373,7 @@ class BaseMPMSolver(Solver):
     @ti.func
     def g2p_transfer_extra_fields(self, f, i_p, i_b, weight, grid_index: ti.template()):
         if ti.static(self._enable_thermal):
-            self.particles[f + 1, i_p, i_b].temp += weight * self.grid[f, grid_index, i_b].temp
+            self.particles[f + 1, i_p, i_b].temp += weight * self.grid[f, grid_index, i_b].temp_diffused
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- simulation -------------------------------------

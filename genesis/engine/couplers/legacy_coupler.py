@@ -1052,6 +1052,59 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.collider._collider_static_config,
             )
 
+    @ti.kernel
+    def mpm_grid_thermal_diffusion(self, f: ti.i32):
+        for I in ti.grouped(ti.ndrange(*self.mpm_solver.grid_res)):
+            for i_b in range(self.mpm_solver._B):
+                m_C = self.mpm_solver.grid[f, I, i_b].mass_thermal
+                if m_C > gs.EPS:
+                    T_C = self.mpm_solver.grid[f, I, i_b].temp
+                    laplacian = 0.0
+                    
+                    I_left = I + ti.Vector([-1, 0, 0])
+                    I_right = I + ti.Vector([1, 0, 0])
+                    I_down = I + ti.Vector([0, -1, 0])
+                    I_up = I + ti.Vector([0, 1, 0])
+                    I_back = I + ti.Vector([0, 0, -1])
+                    I_front = I + ti.Vector([0, 0, 1])
+                    
+                    if I_left[0] >= 0:
+                        m_N = self.mpm_solver.grid[f, I_left, i_b].mass_thermal
+                        if m_N > gs.EPS:
+                            laplacian += (ti.min(m_C, m_N) / m_C) * (self.mpm_solver.grid[f, I_left, i_b].temp - T_C)
+                    
+                    if I_right[0] < self.mpm_solver.grid_res[0]:
+                        m_N = self.mpm_solver.grid[f, I_right, i_b].mass_thermal
+                        if m_N > gs.EPS:
+                            laplacian += (ti.min(m_C, m_N) / m_C) * (self.mpm_solver.grid[f, I_right, i_b].temp - T_C)
+                            
+                    if I_down[1] >= 0:
+                        m_N = self.mpm_solver.grid[f, I_down, i_b].mass_thermal
+                        if m_N > gs.EPS:
+                            laplacian += (ti.min(m_C, m_N) / m_C) * (self.mpm_solver.grid[f, I_down, i_b].temp - T_C)
+                            
+                    if I_up[1] < self.mpm_solver.grid_res[1]:
+                        m_N = self.mpm_solver.grid[f, I_up, i_b].mass_thermal
+                        if m_N > gs.EPS:
+                            laplacian += (ti.min(m_C, m_N) / m_C) * (self.mpm_solver.grid[f, I_up, i_b].temp - T_C)
+                            
+                    if I_back[2] >= 0:
+                        m_N = self.mpm_solver.grid[f, I_back, i_b].mass_thermal
+                        if m_N > gs.EPS:
+                            laplacian += (ti.min(m_C, m_N) / m_C) * (self.mpm_solver.grid[f, I_back, i_b].temp - T_C)
+                            
+                    if I_front[2] < self.mpm_solver.grid_res[2]:
+                        m_N = self.mpm_solver.grid[f, I_front, i_b].mass_thermal
+                        if m_N > gs.EPS:
+                            laplacian += (ti.min(m_C, m_N) / m_C) * (self.mpm_solver.grid[f, I_front, i_b].temp - T_C)
+
+                    alpha = self.mpm_solver._alpha_thermal
+                    dx = self.mpm_solver.dx
+                    dt = self.mpm_solver.substep_dt
+                    
+                    T_new = T_C + alpha * dt / (dx * dx) * laplacian
+                    self.mpm_solver.grid[f, I, i_b].temp_diffused = T_new
+
     def couple(self, f):
         # MPM <-> all others
         if self.mpm_solver.is_active:
@@ -1065,6 +1118,8 @@ class LegacyCoupler(RBC):
                 sdf_info=self.rigid_solver.sdf._sdf_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
+            if self.mpm_solver._enable_thermal:
+                self.mpm_grid_thermal_diffusion(f)
 
         # SPH <-> Rigid
         if self._rigid_sph:
