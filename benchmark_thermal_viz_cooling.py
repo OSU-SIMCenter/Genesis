@@ -40,12 +40,19 @@ def main():
     cfg.mpm.enable_thermal = True
     cfg.mpm.default_initial_temperature = 293.15
     cfg.mpm.default_thermal_diffusivity = 0.01
-    cfg.mpm.thermal_air_conductivity = 0.01
-    cfg.mpm.thermal_contact_conductivity = 0.5
+    cfg.mpm.thermal_air_conductivity = 10.0       # Increased for visible air cooling
+    cfg.mpm.thermal_contact_conductivity = 5000.0 # High conductivity for floor contact
     
-    # Expand MPM bounds to fit two standing cylinders
-    cfg.mpm.lower_bound = (-0.2, -0.1, 0.0)
-    cfg.mpm.upper_bound = (0.2, 0.1, 0.6)
+    # Tighten MPM bounds to fit two standing cylinders closely
+    cfg.mpm.lower_bound = (-0.1, -0.05, 0.0)
+    cfg.mpm.upper_bound = (0.1, 0.05, 0.40)
+
+    # Enable Genesis Grid/Boundary Visualizations
+    cfg.vis.visualize_mpm_boundary = True
+    cfg.vis.visualize_mpm_grid = True
+
+    # Ensure gravity is enabled so the cylinder drops
+    cfg.sim.gravity = (0, 0, -9.81)
 
     # Enable Genesis Grid/Boundary Visualizations
     cfg.vis.visualize_mpm_boundary = True
@@ -104,6 +111,33 @@ def main():
     # Ensure dropped cylinder falls
     dropped_entity.set_free(np.ones(dropped_entity.n_particles, dtype=bool))
     
+    # --- Surface Reconstruction Adapters ---
+    class DummyEnv:
+        def __init__(self, scene, entity):
+            self.scene = scene
+            self.mpm_entity = self  # Intercept MPMEntity calls
+            self.entity = entity
+            self.device = gs.device
+
+        def get_particles_pos(self, envs_idx=0):
+            # Genesis non-batched scenes do not accept envs_idx, so pass None
+            return self.entity.get_particles_pos(envs_idx=None).unsqueeze(0)
+
+        def get_particles_active(self, envs_idx=0):
+            return self.entity.get_particles_active(envs_idx=None).unsqueeze(0)
+
+    recon_floating = SurfaceReconstructor(DummyEnv(scene, floating_entity))
+    recon_floating.recon_enabled = True
+    recon_floating.recon_frame_interval = 2
+    recon_floating.create_reconstructed_mesh()
+    recon_floating.init_skinning()
+
+    recon_dropped = SurfaceReconstructor(DummyEnv(scene, dropped_entity))
+    recon_dropped.recon_enabled = True
+    recon_dropped.recon_frame_interval = 2
+    recon_dropped.create_reconstructed_mesh()
+    recon_dropped.init_skinning()
+    
     solver = scene.sim.mpm_solver
     
     # Initialize cylinder temperatures to 1000K
@@ -133,9 +167,16 @@ def main():
         else:
             scene.visualizer.update_visual_states()
 
+        # Update Rerun Recon Meshes
+        recon_floating.update(should_reconstruct=True)
+        recon_dropped.update(should_reconstruct=True)
+
         # Log to Rerun every few steps
         if i % 2 == 0:
             rr.set_time("step", sequence=i)
+            
+            # Draw Floor visually in Rerun
+            rr.log("environment/floor", rr.Boxes3D(half_sizes=[[0.5, 0.5, 0.005]], centers=[[0, 0, -0.005]], colors=[(100, 100, 100, 255)]))
             
             # Fetch current state
             pos = solver.particles.pos.to_numpy()[0, :, 0, :]
@@ -151,6 +192,32 @@ def main():
             
             # Log exact particles (with temperature colors)
             rr.log("mpm/particles", rr.Points3D(p_active, colors=colors_rgb, radii=0.003))
+
+            # Log Floating Cylinder Mesh
+            mesh_float = recon_floating.reconstructed_mesh
+            if len(mesh_float.vertices) > 0:
+                rr.log(
+                    "mpm/surface_floating",
+                    rr.Mesh3D(
+                        vertex_positions=mesh_float.vertices,
+                        vertex_normals=mesh_float.vertex_normals,
+                        triangle_indices=mesh_float.faces, 
+                        albedo_factor=[0.6, 0.6, 0.7, 0.6]  # Translucent glass/gray
+                    )
+                )
+
+            # Log Dropped Cylinder Mesh
+            mesh_drop = recon_dropped.reconstructed_mesh
+            if len(mesh_drop.vertices) > 0:
+                rr.log(
+                    "mpm/surface_dropped",
+                    rr.Mesh3D(
+                        vertex_positions=mesh_drop.vertices,
+                        vertex_normals=mesh_drop.vertex_normals,
+                        triangle_indices=mesh_drop.faces, 
+                        albedo_factor=[0.6, 0.6, 0.7, 0.6]  # Translucent glass/gray
+                    )
+                )
 
     print("\n✅ Visualization complete. Viewer should be open.")
 
