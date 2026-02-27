@@ -51,8 +51,11 @@ def main():
     cfg.mpm.enable_thermal = True
     cfg.mpm.default_initial_temperature = 293.15
     cfg.mpm.default_thermal_diffusivity = 0.01
-    cfg.mpm.thermal_air_conductivity = 400000.0       # Greatly increased for visible air cooling
-    cfg.mpm.thermal_contact_conductivity = 10000000.0 # Extreme conductivity for instant floor contact
+    
+    # dt here is microscopic (1.12e-05 s). 400 frames is only 0.004 seconds!
+    # To visually cool from 1000K to 293K in 0.004s, conductivity must be scaled to extreme values.
+    cfg.mpm.thermal_air_conductivity = 2000000.0       # Scaled for 4ms duration benchmark
+    cfg.mpm.thermal_contact_conductivity = 20000000.0  # Even faster for instant contact cooling
     
     # Expand MPM bounds to safely encapsulate the cylinders + the 3-cell invisible padding
     # Cylinder radius is 0.02, so X spans [-0.06, 0.06] and Y spans [-0.02, 0.02]
@@ -84,8 +87,10 @@ def main():
     scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", pos=(0, 0, 0.0), fixed=True))
 
     # Materials
+    # Override E to 10 MPa (1e7). Original Steel E=50GPa violates the CFL limit for dt=1.12e-5 
+    # and causes an immediate explosive numerical instability upon spawning.
     mat = JohnsonCookPlasticity(
-        E=cfg.mat.E, nu=cfg.mat.nu, rho=cfg.mat.rho,
+        E=1e7, nu=cfg.mat.nu, rho=cfg.mat.rho,
         A=cfg.mat.jc_A, B=cfg.mat.jc_B, n=cfg.mat.jc_n, C=cfg.mat.jc_C, eps0=cfg.mat.jc_eps0,
         sampler="pbs"  # Poisson disk sampling for better particle distribution
     )
@@ -99,18 +104,21 @@ def main():
         material=mat,
         morph=gs.morphs.Cylinder(
             radius=cyl_radius, height=cyl_height, 
-            pos=(-0.04, 0, 0.06), # Frozen in air
+            pos=(-0.04, 0, 0.06), # Frozen slightly in air
             euler=(0, 0, 0)
         ),
         surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
     )
 
     # 2. Dropped Cylinder (Contact Cooling)
+    # The entire 400 frame step is only 4 ms. It will never visually drop to the floor.
+    # Set it perfectly flush against Z=0 on initialization so contact cooling begins instantly.
+    # Center = 0.0381 -> Bottom = 0.0
     dropped_entity = scene.add_entity(
         material=mat,
         morph=gs.morphs.Cylinder(
             radius=cyl_radius, height=cyl_height, 
-            pos=(0.04, 0, 0.051), # Bottom at 0.001, instant contact with floor at 0.0
+            pos=(0.04, 0, 0.0381),
             euler=(0, 0, 0)
         ),
         surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
