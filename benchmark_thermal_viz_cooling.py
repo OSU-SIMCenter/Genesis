@@ -7,6 +7,7 @@ One is suspended in the air. One drops and touches the 293K floor.
 import genesis as gs
 import numpy as np
 import rerun as rr
+from scipy.spatial import cKDTree
 from agforge.reconstruction import SurfaceReconstructor, SamplingMethod
 from agforge.materials import JohnsonCookPlasticity
 
@@ -24,6 +25,16 @@ def get_coolwarm_color(t_norm):
     colors[hot_mask, 1] = (220 - t_hot * 220).astype(np.uint8)
     colors[hot_mask, 2] = (220 - t_hot * 220).astype(np.uint8)
     return colors
+
+def get_mesh_colors(mesh, p_pos, p_temps):
+    """Colors a reconstructed mesh by finding the nearest MPM particle to each vertex."""
+    if len(mesh.vertices) == 0 or len(p_pos) == 0:
+        return []
+    tree = cKDTree(p_pos)
+    _, indices = tree.query(mesh.vertices)
+    t_active = p_temps[indices]
+    t_norm = np.clip((t_active - 293.15) / (1000.0 - 293.15), 0.0, 1.0)
+    return get_coolwarm_color(t_norm)
 
 def main():
     rr.init("genesis_thermal_cooling", spawn=True)
@@ -43,9 +54,9 @@ def main():
     cfg.mpm.thermal_air_conductivity = 10.0       # Increased for visible air cooling
     cfg.mpm.thermal_contact_conductivity = 5000.0 # High conductivity for floor contact
     
-    # Tighten MPM bounds to fit two standing cylinders closely
+    # Shrink MPM bounds dramatically to fit only the resting cylinders
     cfg.mpm.lower_bound = (-0.1, -0.05, 0.0)
-    cfg.mpm.upper_bound = (0.1, 0.05, 0.40)
+    cfg.mpm.upper_bound = (0.1, 0.05, 0.15)
 
     # Enable Genesis Grid/Boundary Visualizations
     cfg.vis.visualize_mpm_boundary = True
@@ -68,8 +79,7 @@ def main():
         show_viewer=cfg.general.show_viewer,
     )
 
-    # Add Floor
-    scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", pos=(0, 0, 0.01), fixed=True))
+    scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", pos=(0, 0, 0.0), fixed=True))
 
     # Materials
     mat = JohnsonCookPlasticity(
@@ -87,7 +97,7 @@ def main():
         material=mat,
         morph=gs.morphs.Cylinder(
             radius=cyl_radius, height=cyl_height, 
-            pos=(-0.05, 0, 0.3), # High up on the left
+            pos=(-0.05, 0, 0.06), # Frozen in air
             euler=(0, 0, 0)
         ),
         surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
@@ -98,7 +108,7 @@ def main():
         material=mat,
         morph=gs.morphs.Cylinder(
             radius=cyl_radius, height=cyl_height, 
-            pos=(0.05, 0, 0.25), # Lower on the right, drops to floor
+            pos=(0.05, 0, 0.051), # Bottom at 0.001, instant contact with floor at 0.0
             euler=(0, 0, 0)
         ),
         surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
@@ -196,26 +206,28 @@ def main():
             # Log Floating Cylinder Mesh
             mesh_float = recon_floating.reconstructed_mesh
             if len(mesh_float.vertices) > 0:
+                v_colors_float = get_mesh_colors(mesh_float, p_active, t_active)
                 rr.log(
                     "mpm/surface_floating",
                     rr.Mesh3D(
                         vertex_positions=mesh_float.vertices,
                         vertex_normals=mesh_float.vertex_normals,
-                        triangle_indices=mesh_float.faces, 
-                        albedo_factor=[0.6, 0.6, 0.7, 0.6]  # Translucent glass/gray
+                        vertex_colors=v_colors_float,
+                        triangle_indices=mesh_float.faces
                     )
                 )
 
             # Log Dropped Cylinder Mesh
             mesh_drop = recon_dropped.reconstructed_mesh
             if len(mesh_drop.vertices) > 0:
+                v_colors_drop = get_mesh_colors(mesh_drop, p_active, t_active)
                 rr.log(
                     "mpm/surface_dropped",
                     rr.Mesh3D(
                         vertex_positions=mesh_drop.vertices,
                         vertex_normals=mesh_drop.vertex_normals,
-                        triangle_indices=mesh_drop.faces, 
-                        albedo_factor=[0.6, 0.6, 0.7, 0.6]  # Translucent glass/gray
+                        vertex_colors=v_colors_drop,
+                        triangle_indices=mesh_drop.faces
                     )
                 )
 
