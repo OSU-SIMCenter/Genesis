@@ -51,12 +51,13 @@ def main():
     cfg.mpm.enable_thermal = True
     cfg.mpm.default_initial_temperature = 293.15
     cfg.mpm.default_thermal_diffusivity = 0.01
-    cfg.mpm.thermal_air_conductivity = 10.0       # Increased for visible air cooling
-    cfg.mpm.thermal_contact_conductivity = 5000.0 # High conductivity for floor contact
+    cfg.mpm.thermal_air_conductivity = 400000.0       # Greatly increased for visible air cooling
+    cfg.mpm.thermal_contact_conductivity = 10000000.0 # Extreme conductivity for instant floor contact
     
     # Shrink MPM bounds dramatically to fit only the resting cylinders
-    cfg.mpm.lower_bound = (-0.1, -0.05, 0.0)
-    cfg.mpm.upper_bound = (0.1, 0.05, 0.15)
+    # Z lower bound MUST be below 0 to allow the 3-cell boundary padding to exist below the Z=0 plane!
+    cfg.mpm.lower_bound = (-0.08, -0.03, -0.03)
+    cfg.mpm.upper_bound = (0.08, 0.03, 0.13)
 
     # Enable Genesis Grid/Boundary Visualizations
     cfg.vis.visualize_mpm_boundary = True
@@ -97,7 +98,7 @@ def main():
         material=mat,
         morph=gs.morphs.Cylinder(
             radius=cyl_radius, height=cyl_height, 
-            pos=(-0.05, 0, 0.06), # Frozen in air
+            pos=(-0.04, 0, 0.06), # Frozen in air
             euler=(0, 0, 0)
         ),
         surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
@@ -108,7 +109,7 @@ def main():
         material=mat,
         morph=gs.morphs.Cylinder(
             radius=cyl_radius, height=cyl_height, 
-            pos=(0.05, 0, 0.051), # Bottom at 0.001, instant contact with floor at 0.0
+            pos=(0.04, 0, 0.051), # Bottom at 0.001, instant contact with floor at 0.0
             euler=(0, 0, 0)
         ),
         surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
