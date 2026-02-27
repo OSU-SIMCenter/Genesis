@@ -386,6 +386,16 @@ class MPMEntity(ParticleEntity):
             vels = vels[0]
         return vels
 
+    def get_particles_F(self, envs_idx=None):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        F = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3, 3))
+        self.solver._kernel_get_particles_F(
+            self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, F
+        )
+        if self._scene.n_envs == 0:
+            F = F[0]
+        return F
+
     @gs.assert_built
     def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
