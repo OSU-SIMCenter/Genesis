@@ -5,7 +5,6 @@ import torch
 import numpy as np
 import genesis as gs
 import contextlib
-import contextlib
 
 from agforge.reconstruction import SurfaceReconstructor
 from agforge.recorder import AgForgeRecorder
@@ -175,10 +174,9 @@ class StrikeController:
                     # We need to know specific contacts to set velocity
                     # contacts = [L_hit, R_hit]
                     contacts_tensor = torch.stack([force_L > contact_threshold, force_R > contact_threshold])
-                    contacts_list = contacts_tensor.tolist() # 1 Sync
                     
-                    new_contact_L = contacts_list[0]
-                    new_contact_R = contacts_list[1]
+                    new_contact_L = contacts_tensor[0].item()
+                    new_contact_R = contacts_tensor[1].item()
 
                     if not self.contact_L and new_contact_L:
                         self.contact_L = True

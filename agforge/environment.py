@@ -3,6 +3,7 @@ import numpy as np
 import genesis as gs
 import sys
 import os
+
 from agforge.options import (
     AgilityForgeOptions,
     RobotOptions,
