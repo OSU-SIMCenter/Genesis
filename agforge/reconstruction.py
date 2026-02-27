@@ -167,8 +167,8 @@ class SurfaceReconstructor:
                                 cell_center = lower_bound + ti.Vector([ix, iy, iz]) * dx
                                 dist_sq = (pos - cell_center).norm_sqr()
                                 if dist_sq < influence_radius**2:
-                                    r2 = dist_sq / (influence_radius**2)
-                                    val = (1.0 - r2)**3
+                                    r = ti.sqrt(dist_sq) / influence_radius
+                                    val = (1.0 - r)**4 * (4.0 * r + 1.0)
                                     self.density[ix, iy, iz] += val
 
     @ti.kernel
