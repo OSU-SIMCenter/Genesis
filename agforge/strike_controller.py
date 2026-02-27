@@ -5,8 +5,10 @@ import torch
 import numpy as np
 import genesis as gs
 import contextlib
+import contextlib
 
 from agforge.reconstruction import SurfaceReconstructor
+from agforge.recorder import AgForgeRecorder
 
 class StrikeState(enum.Enum):
     IDLE = 0
@@ -61,6 +63,10 @@ class StrikeController:
         # Surface Reconstruction
         self.reconstructor = SurfaceReconstructor(env)
         # Note: Reconstruction init mostly happens on demand or at start
+        
+        # Data Recorder
+        import os
+        self.recorder = AgForgeRecorder(data_dir=os.path.join(os.path.dirname(__file__), "..", "data"))
         
         # Checkpointing
         self.checkpoints = []
@@ -117,6 +123,7 @@ class StrikeController:
             # SAVE CHECKPOINT BEFORE STRIKE STARTS
             # This ensures we can undo to the exact state before the attempt, 
             # preserving the user's intended position/angle.
+            self.recorder.mark_strike_start()
             self._save_checkpoint_impl() 
             
             # Log initial state for debugging
@@ -483,6 +490,29 @@ class StrikeController:
             with self._profile("teleop_render"):
                 self.env.scene.visualizer.update(force=False, auto=True)
 
+        # 6. Record Data Frame (only if actively striking)
+        if self.strike_state != StrikeState.IDLE:
+            with self._profile("teleop_record"):
+                particles_pos = self.env.mpm_entity.get_particles_pos()
+                particles_vel = self.env.mpm_entity.get_particles_vel()
+                
+                # Check for thermal state
+                if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
+                    particles_temp = self.env.scene.sim.mpm_solver.particles.temp.to_numpy()[0, :, 0]
+                else:
+                    particles_temp = np.zeros(particles_pos.shape[1], dtype=np.float32)
+                    
+                force_L, force_R = self.robot.get_resistance_forces()
+                self.recorder.record_frame(
+                    particles_pos=particles_pos,
+                    particles_vel=particles_vel,
+                    particles_temp=particles_temp,
+                    qpos=self.qpos,
+                    force_L=force_L,
+                    force_R=force_R,
+                    dof_cmd=self._vel_cmd
+                )
+
     def _profile(self, name):
         # Fix for Pydantic model access
         teleop_opts = self.env.scene.profiling_options.configs.teleop
@@ -609,6 +639,9 @@ class StrikeController:
             self._stability_grace_steps = grace
             
             mesh_verts = len(self.reconstructor.reconstructed_mesh.vertices) if self.reconstructor.reconstructed_mesh.vertices is not None else 0
+            
+            self.recorder.handle_undo()
+            
             gs.logger.info(f"Undo complete (stack={len(self.checkpoints)}, mesh_verts={mesh_verts}, grace={grace})")
 
     def _check_stability(self):
@@ -643,6 +676,10 @@ class StrikeController:
 
     async def reset_simulation(self):
         async with self.lock:
+            # Flush current episode if recording
+            if getattr(self, 'recorder', None) and self.recorder.is_recording:
+                self.recorder.flush_episode(success_flag=False, language_instruction="Episode interrupted by reset")
+                
             self.env.reset()
             
             import gstaichi as ti
@@ -673,4 +710,5 @@ class StrikeController:
             safety = getattr(self.env.cfg, 'safety', None)
             self._stability_grace_steps = safety.check_interval * 3 if safety else 30
             
+            self.recorder.start_new_episode("continuous_forge")
             gs.logger.info("Simulation reset")
