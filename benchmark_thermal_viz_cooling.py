@@ -54,10 +54,11 @@ def main():
     cfg.mpm.thermal_air_conductivity = 400000.0       # Greatly increased for visible air cooling
     cfg.mpm.thermal_contact_conductivity = 10000000.0 # Extreme conductivity for instant floor contact
     
-    # Shrink MPM bounds dramatically to fit only the resting cylinders
-    # Z lower bound MUST be below 0 to allow the 3-cell boundary padding to exist below the Z=0 plane!
-    cfg.mpm.lower_bound = (-0.08, -0.03, -0.03)
-    cfg.mpm.upper_bound = (0.08, 0.03, 0.13)
+    # Expand MPM bounds to safely encapsulate the cylinders + the 3-cell invisible padding
+    # Cylinder radius is 0.02, so X spans [-0.06, 0.06] and Y spans [-0.02, 0.02]
+    # Bound padding is ~0.015. We must exceed these coordinates.
+    cfg.mpm.lower_bound = (-0.12, -0.06, -0.03)
+    cfg.mpm.upper_bound = (0.12, 0.06, 0.15)
 
     # Enable Genesis Grid/Boundary Visualizations
     cfg.vis.visualize_mpm_boundary = True
