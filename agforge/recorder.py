@@ -109,8 +109,7 @@ class AgForgeRecorder:
         if p_vel.ndim == 3: p_vel = p_vel[0]
         
         p_temp = to_cpu(particles_temp)
-        if p_temp.ndim == 3: p_temp = p_temp[0] # (1, N, 1) or (1, N)
-        if p_temp.ndim == 2 and p_temp.shape[1] == 1: p_temp = p_temp[:, 0] # (N, 1) -> (N,)
+        p_temp = p_temp.flatten() # Force (N,) safely
 
         self.buffer["particles_pos"].append(p_pos.astype(np.float32))
         self.buffer["particles_vel"].append(p_vel.astype(np.float32))
