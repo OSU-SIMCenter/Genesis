@@ -366,8 +366,8 @@ class SurfaceReconstructor:
             # flatten using Fortran order to match VTK's Z-Y-X array layout expectation
             grid.point_data["density"] = density_cpu.flatten(order="F")
 
-            # Flying Edges contouring
-            contour = grid.contour(isosurfaces=[thresh], scalars="density", method='flying_edges')
+            # Flying Edges contouring (request compute_normals=True to get analytical gradient normals)
+            contour = grid.contour(isosurfaces=[thresh], scalars="density", method='flying_edges', compute_normals=True)
 
             if contour.n_points == 0:
                 self.reconstructed_mesh = trimesh.Trimesh()
@@ -375,6 +375,11 @@ class SurfaceReconstructor:
                 return
 
             verts = np.array(contour.points)
+            
+            # The density field gradient points INWARD (from 0 outside to 1 inside).
+            # Unity needs OUTWARD pointing normals. We extract and invert.
+            normals_pv = np.array(contour.point_data["Normals"])
+            normals = -normals_pv
             
             # Phase 4B: Vertex Correspondence Blending (Post-MC Temporal Smoothing)
             if self.vertex_blend_factor > 0 and self._prev_verts is not None and len(self._prev_verts) > 0:
@@ -401,9 +406,8 @@ class SurfaceReconstructor:
             faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
             faces = faces[:, ::-1]  # Reverse columns to flip winding
             
-            # Since we flipped the winding, we must let trimesh recompute the normals automatically 
-            # from the new face orientations, rather than using the inverted ones from PyVista.
-            normals = None
+            # No longer need to discard normals, we computed them above.
+            # normals = None
 
             mesh = trimesh.Trimesh(
                 vertices=verts,
