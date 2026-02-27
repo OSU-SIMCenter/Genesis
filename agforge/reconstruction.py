@@ -7,6 +7,7 @@ import genesis as gs
 import genesis.utils.particle as pu
 import pyvista as pv
 import math
+from scipy.spatial import cKDTree
 from enum import Enum
 
 # Compatibility Enum
@@ -74,6 +75,10 @@ class SurfaceReconstructor:
         
         # Cached PyVista grid (reused across frames)
         self._pv_grid = None
+        
+        # Cached vertices for Post-MC temporal smoothing (Vertex Correspondence Blending)
+        self._prev_verts = None
+        self.vertex_blend_factor = 0.15  # Blend factor towards previous frame (0.0 = off)
 
     def get_state(self):
         return {
@@ -98,6 +103,7 @@ class SurfaceReconstructor:
         self.density_initialized = False
         self._fixed_dx = None
         self._prev_grid_origin = None
+        self._prev_verts = None
 
     # --- Compatibility Interface ---
     def init_skinning(self):
@@ -365,9 +371,29 @@ class SurfaceReconstructor:
 
             if contour.n_points == 0:
                 self.reconstructed_mesh = trimesh.Trimesh()
+                self._prev_verts = None
                 return
 
             verts = np.array(contour.points)
+            
+            # Phase 4B: Vertex Correspondence Blending (Post-MC Temporal Smoothing)
+            if self.vertex_blend_factor > 0 and self._prev_verts is not None and len(self._prev_verts) > 0:
+                try:
+                    tree = cKDTree(self._prev_verts)
+                    # For each new vertex, find the closest previous vertex
+                    dists, indices = tree.query(verts)
+                    # Only blend if the closest vertex is within a reasonable distance (e.g. 2x grid spacing)
+                    # to prevent "stretching" when geometry appears/disappears
+                    valid_mask = dists < (dx * 2.0)
+                    if valid_mask.any():
+                        blend = self.vertex_blend_factor
+                        verts[valid_mask] = (1.0 - blend) * verts[valid_mask] + blend * self._prev_verts[indices[valid_mask]]
+                except Exception as e:
+                    gs.logger.debug(f"Reconstruction: Vertex blending failed: {e}")
+            
+            # Cache current blended vertices for next frame
+            self._prev_verts = verts.copy()
+
             # PyVista uses VTK face format: [num_verts, v0, v1, v2, ...]
             # Our density field has maximum density inside the object, so the isosurface gradient 
             # points INWARD. We must reverse the winding order (v0, v1, v2 -> v2, v1, v0) 
