@@ -1,3 +1,46 @@
+# Genesis Thermal Simulation Debug Report
+
+## 1. Objective and Setup
+We are attempting to create a thermal visualization benchmark (`benchmark_thermal_viz_cooling.py`) using the Genesis physics engine and Rerun. The goal is to simulate two material cylinders starting at 1000K:
+1. One suspended in the air (cooling via convection).
+2. One dropped onto a 293K rigid floor (cooling via conduction).
+
+We are using the `JohnsonCookPlasticity` material with a Poisson Disk Sampler (`pbs`) to generate the MPM particles. We also use `agforge.reconstruction.SurfaceReconstructor` to generate surface meshes, which we color dynamically in Rerun based on the underlying particle temperatures.
+
+## 2. The Current Issues
+Despite setting up the simulation and verifying the thermal coupling code in the engine:
+1. **Meshes remain constantly red:** The temperature of the cylinders never appears to decrease; they remain at 1000K (or higher) throughout the entire visualization.
+2. **Cylinders are frozen/static:** They do not move, deform, or interact with gravity as expected.
+
+## 3. Discoveries & Theories
+
+### A. The CFL / Stiffness Explosion
+The `JohnsonCookPlasticity` material is configured for Steel with a Young's Modulus ($E$) of 50 GPa. In explicit MPM solvers, the speed of sound $c = \sqrt{E/\rho}$ restricts the maximum allowable timestep (the CFL condition: $dt \le dx / c$). 
+- The simulation runs at $dt = 1.12 \times 10^{-5}$ seconds.
+- At 50 GPa, the required $dt$ is strictly smaller than $10^{-6}$ seconds.
+- **Theory:** Because the $dt$ violates the CFL limit by an order of magnitude, the simulation becomes numerically unstable instantly. 
+
+### B. The Poisson Disk Sampling Collision
+We initialize the material with `sampler="pbs"`. Given the extreme stiffness, even microscopic overlaps in the initial particle placement result in near-infinite restorative forces on the very first time step. 
+- **Debug findings:** Tests confirmed that on step 1, the particles explode outward at velocities exceeding 10 m/s. 
+- **The "Frozen" Look:** Because the particles explode outward so violently in the first few milliseconds, Rerun scales the camera or fails to render the subsequent NaN/out-of-bound frames, making it appear "frozen" on the very first frame.
+- **The "Always Red" Look:** The massive kinetic energy of the explosion is tracked by the engine as "plastic work" (deformation). The Johnson-Cook thermal model converts this mechanical work into adiabatic heat, instantly raising the temperature from 1000K to over 7000K. Since the Rerun colormap caps out at 1000K, the cylinders appear perfectly red forever.
+
+### C. The Grid Boundary Padding Issue
+Genesis's MPM solver enforces a 3-grid-cell padding boundary around the specified `lower_bound` and `upper_bound`.
+- Previously, the `lower_bound` was tightly fit to `Z = 0.0`.
+- The internal padding wall essentially lived between `Z = 0.0` and `Z = 0.015`.
+- **Theory:** The right cylinder was spawned with its bottom at `Z = 0.0`. This means it spawned *inside* the invisible boundary wall, generating massive collision forces instantly, compounding the explosion. Setting `lower_bound` to negative values (e.g., `Z = -0.03`) prevents this.
+
+### D. Time Scale vs. Conductivity
+The simulation loop runs for 400 steps. At $dt = 1.12 \times 10^{-5}$, the entire simulation represents exactly **0.00448 seconds (4.5 milliseconds)**.
+- **Theory:** In 4.5 milliseconds, an object suspended in air will not organically cool from 1000K to 293K. To make this benchmark work visually over 400 frames, we artificially scale $k_{air}$ and $k_{contact}$ by factors of $10^6$ to force extremely rapid heat transfer.
+
+## 4. Current Implementation Code
+
+Below is the current `benchmark_thermal_viz_cooling.py` that includes attempted fixes (reducing elasticity to 10 MPa to fix CFL, widening boundaries, artificially scaling conductivities). Even with these fixes, the user reports the cylinders remain red and motionless.
+
+```python
 """
 Thermal Cooling Visualization Test (Rerun)
 Visualizes air convection vs. floor contact conduction.
@@ -52,12 +95,10 @@ def main():
     cfg.mpm.default_initial_temperature = 293.15
     cfg.mpm.default_thermal_diffusivity = 0.01
     
-    # dt here is microscopic (1.12e-05 s).
-    # Real-world cooling from 1000K to 293K takes minutes.
-    # To visually show it in this benchmark, we'll run 25 physics steps per 1 Rerun render frame,
-    # and scale the conductivities to represent an artificially accelerated cooling process.
-    cfg.mpm.thermal_air_conductivity = 50000.0       
-    cfg.mpm.thermal_contact_conductivity = 100000.0
+    # dt here is microscopic (1.12e-05 s). 400 frames is only 0.004 seconds!
+    # To visually cool from 1000K to 293K in 0.004s, conductivity must be scaled to extreme values.
+    cfg.mpm.thermal_air_conductivity = 2000000.0       # Scaled for 4ms duration benchmark
+    cfg.mpm.thermal_contact_conductivity = 20000000.0  # Even faster for instant contact cooling
     
     # Expand MPM bounds to safely encapsulate the cylinders + the 3-cell invisible padding
     # Cylinder radius is 0.02, so X spans [-0.06, 0.06] and Y spans [-0.02, 0.02]
@@ -86,17 +127,7 @@ def main():
         show_viewer=cfg.general.show_viewer,
     )
 
-    # Floor needs to be a thick rigid body with "needs_coup=True" for MPM to build an SDF.
-    # A flat URDF plane has 0 thickness and fails to generate collision heat transfer on the grid.
-    floor_mat = gs.materials.Rigid(needs_coup=True)
-    scene.add_entity(
-        material=floor_mat,
-        morph=gs.morphs.Box(
-            size=(1.0, 1.0, 0.05),
-            pos=(0.0, 0.0, -0.025), # Top surface strictly at z=0.0
-            fixed=True,
-        )
-    )
+    scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", pos=(0, 0, 0.0), fixed=True))
 
     # Materials
     # Override E to 10 MPa (1e7). Original Steel E=50GPa violates the CFL limit for dt=1.12e-5 
@@ -138,11 +169,10 @@ def main():
 
     scene.build()
 
-    # Retrieve indices for the floating cylinder so we can manually zero its velocity later.
-    # We DO NOT use `set_free` because fixing the kinematic state causes the thermal solver
-    # to silently skip those particles, destroying convective heat transfer.
-    floating_p_start = floating_entity._particle_start
-    floating_p_end = floating_p_start + floating_entity.n_particles
+    # Freeze the floating cylinder so it doesn't fall
+    floating_entity.set_free(np.zeros(floating_entity.n_particles, dtype=bool))
+    # Ensure dropped cylinder falls
+    dropped_entity.set_free(np.ones(dropped_entity.n_particles, dtype=bool))
     
     # --- Surface Reconstruction Adapters ---
     class DummyEnv:
@@ -188,22 +218,11 @@ def main():
     print("Starting simulation to generate Rerun visualization...")
     
     MIN_TEMP = 293.15
+    MAX_TEMP = 1000.0
 
-    # We will simulate 400 Rerun render frames.
-    # Inside each frame, we take 25 physics substeps to decouple simulation time from rendering.
-    STEPS_PER_RENDER = 25
-    TOTAL_RENDER_FRAMES = 400
-
-    for i in range(TOTAL_RENDER_FRAMES):
-        # --- Physics Loop ---
-        for _ in range(STEPS_PER_RENDER):
-            scene.step()
-            
-            # Manually zero velocity of the floating cylinder so it doesn't fall,
-            # but remains thermally active.
-            vel_np = solver.particles.vel.to_numpy()
-            vel_np[0, floating_p_start:floating_p_end, 0, :] = 0.0
-            solver.particles.vel.from_numpy(vel_np)
+    for i in range(400):
+        # Step Physics
+        scene.step()
         
         # Update Genesis render fields
         if hasattr(solver, 'update_render_fields'):
@@ -230,14 +249,12 @@ def main():
             p_active = pos[curr_active]
             t_active = temps[curr_active]
             
-            # Dynamically compute MAX_TEMP to visualize exact heat ranges over time
-            # and detect any thermal spikes from the plastic work.
-            dynamic_max = t_active.max()
-            t_norm = np.clip((t_active - MIN_TEMP) / max(1.0, dynamic_max - MIN_TEMP), 0.0, 1.0)
+            # Normalize temperatures for colormap
+            t_norm = np.clip((t_active - MIN_TEMP) / (MAX_TEMP - MIN_TEMP), 0.0, 1.0)
             colors_rgb = get_coolwarm_color(t_norm)
             
             # Log exact particles (with temperature colors)
-            rr.log(f"mpm/particles_TMAX_{dynamic_max:.1f}", rr.Points3D(p_active, colors=colors_rgb, radii=0.003))
+            rr.log("mpm/particles", rr.Points3D(p_active, colors=colors_rgb, radii=0.003))
 
             # Log Floating Cylinder Mesh
             mesh_float = recon_floating.reconstructed_mesh
@@ -271,3 +288,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
