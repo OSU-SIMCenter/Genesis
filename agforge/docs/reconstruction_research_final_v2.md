@@ -44,9 +44,21 @@ Based on external model feedback, we added the following micro-optimizations:
 10. **Analytical Gradient-Based Vertex Normals:** We discarded flat face-normals and now extract PyVista's continuous analytical gradients. Inverting these gradients provides perfectly smooth per-vertex normals, mathematically hiding contour lines under lighting without inflating polygon counts.
 11. **MPM-Driven Anisotropic Splatting:** We abandoned pure isotropic spheres. We extract the Deformation Gradient Tensor ($F$) from the Genesis MPM solver and compute the Left Cauchy-Green tensor $B = F F^T$. Our Taichi kernel computes the anisotropic warped distance metric $r^2 = (x - x_p)^T B^{-1} (x - x_p)$. This forcefully flattens the kernels into plates under extreme compression, absolutely eradicating the "bumpy grapes" effect.
 
+## 4. Phase 7: The Final Artifact (Contour Lines / Staircasing)
+
+While the Phase 1-6 optimizations have successfully created a real-time, volume-stable reconstruction pipeline, one subtle visual artifact stubbornly remains: **Contour Banding (Staircasing)**.
+
+Even with `trimesh.smoothing.filter_taubin`, temporal vertex blending, Anisotropic MPM splatting, and PyVista analytical gradient normals, faint topographical contour lines are still visibly discernible across the surface.
+
+### Open Questions for AI Review:
+1. **Algorithmic Elimination:** What is the most mathematically robust, real-time method to *completely* eradicate grid-based contour banding/staircasing from an SPH/MPM-to-Grid extraction pipeline?
+2. **Mesh-Space Smoothing:** Are there specific mesh-space relaxation operators (e.g., HC-Laplacian, cotangent weights) that specifically target and dissolve contour stair-stepping better than Taubin smoothing, without causing geometric shrinkage?
+3. **Density-Space Pre-Processing:** Are there grid-level anti-aliasing techniques (beyond basic Gaussian blurring) that prevent the contour lines from emerging during the Marching Cubes/Flying Edges extraction?
+4. **Shading / Rendering Tricks:** If the geometric contours cannot be fully smoothed in real-time, what are the best rendering/shading techniques to optically mask these faint topographic lines when rendering in a game engine (Unity/Genesis)?
+
 ---
 
-## 4. Source Code Appendix: `agforge/reconstruction.py`
+## 5. Source Code Appendix: `agforge/reconstruction.py`
 
 Below is the complete, raw implementation of our surface reconstruction pipeline that executes the logic described above.
 
