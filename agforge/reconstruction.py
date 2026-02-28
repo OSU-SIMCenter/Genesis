@@ -61,9 +61,8 @@ class SurfaceReconstructor:
         self._fixed_dx = None
         self._prev_grid_origin = None
         
-        # Density-space smoothing before marching cubes
-        self.density_blur_sigma = 1.25  # Spatial sigma (in grid cells)
-        self.bilateral_sigma_r = 0.5    # Range sigma (density difference)
+        # Density-space smoothing before marching cubes (sigma in grid cells)
+        self.density_blur_sigma = 1.25
         
         # Pre-compute 1D Gaussian kernel weights for separable blur  
         self._blur_radius = int(math.ceil(2.0 * self.density_blur_sigma))  # ~3 cells each side
@@ -147,7 +146,6 @@ class SurfaceReconstructor:
     def _compute_density_kernel(
         self, 
         particles_pos: ti.types.ndarray(),
-        particles_F: ti.types.ndarray(),
         active_mask: ti.types.ndarray(),
         n_particles: int,
         lower_bound: ti.types.vector(3, float),
@@ -160,28 +158,8 @@ class SurfaceReconstructor:
         for i in range(n_particles):
             if active_mask[i]:
                 pos = ti.Vector([particles_pos[i, 0], particles_pos[i, 1], particles_pos[i, 2]])
-                
-                # Retrieve the deformation gradient tensor F
-                F = ti.Matrix([
-                    [particles_F[i, 0, 0], particles_F[i, 0, 1], particles_F[i, 0, 2]],
-                    [particles_F[i, 1, 0], particles_F[i, 1, 1], particles_F[i, 1, 2]],
-                    [particles_F[i, 2, 0], particles_F[i, 2, 1], particles_F[i, 2, 2]]
-                ])
-                
-                # Compute Left Cauchy-Green deformation tensor B = F * F^T
-                # We add a small epsilon to the diagonal to prevent singular matrix inversion
-                # if the particle is completely flattened or inverted.
-                B = F @ F.transpose()
-                B_reg = B + ti.Matrix.identity(float, 3) * 1e-4
-                B_inv = B_reg.inverse()
-
                 grid_pos = (pos - lower_bound) / dx
-                # The bounding box of the ellipsoid might be larger than influence_radius
-                # in extreme stretch, but for splatting we usually clamp the search radius
-                # to the original influence_radius * a small buffer (e.g. 1.5x) to catch stretches.
-                # However, for performance we stick to the original conservative radius cell span.
-                search_radius = influence_radius * 1.5
-                rad_cells = search_radius / dx
+                rad_cells = influence_radius / dx
                 
                 base_idx = ti.cast(ti.floor(grid_pos - rad_cells), ti.int32)
                 end_idx = ti.cast(ti.ceil(grid_pos + rad_cells), ti.int32)
@@ -193,12 +171,7 @@ class SurfaceReconstructor:
                                 0 <= iy < self.grid_res and 
                                 0 <= iz < self.grid_res):
                                 cell_center = lower_bound + ti.Vector([ix, iy, iz]) * dx
-                                diff = cell_center - pos
-                                
-                                # Anisotropic warped distance squared: diff^T * B_inv * diff
-                                dist_sq = diff.dot(B_inv @ diff)
-                                
-                                # Use the original isotropic cutoff mathematically mapped to the ellipsoid
+                                dist_sq = (pos - cell_center).norm_sqr()
                                 if dist_sq < influence_radius**2:
                                     r = ti.sqrt(dist_sq) / influence_radius
                                     val = (1.0 - r)**4 * (4.0 * r + 1.0)
@@ -213,83 +186,50 @@ class SurfaceReconstructor:
             self.prev_density[I] = blended_val
 
     @ti.kernel
-    def _blur_pass_x(self, radius: int, sigma_r: float):
-        """Separable Bilateral blur along X axis: density -> _blur_temp."""
+    def _blur_pass_x(self, radius: int):
+        """Separable Gaussian blur along X axis: density -> _blur_temp."""
         for i, j, k in self._blur_temp:
             acc = 0.0
-            weight_sum = 0.0
-            center_val = self.density[i, j, k]
             for di in range(-radius, radius + 1):
                 ni = i + di
-                val = center_val
                 if 0 <= ni < self.grid_res:
-                    val = self.density[ni, j, k]
-                
-                # Spatial weight from precomputed Gaussian
-                w_s = self._blur_weights[di + radius]
-                # Range weight based on density difference
-                diff = val - center_val
-                w_r = ti.math.exp(-0.5 * (diff / sigma_r)**2)
-                
-                w = w_s * w_r
-                acc += val * w
-                weight_sum += w
-                
-            self._blur_temp[i, j, k] = acc / weight_sum
+                    acc += self.density[ni, j, k] * self._blur_weights[di + radius]
+                else:
+                    acc += self.density[i, j, k] * self._blur_weights[di + radius]
+            self._blur_temp[i, j, k] = acc
 
     @ti.kernel
-    def _blur_pass_y(self, radius: int, sigma_r: float):
-        """Separable Bilateral blur along Y axis: _blur_temp -> density."""
+    def _blur_pass_y(self, radius: int):
+        """Separable Gaussian blur along Y axis: _blur_temp -> density."""
         for i, j, k in self.density:
             acc = 0.0
-            weight_sum = 0.0
-            center_val = self._blur_temp[i, j, k]
             for di in range(-radius, radius + 1):
                 nj = j + di
-                val = center_val
                 if 0 <= nj < self.grid_res:
-                    val = self._blur_temp[i, nj, k]
-                    
-                w_s = self._blur_weights[di + radius]
-                diff = val - center_val
-                w_r = ti.math.exp(-0.5 * (diff / sigma_r)**2)
-                
-                w = w_s * w_r
-                acc += val * w
-                weight_sum += w
-                
-            self.density[i, j, k] = acc / weight_sum
+                    acc += self._blur_temp[i, nj, k] * self._blur_weights[di + radius]
+                else:
+                    acc += self._blur_temp[i, j, k] * self._blur_weights[di + radius]
+            self.density[i, j, k] = acc
 
     @ti.kernel
-    def _blur_pass_z(self, radius: int, sigma_r: float):
-        """Separable Bilateral blur along Z axis: density -> _blur_temp, then copy back."""
+    def _blur_pass_z(self, radius: int):
+        """Separable Gaussian blur along Z axis: density -> _blur_temp, then copy back."""
         for i, j, k in self._blur_temp:
             acc = 0.0
-            weight_sum = 0.0
-            center_val = self.density[i, j, k]
             for di in range(-radius, radius + 1):
                 nk = k + di
-                val = center_val
                 if 0 <= nk < self.grid_res:
-                    val = self.density[i, j, nk]
-                    
-                w_s = self._blur_weights[di + radius]
-                diff = val - center_val
-                w_r = ti.math.exp(-0.5 * (diff / sigma_r)**2)
-                
-                w = w_s * w_r
-                acc += val * w
-                weight_sum += w
-                
-            self._blur_temp[i, j, k] = acc / weight_sum
+                    acc += self.density[i, j, nk] * self._blur_weights[di + radius]
+                else:
+                    acc += self.density[i, j, k] * self._blur_weights[di + radius]
+            self._blur_temp[i, j, k] = acc
 
     def _blur_density_gpu(self):
-        """Run 3-pass separable Bilateral blur entirely on GPU."""
+        """Run 3-pass separable Gaussian blur entirely on GPU."""
         r = self._blur_radius
-        sr = self.bilateral_sigma_r
-        self._blur_pass_x(r, sr)       # density -> _blur_temp
-        self._blur_pass_y(r, sr)       # _blur_temp -> density  
-        self._blur_pass_z(r, sr)       # density -> _blur_temp
+        self._blur_pass_x(r)       # density -> _blur_temp
+        self._blur_pass_y(r)       # _blur_temp -> density  
+        self._blur_pass_z(r)       # density -> _blur_temp
         # Copy result back: _blur_temp -> density
         self._copy_blur_to_density()
 
@@ -316,7 +256,6 @@ class SurfaceReconstructor:
         try:
             mpm_entity = self.env.mpm_entity
             particles_pos = mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
-            particles_F = mpm_entity.get_particles_F(envs_idx=0).squeeze(0)
             particles_active = mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
             
             n_particles = particles_pos.shape[0]
@@ -381,7 +320,6 @@ class SurfaceReconstructor:
 
             self._compute_density_kernel(
                 particles_pos, 
-                particles_F,
                 particles_active, 
                 n_particles, 
                 lower_bound_ti, 
