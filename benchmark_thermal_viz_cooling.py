@@ -54,10 +54,10 @@ def main():
     
     # dt here is microscopic (1.12e-05 s).
     # Real-world cooling from 1000K to 293K takes minutes.
-    # To visually show it in this benchmark, we'll run 25 physics steps per 1 Rerun render frame,
+    # To visually show it in this benchmark, we'll run 5 physics steps per 1 Rerun render frame,
     # and scale the conductivities to represent an artificially accelerated cooling process.
-    cfg.mpm.thermal_air_conductivity = 50000.0       
-    cfg.mpm.thermal_contact_conductivity = 100000.0
+    cfg.mpm.thermal_air_conductivity = 500000.0       
+    cfg.mpm.thermal_contact_conductivity = 1000000.0
     
     # Expand MPM bounds to safely encapsulate the cylinders + the 3-cell invisible padding
     # Cylinder radius is 0.02, so X spans [-0.06, 0.06] and Y spans [-0.02, 0.02]
@@ -190,8 +190,8 @@ def main():
     MIN_TEMP = 293.15
 
     # We will simulate 400 Rerun render frames.
-    # Inside each frame, we take 25 physics substeps to decouple simulation time from rendering.
-    STEPS_PER_RENDER = 25
+    # Inside each frame, we take 5 physics substeps to decouple simulation time from rendering.
+    STEPS_PER_RENDER = 5
     TOTAL_RENDER_FRAMES = 400
 
     for i in range(TOTAL_RENDER_FRAMES):
