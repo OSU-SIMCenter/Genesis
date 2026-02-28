@@ -167,10 +167,16 @@ class SurfaceReconstructor:
                     [particles_F[i, 2, 0], particles_F[i, 2, 1], particles_F[i, 2, 2]]
                 ])
                 
+                # Phase 6A: Volume-Normalize the F Tensor
+                # Prevent anisotropic bounding boxes from changing total kernel volume
+                detF = F.determinant()
+                vol_scale = (ti.abs(detF) + 1e-6) ** (1.0 / 3.0)
+                F_norm = F / vol_scale
+                
                 # Compute Left Cauchy-Green deformation tensor B = F * F^T
                 # We add a small epsilon to the diagonal to prevent singular matrix inversion
                 # if the particle is completely flattened or inverted.
-                B = F @ F.transpose()
+                B = F_norm @ F_norm.transpose()
                 B_reg = B + ti.Matrix.identity(float, 3) * 1e-4
                 B_inv = B_reg.inverse()
 
@@ -373,17 +379,15 @@ class SurfaceReconstructor:
             # Transfer blurred density to CPU
             density_cpu = self.density.to_numpy()
 
-            max_dens = density_cpu.max()
-            thresh = max_dens * 0.4
-
-            gs.logger.debug(f"Reconstruction: max_density={max_dens:.4f}, threshold={thresh}")
-
-            if max_dens < 1e-4:
-                gs.logger.warning(
-                    f"Reconstruction: max density {max_dens:.4f} is functionally empty! "
-                    f"Mesh will be empty."
-                )
+            # Phase 6B: Percentile-Based Dynamic Thresholding
+            # This prevents "breathing" and volume fluctuation when density spikes occur.
+            valid_densities = density_cpu[density_cpu > 1e-4]
+            if len(valid_densities) == 0:
+                gs.logger.warning("Reconstruction: No valid densities found! Mesh will be empty.")
                 return
+                
+            thresh = float(np.percentile(valid_densities, 95)) * 0.3
+            gs.logger.debug(f"Reconstruction: max_density={density_cpu.max():.4f}, threshold={thresh:.4f}")
 
             # Create PyVista grid (near zero-copy through VTK data adapters)
             grid = pv.ImageData()
@@ -394,8 +398,9 @@ class SurfaceReconstructor:
             # flatten using Fortran order to match VTK's Z-Y-X array layout expectation
             grid.point_data["density"] = density_cpu.flatten(order="F")
 
-            # Flying Edges contouring (request compute_normals=True to get analytical gradient normals)
-            contour = grid.contour(isosurfaces=[thresh], scalars="density", method='flying_edges', compute_normals=True)
+            # Phase 6C: Compute Normals *After* Smoothing
+            # We disable compute_normals here so we don't extract invalid normals before smoothing
+            contour = grid.contour(isosurfaces=[thresh], scalars="density", method='flying_edges', compute_normals=False)
 
             if contour.n_points == 0:
                 self.reconstructed_mesh = trimesh.Trimesh()
@@ -403,11 +408,7 @@ class SurfaceReconstructor:
                 return
 
             verts = np.array(contour.points)
-            
-            # The density field gradient points INWARD (from 0 outside to 1 inside).
-            # Unity needs OUTWARD pointing normals. We extract and invert.
-            normals_pv = np.array(contour.point_data["Normals"])
-            normals = -normals_pv
+            normals = None
             
             # Phase 4B: Vertex Correspondence Blending (Post-MC Temporal Smoothing)
             if self.vertex_blend_factor > 0 and self._prev_verts is not None and len(self._prev_verts) > 0:
@@ -434,13 +435,10 @@ class SurfaceReconstructor:
             faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
             faces = faces[:, ::-1]  # Reverse columns to flip winding
             
-            # No longer need to discard normals, we computed them above.
-            # normals = None
-
             mesh = trimesh.Trimesh(
                 vertices=verts,
                 faces=faces,
-                vertex_normals=normals,
+                vertex_normals=None,
                 process=False
             )
 
