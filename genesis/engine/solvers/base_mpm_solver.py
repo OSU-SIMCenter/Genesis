@@ -1076,6 +1076,22 @@ class BaseMPMSolver(Solver):
                 vels[i_b_, i_p_, i] = self.particles[f, i_p, i_b].vel[i]
 
     @qd.kernel
+    def _kernel_get_particles_F(
+        self,
+        f: qd.i32,
+        particle_start: qd.i32,
+        n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(),
+        F: qd.types.ndarray(),
+    ):
+        for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+            i_p = i_p_ + particle_start
+            i_b = envs_idx[i_b_]
+            for i in qd.static(range(3)):
+                for j in qd.static(range(3)):
+                    F[i_b_, i_p_, i, j] = self.particles[f, i_p, i_b].F[i, j]
+
+    @qd.kernel
     def _kernel_set_particles_active(
         self,
         f: qd.i32,
