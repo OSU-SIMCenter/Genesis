@@ -52,6 +52,7 @@ scikit-image = ">=0.25"             # Faster marching cubes for SDF visualizatio
 
 # --- Mesh/Geometry Processing ---
 trimesh = ">=4.6"
+pyvista = ">=0.47.1, <0.48"
 vtk = ">=9.5"                       # Native ARM64 support, rendering improvements
 fast-simplification = ">=0.1.13"
 libigl = ">=2.6"                    # Uses nanobind (faster than pybind11)
