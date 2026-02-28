@@ -54,10 +54,12 @@ def main():
     
     # dt here is microscopic (1.12e-05 s).
     # Real-world cooling from 1000K to 293K takes minutes.
-    # To visually show it in this benchmark, we'll run 5 physics steps per 1 Rerun render frame,
-    # and scale the conductivities to represent an artificially accelerated cooling process.
-    cfg.mpm.thermal_air_conductivity = 500000.0       
-    cfg.mpm.thermal_contact_conductivity = 1000000.0
+    # To visually show it in this benchmark, we drop the specific heat capacity drastically,
+    # meaning the material requires almost zero kinetic energy loss to drop in temperature.
+    cfg.mpm.default_heat_capacity = 1.0 
+
+    cfg.mpm.thermal_air_conductivity = 50000.0       
+    cfg.mpm.thermal_contact_conductivity = 100000.0
     
     # Expand MPM bounds to safely encapsulate the cylinders + the 3-cell invisible padding
     # Cylinder radius is 0.02, so X spans [-0.06, 0.06] and Y spans [-0.02, 0.02]
@@ -233,6 +235,10 @@ def main():
             # Dynamically compute MAX_TEMP to visualize exact heat ranges over time
             # and detect any thermal spikes from the plastic work.
             dynamic_max = t_active.max()
+            dynamic_min = t_active.min()
+            dynamic_mean = t_active.mean()
+            print(f"Frame {i:3d} | Temp Min: {dynamic_min:7.2f}K | Mean: {dynamic_mean:7.2f}K | Max: {dynamic_max:7.2f}K")
+            
             t_norm = np.clip((t_active - MIN_TEMP) / max(1.0, dynamic_max - MIN_TEMP), 0.0, 1.0)
             colors_rgb = get_coolwarm_color(t_norm)
             
