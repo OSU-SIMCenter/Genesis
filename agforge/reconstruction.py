@@ -146,6 +146,7 @@ class SurfaceReconstructor:
     def _compute_density_kernel(
         self, 
         particles_pos: ti.types.ndarray(),
+        particles_F: ti.types.ndarray(),
         active_mask: ti.types.ndarray(),
         n_particles: int,
         lower_bound: ti.types.vector(3, float),
@@ -158,8 +159,28 @@ class SurfaceReconstructor:
         for i in range(n_particles):
             if active_mask[i]:
                 pos = ti.Vector([particles_pos[i, 0], particles_pos[i, 1], particles_pos[i, 2]])
+                
+                # Retrieve the deformation gradient tensor F
+                F = ti.Matrix([
+                    [particles_F[i, 0, 0], particles_F[i, 0, 1], particles_F[i, 0, 2]],
+                    [particles_F[i, 1, 0], particles_F[i, 1, 1], particles_F[i, 1, 2]],
+                    [particles_F[i, 2, 0], particles_F[i, 2, 1], particles_F[i, 2, 2]]
+                ])
+                
+                # Compute Left Cauchy-Green deformation tensor B = F * F^T
+                # We add a small epsilon to the diagonal to prevent singular matrix inversion
+                # if the particle is completely flattened or inverted.
+                B = F @ F.transpose()
+                B_reg = B + ti.Matrix.identity(float, 3) * 1e-4
+                B_inv = B_reg.inverse()
+
                 grid_pos = (pos - lower_bound) / dx
-                rad_cells = influence_radius / dx
+                # The bounding box of the ellipsoid might be larger than influence_radius
+                # in extreme stretch, but for splatting we usually clamp the search radius
+                # to the original influence_radius * a small buffer (e.g. 1.5x) to catch stretches.
+                # However, for performance we stick to the original conservative radius cell span.
+                search_radius = influence_radius * 1.5
+                rad_cells = search_radius / dx
                 
                 base_idx = ti.cast(ti.floor(grid_pos - rad_cells), ti.int32)
                 end_idx = ti.cast(ti.ceil(grid_pos + rad_cells), ti.int32)
@@ -171,7 +192,12 @@ class SurfaceReconstructor:
                                 0 <= iy < self.grid_res and 
                                 0 <= iz < self.grid_res):
                                 cell_center = lower_bound + ti.Vector([ix, iy, iz]) * dx
-                                dist_sq = (pos - cell_center).norm_sqr()
+                                diff = cell_center - pos
+                                
+                                # Anisotropic warped distance squared: diff^T * B_inv * diff
+                                dist_sq = diff.dot(B_inv @ diff)
+                                
+                                # Use the original isotropic cutoff mathematically mapped to the ellipsoid
                                 if dist_sq < influence_radius**2:
                                     r = ti.sqrt(dist_sq) / influence_radius
                                     val = (1.0 - r)**4 * (4.0 * r + 1.0)
@@ -256,6 +282,7 @@ class SurfaceReconstructor:
         try:
             mpm_entity = self.env.mpm_entity
             particles_pos = mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+            particles_F = mpm_entity.get_particles_F(envs_idx=0).squeeze(0)
             particles_active = mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
             
             n_particles = particles_pos.shape[0]
@@ -320,6 +347,7 @@ class SurfaceReconstructor:
 
             self._compute_density_kernel(
                 particles_pos, 
+                particles_F,
                 particles_active, 
                 n_particles, 
                 lower_bound_ti, 
