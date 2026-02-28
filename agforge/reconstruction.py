@@ -609,10 +609,6 @@ class SurfaceReconstructor:
             gs.logger.error(f"Failed to get particles: {e}")
             return None
 
-        except Exception as e:
-            gs.logger.error(f"Failed to get particles: {e}")
-            return None
-
     def get_active_particle_cache(self):
         """Returns the most recently cached active particles (for visualization)."""
         return self._cached_particles
