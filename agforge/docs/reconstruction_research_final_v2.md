@@ -42,8 +42,7 @@ To solve these issues and achieve our <33ms target, we built an optimized **Hybr
 ### Final Rigidity Polish (Phase 5)
 Based on external model feedback, we added the following micro-optimizations:
 10. **Analytical Gradient-Based Vertex Normals:** We discarded flat face-normals and now extract PyVista's continuous analytical gradients. Inverting these gradients provides perfectly smooth per-vertex normals, mathematically hiding contour lines under lighting without inflating polygon counts.
-11. **Bilateral (Edge-Aware) Density Blur:** Our 3-pass GPU Gaussian blur now includes a Range Weight ($\sigma_r = 0.5$). This stops the blur across sharp density drop-offs, preserving the hard 90-degree geometric corners struck by the robotic gripper while melting flat faces together.
-12. **MPM-Driven Anisotropic Splatting:** We abandoned pure isotropic spheres. We extract the Deformation Gradient Tensor ($F$) from the Genesis MPM solver and compute the Left Cauchy-Green tensor $B = F F^T$. Our Taichi kernel computes the anisotropic warped distance metric $r^2 = (x - x_p)^T B^{-1} (x - x_p)$. This forcefully flattens the kernels into plates under extreme compression, absolutely eradicating the "bumpy grapes" effect.
+11. **MPM-Driven Anisotropic Splatting:** We abandoned pure isotropic spheres. We extract the Deformation Gradient Tensor ($F$) from the Genesis MPM solver and compute the Left Cauchy-Green tensor $B = F F^T$. Our Taichi kernel computes the anisotropic warped distance metric $r^2 = (x - x_p)^T B^{-1} (x - x_p)$. This forcefully flattens the kernels into plates under extreme compression, absolutely eradicating the "bumpy grapes" effect.
 
 ---
 
@@ -51,6 +50,7 @@ Based on external model feedback, we added the following micro-optimizations:
 
 Below is the complete, raw implementation of our surface reconstruction pipeline that executes the logic described above.
 
+```python
 ```python
 import torch
 import numpy as np
@@ -115,9 +115,8 @@ class SurfaceReconstructor:
         self._fixed_dx = None
         self._prev_grid_origin = None
         
-        # Density-space smoothing before marching cubes
-        self.density_blur_sigma = 1.25  # Spatial sigma (in grid cells)
-        self.bilateral_sigma_r = 0.5    # Range sigma (density difference)
+        # Density-space smoothing before marching cubes (sigma in grid cells)
+        self.density_blur_sigma = 1.25
         
         # Pre-compute 1D Gaussian kernel weights for separable blur  
         self._blur_radius = int(math.ceil(2.0 * self.density_blur_sigma))  # ~3 cells each side
@@ -267,83 +266,50 @@ class SurfaceReconstructor:
             self.prev_density[I] = blended_val
 
     @ti.kernel
-    def _blur_pass_x(self, radius: int, sigma_r: float):
-        """Separable Bilateral blur along X axis: density -> _blur_temp."""
+    def _blur_pass_x(self, radius: int):
+        """Separable Gaussian blur along X axis: density -> _blur_temp."""
         for i, j, k in self._blur_temp:
             acc = 0.0
-            weight_sum = 0.0
-            center_val = self.density[i, j, k]
             for di in range(-radius, radius + 1):
                 ni = i + di
-                val = center_val
                 if 0 <= ni < self.grid_res:
-                    val = self.density[ni, j, k]
-                
-                # Spatial weight from precomputed Gaussian
-                w_s = self._blur_weights[di + radius]
-                # Range weight based on density difference
-                diff = val - center_val
-                w_r = ti.math.exp(-0.5 * (diff / sigma_r)**2)
-                
-                w = w_s * w_r
-                acc += val * w
-                weight_sum += w
-                
-            self._blur_temp[i, j, k] = acc / weight_sum
+                    acc += self.density[ni, j, k] * self._blur_weights[di + radius]
+                else:
+                    acc += self.density[i, j, k] * self._blur_weights[di + radius]
+            self._blur_temp[i, j, k] = acc
 
     @ti.kernel
-    def _blur_pass_y(self, radius: int, sigma_r: float):
-        """Separable Bilateral blur along Y axis: _blur_temp -> density."""
+    def _blur_pass_y(self, radius: int):
+        """Separable Gaussian blur along Y axis: _blur_temp -> density."""
         for i, j, k in self.density:
             acc = 0.0
-            weight_sum = 0.0
-            center_val = self._blur_temp[i, j, k]
             for di in range(-radius, radius + 1):
                 nj = j + di
-                val = center_val
                 if 0 <= nj < self.grid_res:
-                    val = self._blur_temp[i, nj, k]
-                    
-                w_s = self._blur_weights[di + radius]
-                diff = val - center_val
-                w_r = ti.math.exp(-0.5 * (diff / sigma_r)**2)
-                
-                w = w_s * w_r
-                acc += val * w
-                weight_sum += w
-                
-            self.density[i, j, k] = acc / weight_sum
+                    acc += self._blur_temp[i, nj, k] * self._blur_weights[di + radius]
+                else:
+                    acc += self._blur_temp[i, j, k] * self._blur_weights[di + radius]
+            self.density[i, j, k] = acc
 
     @ti.kernel
-    def _blur_pass_z(self, radius: int, sigma_r: float):
-        """Separable Bilateral blur along Z axis: density -> _blur_temp, then copy back."""
+    def _blur_pass_z(self, radius: int):
+        """Separable Gaussian blur along Z axis: density -> _blur_temp, then copy back."""
         for i, j, k in self._blur_temp:
             acc = 0.0
-            weight_sum = 0.0
-            center_val = self.density[i, j, k]
             for di in range(-radius, radius + 1):
                 nk = k + di
-                val = center_val
                 if 0 <= nk < self.grid_res:
-                    val = self.density[i, j, nk]
-                    
-                w_s = self._blur_weights[di + radius]
-                diff = val - center_val
-                w_r = ti.math.exp(-0.5 * (diff / sigma_r)**2)
-                
-                w = w_s * w_r
-                acc += val * w
-                weight_sum += w
-                
-            self._blur_temp[i, j, k] = acc / weight_sum
+                    acc += self.density[i, j, nk] * self._blur_weights[di + radius]
+                else:
+                    acc += self.density[i, j, k] * self._blur_weights[di + radius]
+            self._blur_temp[i, j, k] = acc
 
     def _blur_density_gpu(self):
-        """Run 3-pass separable Bilateral blur entirely on GPU."""
+        """Run 3-pass separable Gaussian blur entirely on GPU."""
         r = self._blur_radius
-        sr = self.bilateral_sigma_r
-        self._blur_pass_x(r, sr)       # density -> _blur_temp
-        self._blur_pass_y(r, sr)       # _blur_temp -> density  
-        self._blur_pass_z(r, sr)       # density -> _blur_temp
+        self._blur_pass_x(r)       # density -> _blur_temp
+        self._blur_pass_y(r)       # _blur_temp -> density  
+        self._blur_pass_z(r)       # density -> _blur_temp
         # Copy result back: _blur_temp -> density
         self._copy_blur_to_density()
 
@@ -572,5 +538,4 @@ class SurfaceReconstructor:
                 backend='splashsurf'
             )
         except Exception as e:
-            gs.logger.warning(f"SplashSurf failed: {e}")
-```
+            gs.logger.warning(f"SplashSurf failed: {e}")```
