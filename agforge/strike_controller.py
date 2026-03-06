@@ -702,10 +702,8 @@ class StrikeController:
             self.checkpoints = []
             self.contact_width = 0.0
             self.reconstructor.reset()
-            
-            gs.logger.info("Initializing surface skinning...")
+            gs.logger.info("Initializing surface reconstruction...")
             self.reconstructor.create_reconstructed_mesh()
-            self.reconstructor.init_skinning()
             
             self._save_checkpoint_impl()
             
