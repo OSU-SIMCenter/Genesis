@@ -572,6 +572,7 @@ class MPMOptions(Options):
 
     # Thermal physics
     enable_thermal: bool = False
+    thermal_time_scale: float = 1.0  # Master S_T scaling (Time-Scaling)
     default_initial_temperature: float = 293.15  # Kelvin
     default_thermal_diffusivity: float = 1.1e-5  # m^2/s (Steel)
     default_heat_capacity: float = 450.0  # J/(kg K) (Steel)
