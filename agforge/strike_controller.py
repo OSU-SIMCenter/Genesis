@@ -60,7 +60,13 @@ class StrikeController:
         self._init_gripper_limits()
 
         # Surface Reconstruction
-        self.reconstructor = SurfaceReconstructor(env)
+        recon_cfg = env.cfg.reconstruction
+        self.reconstructor = SurfaceReconstructor(
+            env, 
+            grid_res=recon_cfg.grid_res, 
+            backend=recon_cfg.backend
+        )
+        self.reconstructor.recon_enabled = recon_cfg.enabled
         # Note: Reconstruction init mostly happens on demand or at start
         
         # Data Recorder
@@ -358,11 +364,12 @@ class StrikeController:
                         
                         # RESTORED: Full reconstruction after strike to fix skinning drift
                         # This gives the user a "perfect" result after the action completes.
-                        recon_start = time.time()
-                        self.reconstructor.create_reconstructed_mesh()
-                        self.reconstructor.init_skinning() # REQUIRED to sync weights with new mesh
-                        recon_time = (time.time() - recon_start) * 1000
-                        gs.logger.info(f"  Post-strike reconstruction: {recon_time:.1f}ms")
+                        # DISABLED (User Request): Relying purely on edge splitting
+                        # recon_start = time.time()
+                        # self.reconstructor.create_reconstructed_mesh()
+                        # self.reconstructor.init_skinning() # REQUIRED to sync weights with new mesh
+                        # recon_time = (time.time() - recon_start) * 1000
+                        # gs.logger.info(f"  Post-strike reconstruction: {recon_time:.1f}ms")
 
                         # Replace the pre-strike checkpoint (saved in trigger_strike)
                         # with this post-strike state so 1 undo = 1 strike reversal.
@@ -527,11 +534,11 @@ class StrikeController:
             
             if should_reconstruct:
                 with self._profile("teleop_recon_update"):
-                    self.reconstructor.update(should_reconstruct)
+                    self.reconstructor.update(should_reconstruct, is_deforming=True)
                 with self._profile("teleop_recon_get_particles"):
                     particles = self.reconstructor.get_active_particle_cache()
                     if particles is None:
-                         particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+                        particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
             else:
                 with self._profile("teleop_recon_get_particles"):
                     particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
@@ -547,7 +554,8 @@ class StrikeController:
                      
                 vertices = self._apply_transformation(vertices_raw)
             
-            triangles = self.reconstructor.reconstructed_mesh.faces
+            triangles = self.reconstructor.reconstructed_mesh.faces.copy()
+            triangles[:, [1, 2]] = triangles[:, [2, 1]]
             
             return vertices, triangles, points
 

@@ -52,6 +52,7 @@ class EnvOptions(Options):
     action_upper_bounds: torch.Tensor
     fixed_region_bounds: torch.Tensor
     target_shape_bounds: torch.Tensor
+    particle_sampler: str = "default"
     class Config:
         arbitrary_types_allowed = True
 
@@ -83,6 +84,12 @@ class GeneralOptions(Options):
     record: bool = False
     verbose: bool = True # Enable detailed logging
     log_dir: str = "logs/agforge_parametric"
+
+class ReconstructionOptions(Options):
+    """Parameters for surface reconstruction."""
+    grid_res: int = 128
+    backend: str = "hybrid"  # 'hybrid' or 'splashsurf'
+    enabled: bool = True
 
 class RobotOptions(Options):
     """Parameters for the robot arm in the MuJoCo XML file."""
@@ -183,6 +190,7 @@ class AgilityForgeOptions(Options):
     mat: MaterialOptions = MaterialOptions()
     sac: RLOptions = RLOptions()  # Note: Still named 'sac' for backwards compatibility
     adam: AdamOptions = AdamOptions()
+    reconstruction: ReconstructionOptions = ReconstructionOptions()
     performance_mode: bool = True
 
     # Declare fields for pydantic
