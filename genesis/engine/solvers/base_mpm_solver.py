@@ -45,11 +45,15 @@ class BaseMPMSolver(Solver):
 
         # Thermal config
         self._enable_thermal = options.enable_thermal
+        self._thermal_time_scale = options.thermal_time_scale
+        
         self._default_initial_temperature = options.default_initial_temperature
         self._default_heat_capacity = options.default_heat_capacity
-        self._h_contact = options.thermal_contact_conductivity
-        self._h_air = options.thermal_air_conductivity
-        self._alpha_thermal = options.default_thermal_diffusivity
+        
+        # Scaling applied to diffusion and convective coefficients (Thermal Fast-Forwarding)
+        self._h_contact = options.thermal_contact_conductivity * self._thermal_time_scale
+        self._h_air = options.thermal_air_conductivity * self._thermal_time_scale
+        self._alpha_thermal = options.default_thermal_diffusivity * self._thermal_time_scale
 
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
 
@@ -283,7 +287,8 @@ class BaseMPMSolver(Solver):
                 if self.substep_dt > dt_cfl:
                     gs.logger.warning(
                         f"Current `substep_dt` ({self.substep_dt:.6g}) exceeds the thermal diffusion CFL limit "
-                        f"({dt_cfl:.6g}) for alpha={self._alpha_thermal}. Heat diffusion may mathematically explode."
+                        f"({dt_cfl:.6g}) for explicitly-scaled alpha={self._alpha_thermal}. Heat diffusion may mathematically explode. "
+                        f"Consider lowering the thermal_time_scale hyperparameter (current: {self._thermal_time_scale})."
                     )
 
         # FIXME: _gravity must be a raw qd.field() because LegacyCoupler.mpm_grid_op accesses it via template attribute on a
