@@ -7,6 +7,7 @@ One is suspended in the air. One drops and touches the 293K floor.
 import genesis as gs
 import numpy as np
 import rerun as rr
+import time
 from scipy.spatial import cKDTree
 from agforge.reconstruction import SurfaceReconstructor, SamplingMethod
 from agforge.materials import JohnsonCookPlasticity
@@ -45,21 +46,14 @@ def main():
     from agforge.materials import JohnsonCookPlasticity
 
     cfg = TeleopOptions()
-    cfg.general.show_viewer = True
+    cfg.general.show_viewer = False  # Disable Genesis viewer to vastly improve FPS (Rerun only)
     
     # Overwrite thermal params for cooling test
     cfg.mpm.enable_thermal = True
     cfg.mpm.default_initial_temperature = 293.15
-    cfg.mpm.default_thermal_diffusivity = 0.01
-    
-    # dt here is microscopic (1.12e-05 s).
-    # Real-world cooling from 1000K to 293K takes minutes.
-    # To visually show it in this benchmark, we drop the specific heat capacity drastically,
-    # meaning the material requires almost zero kinetic energy loss to drop in temperature.
-    cfg.mpm.default_heat_capacity = 1.0 
-
-    cfg.mpm.thermal_air_conductivity = 50000.0       
-    cfg.mpm.thermal_contact_conductivity = 100000.0
+    # Rely entirely on the new Phase 5 SOTA Time-Scaling hyperparameter
+    # Simulate at 100,000x speed to observe massive cooling visually
+    cfg.mpm.thermal_time_scale = 100000.0
     
     # Expand MPM bounds to safely encapsulate the cylinders + the 3-cell invisible padding
     # Cylinder radius is 0.02, so X spans [-0.06, 0.06] and Y spans [-0.02, 0.02]
@@ -146,6 +140,9 @@ def main():
     floating_p_start = floating_entity._particle_start
     floating_p_end = floating_p_start + floating_entity.n_particles
     
+    dropped_p_start = dropped_entity._particle_start
+    dropped_p_end = dropped_p_start + dropped_entity.n_particles
+    
     # --- Surface Reconstruction Adapters ---
     class DummyEnv:
         def __init__(self, scene, entity):
@@ -174,6 +171,7 @@ def main():
     recon_dropped.init_skinning()
     
     solver = scene.sim.mpm_solver
+    profiler = scene.profiling_options.profiler
     
     # Initialize cylinder temperatures to 1000K
     pos_np = solver.particles.pos.to_numpy()
@@ -191,89 +189,119 @@ def main():
     
     MIN_TEMP = 293.15
 
-    # We will simulate 400 Rerun render frames.
-    # Inside each frame, we take 5 physics substeps to decouple simulation time from rendering.
-    STEPS_PER_RENDER = 5
-    TOTAL_RENDER_FRAMES = 400
+    # We will simulate 200 Rerun render frames.
+    # Inside each frame, we take 10 physics substeps to cover physical time per frame.
+    # Combined with the 100,000x Thermal Scaler, this means every single render frame 
+    # visualizes thousands of seconds of pure cooling!
+    STEPS_PER_RENDER = 10
+    TOTAL_RENDER_FRAMES = 200
 
     for i in range(TOTAL_RENDER_FRAMES):
-        # --- Physics Loop ---
-        for _ in range(STEPS_PER_RENDER):
-            scene.step()
-            
-            # Manually zero velocity of the floating cylinder so it doesn't fall,
-            # but remains thermally active.
-            vel_np = solver.particles.vel.to_numpy()
-            vel_np[0, floating_p_start:floating_p_end, 0, :] = 0.0
-            solver.particles.vel.from_numpy(vel_np)
+        t0 = time.perf_counter()
         
-        # Update Genesis render fields
-        if hasattr(solver, 'update_render_fields'):
-            solver.update_render_fields()
-        else:
-            scene.visualizer.update_visual_states()
+        # --- Physics Loop ---
+        with profiler.time("Physics Stepping"):
+            for _ in range(STEPS_PER_RENDER):
+                scene.step()
+                
+                # Manually zero velocity of the floating cylinder so it doesn't fall,
+                # but remains thermally active.
+                vel_np = solver.particles.vel.to_numpy()
+                vel_np[0, floating_p_start:floating_p_end, 0, :] = 0.0
+                solver.particles.vel.from_numpy(vel_np)
+            
+            # Update Genesis render fields
+            if hasattr(solver, 'update_render_fields'):
+                solver.update_render_fields()
+            # scene.visualizer is skipped since we run headless
+
+        t1 = time.perf_counter()
+        physics_time = t1 - t0
 
         # Update Rerun Recon Meshes
-        recon_floating.update(should_reconstruct=True)
-        recon_dropped.update(should_reconstruct=True)
+        with profiler.time("Surface Reconstruction"):
+            recon_floating.update(should_reconstruct=True)
+            recon_dropped.update(should_reconstruct=True)
+        
+        t2 = time.perf_counter()
+        recon_time = t2 - t1
 
         # Log to Rerun every few steps
         if i % 2 == 0:
-            rr.set_time("step", sequence=i)
-            
-            # Draw Floor visually in Rerun
-            rr.log("environment/floor", rr.Boxes3D(half_sizes=[[0.5, 0.5, 0.005]], centers=[[0, 0, -0.005]], colors=[(100, 100, 100, 255)]))
-            
-            # Fetch current state
-            pos = solver.particles.pos.to_numpy()[0, :, 0, :]
-            temps = solver.particles.temp.to_numpy()[0, :, 0]
-            curr_active = solver.particles_ng.active.to_numpy()[0, :, 0] > 0
-            
-            p_active = pos[curr_active]
-            t_active = temps[curr_active]
-            
-            # Dynamically compute MAX_TEMP to visualize exact heat ranges over time
-            # and detect any thermal spikes from the plastic work.
-            dynamic_max = t_active.max()
-            dynamic_min = t_active.min()
-            dynamic_mean = t_active.mean()
-            print(f"Frame {i:3d} | Temp Min: {dynamic_min:7.2f}K | Mean: {dynamic_mean:7.2f}K | Max: {dynamic_max:7.2f}K")
-            
-            t_norm = np.clip((t_active - MIN_TEMP) / max(1.0, dynamic_max - MIN_TEMP), 0.0, 1.0)
-            colors_rgb = get_coolwarm_color(t_norm)
-            
-            # Log exact particles (with temperature colors)
-            rr.log(f"mpm/particles_TMAX_{dynamic_max:.1f}", rr.Points3D(p_active, colors=colors_rgb, radii=0.003))
+            with profiler.time("Rerun Serialization"):
+                t3 = time.perf_counter()
+                rr.set_time("step", sequence=i)
+                
+                # Draw Floor visually in Rerun
+                rr.log("environment/floor", rr.Boxes3D(half_sizes=[[0.5, 0.5, 0.005]], centers=[[0, 0, -0.005]], colors=[(100, 100, 100, 255)]))
+                
+                # Fetch current state
+                pos = solver.particles.pos.to_numpy()[0, :, 0, :]
+                temps = solver.particles.temp.to_numpy()[0, :, 0]
+                curr_active = solver.particles_ng.active.to_numpy()[0, :, 0] > 0
+                
+                p_active = pos[curr_active]
+                t_active = temps[curr_active]
+                
+                # Get independent cylinder temperatures
+                f_temps = temps[floating_p_start:floating_p_end]
+                d_temps = temps[dropped_p_start:dropped_p_end]
+                
+                f_active = solver.particles_ng.active.to_numpy()[0, floating_p_start:floating_p_end, 0] > 0
+                d_active = solver.particles_ng.active.to_numpy()[0, dropped_p_start:dropped_p_end, 0] > 0
+                
+                f_mean = f_temps[f_active].mean() if f_active.any() else 293.15
+                d_mean = d_temps[d_active].mean() if d_active.any() else 293.15
+                
+                dynamic_max = max(f_mean, d_mean)
+                
+                t4 = time.perf_counter()
+                rr_time = t4 - t3
+                
+                print(f"Frame {i:3d} | Air Cylinder: {f_mean:7.2f}K | Ground Cylinder: {d_mean:7.2f}K | "
+                      f"Physics({STEPS_PER_RENDER} steps): {physics_time*1000:.1f}ms | Recon: {recon_time*1000:.1f}ms | Rerun: {rr_time*1000:.1f}ms")
+                
+                t_norm = np.clip((t_active - MIN_TEMP) / max(1.0, 1000.0 - MIN_TEMP), 0.0, 1.0)
+                colors_rgb = get_coolwarm_color(t_norm)
+                
+                # Log exact particles (with temperature colors)
+                rr.log("mpm/particles", rr.Points3D(p_active, colors=colors_rgb, radii=0.003))
 
-            # Log Floating Cylinder Mesh
-            mesh_float = recon_floating.reconstructed_mesh
-            if len(mesh_float.vertices) > 0:
-                v_colors_float = get_mesh_colors(mesh_float, p_active, t_active)
-                rr.log(
-                    "mpm/surface_floating",
-                    rr.Mesh3D(
-                        vertex_positions=mesh_float.vertices,
-                        vertex_normals=mesh_float.vertex_normals,
-                        vertex_colors=v_colors_float,
-                        triangle_indices=mesh_float.faces
+                # Log Floating Cylinder Mesh
+                mesh_float = recon_floating.reconstructed_mesh
+                if len(mesh_float.vertices) > 0:
+                    v_colors_float = get_mesh_colors(mesh_float, p_active, t_active)
+                    rr.log(
+                        "mpm/surface_floating",
+                        rr.Mesh3D(
+                            vertex_positions=mesh_float.vertices,
+                            vertex_normals=mesh_float.vertex_normals,
+                            vertex_colors=v_colors_float,
+                            triangle_indices=mesh_float.faces,
+                        )
                     )
-                )
 
-            # Log Dropped Cylinder Mesh
-            mesh_drop = recon_dropped.reconstructed_mesh
-            if len(mesh_drop.vertices) > 0:
-                v_colors_drop = get_mesh_colors(mesh_drop, p_active, t_active)
-                rr.log(
-                    "mpm/surface_dropped",
-                    rr.Mesh3D(
-                        vertex_positions=mesh_drop.vertices,
-                        vertex_normals=mesh_drop.vertex_normals,
-                        vertex_colors=v_colors_drop,
-                        triangle_indices=mesh_drop.faces
+                # Log Dropped Cylinder Mesh
+                mesh_dropped = recon_dropped.reconstructed_mesh
+                if len(mesh_dropped.vertices) > 0:
+                    v_colors_dropped = get_mesh_colors(mesh_dropped, p_active, t_active)
+                    rr.log(
+                        "mpm/surface_dropped",
+                        rr.Mesh3D(
+                            vertex_positions=mesh_dropped.vertices,
+                            vertex_normals=mesh_dropped.vertex_normals,
+                            vertex_colors=v_colors_dropped,
+                            triangle_indices=mesh_dropped.faces, 
+                        )
                     )
-                )
 
     print("\n✅ Visualization complete. Viewer should be open.")
+    print("\n--- Detailed Profiling Stats (Rich Table - Full) ---")
+    profiler.rich_table(min_pct=0.0)
+    print("\n--- Detailed Profiling Hierarchy (ASCII Tree - >2%) ---")
+    profiler.print_tree(min_pct=2.0)
+    print("\n--- Profiling Hot-Spots (Flat - >1.5%) ---")
+    profiler.print_flat(sort_by="self", min_pct=1.5)
 
 if __name__ == "__main__":
     main()

@@ -32,12 +32,12 @@ def main():
 
     # Use agforge environment builder for accurate forging setup
     cfg = TeleopOptions()
-    cfg.general.show_viewer = True  # Enable Genesis Viewer
+    cfg.general.show_viewer = False  # Disable Genesis Viewer to improve FPS (Rerun only)
     
     # Overwrite thermal params for diffusion test
     cfg.mpm.enable_thermal = True
     cfg.mpm.default_initial_temperature = 293.15
-    cfg.mpm.default_thermal_diffusivity = 0.01  # Fast diffusion
+    cfg.mpm.thermal_time_scale = 10000.0  # Phase 5 SOTA Time-Scaling
     cfg.mpm.thermal_air_conductivity = 0.0      # Insulated
     cfg.mpm.thermal_contact_conductivity = 0.0  # Insulated
     
@@ -75,15 +75,18 @@ def main():
     MIN_TEMP = 293.15
     MAX_TEMP = 1000.0
 
-    for i in range(250):
+    STEPS_PER_RENDER = 50
+    TOTAL_RENDER_FRAMES = 250
+
+    for i in range(TOTAL_RENDER_FRAMES):
         # Step Physics
-        scene.step()
+        for _ in range(STEPS_PER_RENDER):
+            scene.step()
         
         # Update Genesis render fields
         if hasattr(solver, 'update_render_fields'):
             solver.update_render_fields()
-        else:
-            scene.visualizer.update_visual_states()
+        # scene.visualizer is skipped since we run headless
             
         # Update Rerun Recon Mesh
         reconstructor.update(should_reconstruct=True)
