@@ -218,6 +218,16 @@ async def handle_client(websocket, state: StrikeController, path=None):
 
                 elif packet.get("request") == "strike":
                     if state.strike_state == StrikeState.IDLE:
+                         # 1. GUARANTEE PHYSICAL ALIGNMENT BEFORE STRIKE LOCK
+                         translation = packet.get("translation", 0.0)
+                         rotation = packet.get("rotation", 0.0)
+                         slider_qpos, hinge_qpos = state.input_mapper.map_client_to_qpos(translation, rotation)
+                         
+                         qpos[0, 0] = slider_qpos
+                         qpos[0, 1] = hinge_qpos
+                         await state.set_qpos(qpos)
+                         
+                         # 2. PROCEED WITH STRIKE
                          raw_force = packet.get("force", 0.05)  # Default 0.05 -> 0.5 strain after scaling
                          
                          # Scale client value (0-0.1) to strain range (0-1)
