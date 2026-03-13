@@ -94,6 +94,10 @@ class SurfaceReconstructor:
         self.frame_counter = state.get('frame_counter', 0)
         self.density_initialized = False
         self._prev_grid_origin = None
+        self._prev_verts = None
+        if hasattr(self, 'reconstructed_vertices_tensor'):
+            self.reconstructed_vertices_tensor = None
+        self.prev_density.fill(0)
 
     def reset(self):
         self.reconstructed_mesh = trimesh.Trimesh()
@@ -104,6 +108,9 @@ class SurfaceReconstructor:
         self._fixed_dx = None
         self._prev_grid_origin = None
         self._prev_verts = None
+        if hasattr(self, 'reconstructed_vertices_tensor'):
+            self.reconstructed_vertices_tensor = None
+        self.prev_density.fill(0)
 
     # --- Compatibility Interface ---
     def init_skinning(self):
