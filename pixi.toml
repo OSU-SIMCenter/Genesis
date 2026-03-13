@@ -159,3 +159,26 @@ polyscope = "*"
 default = ["cuda", "agf-server", "build", "viz-tools"]
 macos = ["mps", "agf-server", "build", "viz-tools"]
 cpu-only = ["cpu", "agf-server", "build", "viz-tools"]
+
+test.features = ["cuda", "agf-server", "build", "viz-tools", "test"]
+test.solve-group = "default"
+
+test-macos.features = ["mps", "agf-server", "build", "viz-tools", "test"]
+test-macos.solve-group = "macos"
+
+test-cpu.features = ["cpu", "agf-server", "build", "viz-tools", "test"]
+test-cpu.solve-group = "cpu-only"
+
+# =============================================================================
+# FEATURE: Testing
+# =============================================================================
+[feature.test.pypi-dependencies]
+pytest = ">=8.0"
+setproctitle = "*"
+syrupy = "*"
+pytest-xdist = "*"
+pytest-forked = "*"
+
+[feature.test.tasks]
+test = "pytest tests/ -m required"
+test-all = "pytest tests/"
