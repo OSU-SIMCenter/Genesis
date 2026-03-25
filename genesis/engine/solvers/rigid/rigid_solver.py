@@ -1376,28 +1376,28 @@ class RigidSolver(KinematicSolver):
                 is_backward=self._is_backward,
             )
             kernel_step_2(
-                    dofs_state=self.dofs_state,
-                    dofs_info=self.dofs_info,
-                    links_info=self.links_info,
-                    links_state=self.links_state,
-                    joints_info=self.joints_info,
-                    joints_state=self.joints_state,
-                    entities_state=self.entities_state,
-                    entities_info=self.entities_info,
-                    geoms_info=self.geoms_info,
-                    geoms_state=self.geoms_state,
-                    collider_state=self.collider._collider_state,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-                    is_backward=self._is_backward,
-                    errno=self._errno,
-                )
-            elif isinstance(self.sim.coupler, IPCCoupler):
-                # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
-                # Collision exclusion for IPC-coupled links is handled in the collider at build time.
-                if self.sim.coupler.has_any_rigid_coupling:
-                    self.substep(f)
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                joints_info=self.joints_info,
+                joints_state=self.joints_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                geoms_info=self.geoms_info,
+                geoms_state=self.geoms_state,
+                collider_state=self.collider._collider_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+                is_backward=self._is_backward,
+                errno=self._errno,
+            )
+        elif isinstance(self.sim.coupler, IPCCoupler):
+            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
+            # Collision exclusion for IPC-coupled links is handled in the collider at build time.
+            if self.sim.coupler.has_any_rigid_coupling:
+                self.substep(f)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- render -----------------------------------------
