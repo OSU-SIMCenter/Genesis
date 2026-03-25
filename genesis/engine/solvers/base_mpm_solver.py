@@ -651,6 +651,18 @@ class BaseMPMSolver(Solver):
                 with profiler.time("mpm_apply_constraints") if True else contextlib.suppress():
                     self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
+            if qd.static(self.sim.coupler._rigid_mpm):
+                with profiler.time("mpm_particle_collisions") if True else contextlib.suppress():
+                    self.apply_particle_collisions(
+                        f,
+                        self.sim.coupler.rigid_solver.geoms_state,
+                        self.sim.coupler.rigid_solver.geoms_info,
+                        self.sim.coupler.rigid_solver.links_state,
+                        self.sim.coupler.rigid_solver._rigid_global_info,
+                        self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
+                        self.sim.coupler.rigid_solver.collider._collider_static_config,
+                    )
+
             # FIXME: Use existing errno mechanism for this.
             if self.sim.options.check_bounds:
                 with profiler.time("mpm_check_valid") if True else contextlib.suppress():
@@ -1289,6 +1301,76 @@ class BaseMPMSolver(Solver):
 
                 dv = self.substep_dt * (spring_force + damping_force) / mass
                 self.particles[f + 1, i_p, i_b].vel = vel + dv
+
+    @qd.kernel
+    def apply_particle_collisions(
+        self,
+        f: qd.i32,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        sdf_info: array_class.SDFInfo,
+        collider_static_config: qd.template(),
+    ):
+        for i_p, i_b in qd.ndrange(self._n_particles, self._B):
+            if self.particles_ng[f + 1, i_p, i_b].active:
+                pos = self.particles[f + 1, i_p, i_b].pos
+                vel = self.particles[f + 1, i_p, i_b].vel
+                for i_g in qd.static(range(self.sim.coupler.rigid_solver.n_geoms)):
+                    if geoms_info.needs_coup[i_g]:
+                        signed_dist = sdf.sdf_func_world(
+                            geoms_state=geoms_state,
+                            geoms_info=geoms_info,
+                            sdf_info=sdf_info,
+                            pos_world=pos,
+                            geom_idx=i_g,
+                            batch_idx=i_b,
+                        )
+                        
+                        margin = self._particle_size * 0.5
+                        if signed_dist < margin:
+                            normal_rigid = sdf.sdf_func_normal_world(
+                                geoms_state=geoms_state,
+                                geoms_info=geoms_info,
+                                rigid_global_info=rigid_global_info,
+                                collider_static_config=collider_static_config,
+                                sdf_info=sdf_info,
+                                pos_world=pos,
+                                geom_idx=i_g,
+                                batch_idx=i_b,
+                            )
+                            
+                            # Hard non-penetration projection
+                            pos = pos - (signed_dist - margin) * normal_rigid
+                            self.particles[f + 1, i_p, i_b].pos = pos
+                            
+                            # Friction & Restitution
+                            vel_rigid = self.sim.coupler.rigid_solver._func_vel_at_point(
+                                pos_world=pos,
+                                link_idx=geoms_info.link_idx[i_g],
+                                i_b=i_b,
+                                links_state=links_state,
+                            )
+                            
+                            rvel = vel - vel_rigid
+                            rvel_normal_magnitude = rvel.dot(normal_rigid)
+                            
+                            if rvel_normal_magnitude < 0:
+                                rvel_tan = rvel - rvel_normal_magnitude * normal_rigid
+                                rvel_tan_norm = rvel_tan.norm(gs.EPS)
+                                
+                                # Tangential friction
+                                rvel_tan = (
+                                    rvel_tan
+                                    / rvel_tan_norm
+                                    * qd.max(0.0, rvel_tan_norm + rvel_normal_magnitude * geoms_info.coup_friction[i_g])
+                                )
+                                # Normal restitution
+                                rvel_normal = -normal_rigid * rvel_normal_magnitude * geoms_info.coup_restitution[i_g]
+                                
+                                vel = vel_rigid + rvel_tan + rvel_normal
+                                self.particles[f + 1, i_p, i_b].vel = vel
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
