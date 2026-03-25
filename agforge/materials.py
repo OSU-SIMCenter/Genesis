@@ -1,18 +1,9 @@
 
-import gstaichi as ti
+import quadrants as qd
 import genesis as gs
-# Import Base from genesis directly if accessible, or we might need to rely on duck typing or relative imports if inside a package.
-# Since we are in agforge/materials.py, genesis should be importable.
-# We need to import the Base class. 
-# gs.materials.MPM.Base is the class.
 
-if not hasattr(gs.materials.MPM, 'Base'):
-     # Fallback if Base is not exposed directly in materials.MPM (it usually is hidden)
-     # We might need to import from internal path if possible, but let's try getting it from an existing material instance or similar?
-     # Actually, inspect_genesis.py printed "Base" in dir(gs.materials.MPM). So it is exposed.
-     pass
 
-@ti.data_oriented
+@qd.data_oriented
 class JohnsonCookPlasticity(gs.materials.MPM.Base):
     """
     Johnson-Cook elasto-plastic material for MPM.
@@ -45,19 +36,19 @@ class JohnsonCookPlasticity(gs.materials.MPM.Base):
         # Initial Jp (Plastic Strain) = 0.0
         self._default_Jp = 0.0
 
-    @ti.func
+    @qd.func
     def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp, temp):
         """
         Updates Deformation Gradient (F), Singular Values (S), and Plastic Strain (Jp).
         Jp here stores Equivalent Plastic Strain (epsilon_p).
         """
-        F_new = ti.Matrix.zero(gs.ti_float, 3, 3)
-        S_new = ti.Matrix.zero(gs.ti_float, 3, 3)
+        F_new = qd.Matrix.zero(gs.qd_float, 3, 3)
+        S_new = qd.Matrix.zero(gs.qd_float, 3, 3)
         delta_gamma = 0.0
         
         # 1. Trial Deviatoric Strain (Elastic Predictor)
-        S_clamped = ti.max(S, 1e-6) # Limit to avoid log(0)
-        epsilon = ti.Vector([ti.log(S_clamped[0, 0]), ti.log(S_clamped[1, 1]), ti.log(S_clamped[2, 2])])
+        S_clamped = qd.max(S, 1e-6)  # Limit to avoid log(0)
+        epsilon = qd.Vector([qd.math.log(S_clamped[0, 0]), qd.math.log(S_clamped[1, 1]), qd.math.log(S_clamped[2, 2])])
         
         trace_eps = epsilon.sum()
         epsilon_hat = epsilon - (trace_eps / 3.0)
@@ -65,33 +56,32 @@ class JohnsonCookPlasticity(gs.materials.MPM.Base):
         
         # 2. Determine Flow Stress (Sigma_y)
         eps_p = Jp
-        sigma_y_static = self._A + self._B * ti.pow(eps_p, self._n)
+        sigma_y_static = self._A + self._B * qd.math.pow(eps_p, self._n)
         
         # We will add thermal softening (Johnson-Cook melting term) later. 
-        # For now, just pass the temperature to avoid Taichi signature errors.
+        # For now, just pass the temperature to avoid signature errors.
         sigma_y = sigma_y_static
         
         # 3. Yield Condition (Von Mises)
         yield_dist = epsilon_hat_norm - sigma_y / (2 * self._mu)
         Jp_new = Jp 
         
-        if yield_dist > 0: # Yields
+        if yield_dist > 0:  # Yields
             delta_gamma = yield_dist 
             Jp_new = eps_p + delta_gamma
             
             epsilon -= (delta_gamma / epsilon_hat_norm) * epsilon_hat
             
             # Reconstruct S
-            S_new = ti.Matrix.zero(gs.ti_float, 3, 3)
-            for d in ti.static(range(3)):
-                S_new[d, d] = ti.exp(epsilon[d])
+            S_new = qd.Matrix.zero(gs.qd_float, 3, 3)
+            for d in qd.static(range(3)):
+                S_new[d, d] = qd.math.exp(epsilon[d])
             
             F_new = U @ S_new @ V.transpose()
             
-        else: # Elastic
+        else:  # Elastic
             F_new = F_tmp
             S_new = S
             delta_gamma = 0.0
         
         return F_new, S_new, Jp_new, delta_gamma, sigma_y
-

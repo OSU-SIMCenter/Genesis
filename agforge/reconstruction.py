@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import trimesh
 import trimesh.smoothing
-import gstaichi as ti
+import quadrants as qd
 import genesis as gs
 import genesis.utils.particle as pu
 import pyvista as pv
@@ -17,7 +17,7 @@ class SamplingMethod(Enum):
     FPS = "fps"
     HALTON_LLOYD = "halton_lloyd"
 
-@ti.data_oriented
+@qd.data_oriented
 class SurfaceReconstructor:
     def __init__(self, env, grid_res=128, backend='hybrid'):
         self.env = env
@@ -41,9 +41,9 @@ class SurfaceReconstructor:
         
         # Grid Configuration
         self.grid_res = grid_res
-        self.density = ti.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
-        self.prev_density = ti.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
-        self._blur_temp = ti.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
+        self.density = qd.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
+        self.prev_density = qd.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
+        self._blur_temp = qd.field(dtype=float, shape=(self.grid_res, self.grid_res, self.grid_res))
         self.temporal_alpha = 0.35 # Blend factor (0.0 = history only, 1.0 = no smoothing)
         self.density_initialized = False
         
@@ -70,7 +70,7 @@ class SurfaceReconstructor:
         weights = np.array([math.exp(-0.5 * ((i - self._blur_radius) / self.density_blur_sigma) ** 2) 
                            for i in range(ksize)], dtype=np.float32)
         weights /= weights.sum()
-        self._blur_weights = ti.field(dtype=float, shape=(ksize,))
+        self._blur_weights = qd.field(dtype=float, shape=(ksize,))
         self._blur_weights.from_numpy(weights)
         
         # Cached PyVista grid (reused across frames)
@@ -142,26 +142,26 @@ class SurfaceReconstructor:
         except Exception:
             return None
 
-    @ti.kernel
+    @qd.kernel
     def _compute_density_kernel(
         self, 
-        particles_pos: ti.types.ndarray(),
-        particles_F: ti.types.ndarray(),
-        active_mask: ti.types.ndarray(),
+        particles_pos: qd.types.ndarray(),
+        particles_F: qd.types.ndarray(),
+        active_mask: qd.types.ndarray(),
         n_particles: int,
-        lower_bound: ti.types.vector(3, float),
+        lower_bound: qd.types.vector(3, float),
         dx: float,
         influence_radius: float
     ):
-        for I in ti.grouped(self.density):
+        for I in qd.grouped(self.density):
             self.density[I] = 0.0
             
         for i in range(n_particles):
             if active_mask[i]:
-                pos = ti.Vector([particles_pos[i, 0], particles_pos[i, 1], particles_pos[i, 2]])
+                pos = qd.Vector([particles_pos[i, 0], particles_pos[i, 1], particles_pos[i, 2]])
                 
                 # Retrieve the deformation gradient tensor F
-                F = ti.Matrix([
+                F = qd.Matrix([
                     [particles_F[i, 0, 0], particles_F[i, 0, 1], particles_F[i, 0, 2]],
                     [particles_F[i, 1, 0], particles_F[i, 1, 1], particles_F[i, 1, 2]],
                     [particles_F[i, 2, 0], particles_F[i, 2, 1], particles_F[i, 2, 2]]
@@ -170,14 +170,14 @@ class SurfaceReconstructor:
                 # Phase 6A: Volume-Normalize the F Tensor
                 # Prevent anisotropic bounding boxes from changing total kernel volume
                 detF = F.determinant()
-                vol_scale = (ti.abs(detF) + 1e-6) ** (1.0 / 3.0)
+                vol_scale = (qd.abs(detF) + 1e-6) ** (1.0 / 3.0)
                 F_norm = F / vol_scale
                 
                 # Compute Left Cauchy-Green deformation tensor B = F * F^T
                 # We add a small epsilon to the diagonal to prevent singular matrix inversion
                 # if the particle is completely flattened or inverted.
                 B = F_norm @ F_norm.transpose()
-                B_reg = B + ti.Matrix.identity(float, 3) * 1e-4
+                B_reg = B + qd.Matrix.identity(float, 3) * 1e-4
                 B_inv = B_reg.inverse()
 
                 grid_pos = (pos - lower_bound) / dx
@@ -188,8 +188,8 @@ class SurfaceReconstructor:
                 search_radius = influence_radius * 1.5
                 rad_cells = search_radius / dx
                 
-                base_idx = ti.cast(ti.floor(grid_pos - rad_cells), ti.int32)
-                end_idx = ti.cast(ti.ceil(grid_pos + rad_cells), ti.int32)
+                base_idx = qd.cast(qd.floor(grid_pos - rad_cells), qd.int32)
+                end_idx = qd.cast(qd.ceil(grid_pos + rad_cells), qd.int32)
                 
                 for ix in range(base_idx[0], end_idx[0] + 1):
                     for iy in range(base_idx[1], end_idx[1] + 1):
@@ -197,7 +197,7 @@ class SurfaceReconstructor:
                             if (0 <= ix < self.grid_res and 
                                 0 <= iy < self.grid_res and 
                                 0 <= iz < self.grid_res):
-                                cell_center = lower_bound + ti.Vector([ix, iy, iz]) * dx
+                                cell_center = lower_bound + qd.Vector([ix, iy, iz]) * dx
                                 diff = cell_center - pos
                                 
                                 # Anisotropic warped distance squared: diff^T * B_inv * diff
@@ -205,19 +205,19 @@ class SurfaceReconstructor:
                                 
                                 # Use the original isotropic cutoff mathematically mapped to the ellipsoid
                                 if dist_sq < influence_radius**2:
-                                    r = ti.sqrt(dist_sq) / influence_radius
+                                    r = qd.sqrt(dist_sq) / influence_radius
                                     val = (1.0 - r)**4 * (4.0 * r + 1.0)
                                     self.density[ix, iy, iz] += val
 
-    @ti.kernel
+    @qd.kernel
     def _blend_density_temporal(self, alpha: float):
         """Exponential moving average over the density field: D = alpha*D_new + (1-alpha)*D_prev."""
-        for I in ti.grouped(self.density):
+        for I in qd.grouped(self.density):
             blended_val = alpha * self.density[I] + (1.0 - alpha) * self.prev_density[I]
             self.density[I] = blended_val
             self.prev_density[I] = blended_val
 
-    @ti.kernel
+    @qd.kernel
     def _blur_pass_x(self, radius: int):
         """Separable Gaussian blur along X axis: density -> _blur_temp."""
         for i, j, k in self._blur_temp:
@@ -230,7 +230,7 @@ class SurfaceReconstructor:
                     acc += self.density[i, j, k] * self._blur_weights[di + radius]
             self._blur_temp[i, j, k] = acc
 
-    @ti.kernel
+    @qd.kernel
     def _blur_pass_y(self, radius: int):
         """Separable Gaussian blur along Y axis: _blur_temp -> density."""
         for i, j, k in self.density:
@@ -243,7 +243,7 @@ class SurfaceReconstructor:
                     acc += self._blur_temp[i, j, k] * self._blur_weights[di + radius]
             self.density[i, j, k] = acc
 
-    @ti.kernel
+    @qd.kernel
     def _blur_pass_z(self, radius: int):
         """Separable Gaussian blur along Z axis: density -> _blur_temp, then copy back."""
         for i, j, k in self._blur_temp:
@@ -265,9 +265,9 @@ class SurfaceReconstructor:
         # Copy result back: _blur_temp -> density
         self._copy_blur_to_density()
 
-    @ti.kernel
+    @qd.kernel
     def _copy_blur_to_density(self):
-        for I in ti.grouped(self.density):
+        for I in qd.grouped(self.density):
             self.density[I] = self._blur_temp[I]
 
     def update(self, should_reconstruct: bool, is_deforming: bool = False):
@@ -349,14 +349,14 @@ class SurfaceReconstructor:
                     gs.logger.debug("Reconstruction: Grid origin shifted, resetting temporal blend")
             self._prev_grid_origin = grid_origin
 
-            lower_bound_ti = ti.Vector([min_bound[0], min_bound[1], min_bound[2]])
+            lower_bound_qd = qd.Vector([min_bound[0], min_bound[1], min_bound[2]])
 
             self._compute_density_kernel(
                 particles_pos, 
                 particles_F,
                 particles_active, 
                 n_particles, 
-                lower_bound_ti, 
+                lower_bound_qd, 
                 float(dx), 
                 float(self.influence_radius)
             )
@@ -372,7 +372,7 @@ class SurfaceReconstructor:
             self._blend_density_temporal(alpha)
             self.density_initialized = True
             
-            # GPU Gaussian blur (separable, 3 passes on Taichi fields)
+            # GPU Gaussian blur (separable, 3 passes on Quadrants fields)
             if self.density_blur_sigma > 0:
                 self._blur_density_gpu()
             

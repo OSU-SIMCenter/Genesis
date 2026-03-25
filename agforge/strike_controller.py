@@ -609,8 +609,8 @@ class StrikeController:
             
             self.env.scene.sim.reset(ckpt['sim_state'])
             
-            import gstaichi as ti
-            ti.sync()
+            import quadrants as qd
+            qd.sync()
             if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
                 self.env.scene.sim.mpm_solver.update_render_fields()
             else:
@@ -688,8 +688,8 @@ class StrikeController:
                 
             self.env.reset()
             
-            import gstaichi as ti
-            ti.sync()
+            import quadrants as qd
+            qd.sync()
             if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
                 self.env.scene.sim.mpm_solver.update_render_fields()
             else:

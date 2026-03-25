@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from pint import UnitRegistry
-from typing import Tuple, List
+from typing import Optional, Tuple, List
 
 import genesis as gs
 from genesis.options.options import Options
@@ -96,15 +96,15 @@ class RobotOptions(Options):
     time_unit_str: str = "rtu"
     robot_time_to_seconds: float = 1.
 
-    # Declare fields for pydantic
-    cylinder_diameter: float = None
-    cylinder_radius: float = None
-    cylinder_height: float = None
+    # Declare fields for pydantic — Optional because they are computed in model_post_init
+    cylinder_diameter: Optional[float] = None
+    cylinder_radius: Optional[float] = None
+    cylinder_height: Optional[float] = None
     cylinder_pos: object = None
-    cylinder_euler: tuple = None
-    base_grid_density: int = None
-    mpm_lower_bound: tuple = None
-    mpm_upper_bound: tuple = None
+    cylinder_euler: Optional[tuple] = None
+    base_grid_density: Optional[int] = None
+    mpm_lower_bound: Optional[tuple] = None
+    mpm_upper_bound: Optional[tuple] = None
     fixed_region_bounds: object = None
     target_shape_bounds: object = None
     action_lower_bounds: object = None
