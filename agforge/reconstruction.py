@@ -78,7 +78,7 @@ class SurfaceReconstructor:
         
         # Cached vertices for Post-MC temporal smoothing (Vertex Correspondence Blending)
         self._prev_verts = None
-        self.vertex_blend_factor = 0.15  # Blend factor towards previous frame (0.0 = off)
+        self.vertex_blend_factor = 0.0  # Blend factor towards previous frame (0.0 = off, was 0.15)
 
     def get_state(self):
         return {
@@ -94,6 +94,10 @@ class SurfaceReconstructor:
         self.frame_counter = state.get('frame_counter', 0)
         self.density_initialized = False
         self._prev_grid_origin = None
+        self._prev_verts = None
+        if hasattr(self, 'reconstructed_vertices_tensor'):
+            self.reconstructed_vertices_tensor = None
+        self.prev_density.fill(0)
 
     def reset(self):
         self.reconstructed_mesh = trimesh.Trimesh()
@@ -104,6 +108,9 @@ class SurfaceReconstructor:
         self._fixed_dx = None
         self._prev_grid_origin = None
         self._prev_verts = None
+        if hasattr(self, 'reconstructed_vertices_tensor'):
+            self.reconstructed_vertices_tensor = None
+        self.prev_density.fill(0)
 
     # --- Compatibility Interface ---
     def init_skinning(self):
@@ -285,12 +292,19 @@ class SurfaceReconstructor:
             return
 
         # Hybrid Path
+        import contextlib
+        profiler = getattr(self.env.scene.profiling_options, 'profiler', None)
+        def profile_block(name):
+            if profiler:
+                return profiler.time(name)
+            return contextlib.nullcontext()
         try:
+          with profile_block("hybrid_get_particles"):
             mpm_entity = self.env.mpm_entity
             particles_pos = mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
             particles_F = mpm_entity.get_particles_F(envs_idx=0).squeeze(0)
             particles_active = mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
-            
+
             n_particles = particles_pos.shape[0]
             if n_particles == 0:
                 self.reconstructed_mesh = trimesh.Trimesh()
@@ -351,16 +365,17 @@ class SurfaceReconstructor:
 
             lower_bound_qd = qd.Vector([min_bound[0], min_bound[1], min_bound[2]])
 
+          with profile_block("hybrid_density_kernel"):
             self._compute_density_kernel(
-                particles_pos, 
+                particles_pos,
                 particles_F,
-                particles_active, 
-                n_particles, 
-                lower_bound_qd, 
-                float(dx), 
+                particles_active,
+                n_particles,
+                lower_bound_qd,
+                float(dx),
                 float(self.influence_radius)
             )
-            
+
             # Adaptive Temporal Blending (state-based, no extra GPU transfer)
             if not self.density_initialized:
                 alpha = 1.0
@@ -371,35 +386,31 @@ class SurfaceReconstructor:
 
             self._blend_density_temporal(alpha)
             self.density_initialized = True
-            
+
             # GPU Gaussian blur (separable, 3 passes on Quadrants fields)
             if self.density_blur_sigma > 0:
                 self._blur_density_gpu()
-            
-            # Transfer blurred density to CPU
+
+          with profile_block("hybrid_density_transfer"):
             density_cpu = self.density.to_numpy()
 
-            # Phase 6B: Percentile-Based Dynamic Thresholding
-            # This prevents "breathing" and volume fluctuation when density spikes occur.
+          with profile_block("hybrid_marching_cubes"):
+            # Percentile-Based Dynamic Thresholding
             valid_densities = density_cpu[density_cpu > 1e-4]
             if len(valid_densities) == 0:
                 gs.logger.warning("Reconstruction: No valid densities found! Mesh will be empty.")
                 return
-                
+
             thresh = float(np.percentile(valid_densities, 95)) * 0.3
             gs.logger.debug(f"Reconstruction: max_density={density_cpu.max():.4f}, threshold={thresh:.4f}")
 
             # Create PyVista grid (near zero-copy through VTK data adapters)
             grid = pv.ImageData()
-            grid.dimensions = np.array(density_cpu.shape)  # grid points = density array shape
+            grid.dimensions = np.array(density_cpu.shape)
             grid.spacing = (dx, dx, dx)
             grid.origin = min_bound
-            
-            # flatten using Fortran order to match VTK's Z-Y-X array layout expectation
             grid.point_data["density"] = density_cpu.flatten(order="F")
 
-            # Phase 6C: Compute Normals *After* Smoothing
-            # We disable compute_normals here so we don't extract invalid normals before smoothing
             contour = grid.contour(isosurfaces=[thresh], scalars="density", method='flying_edges', compute_normals=False)
 
             if contour.n_points == 0:
@@ -407,34 +418,27 @@ class SurfaceReconstructor:
                 self._prev_verts = None
                 return
 
+          with profile_block("hybrid_post_process"):
             verts = np.array(contour.points)
-            normals = None
-            
-            # Phase 4B: Vertex Correspondence Blending (Post-MC Temporal Smoothing)
+
+            # Vertex Correspondence Blending (Post-MC Temporal Smoothing)
             if self.vertex_blend_factor > 0 and self._prev_verts is not None and len(self._prev_verts) > 0:
                 try:
                     tree = cKDTree(self._prev_verts)
-                    # For each new vertex, find the closest previous vertex
                     dists, indices = tree.query(verts)
-                    # Only blend if the closest vertex is within a reasonable distance (e.g. 2x grid spacing)
-                    # to prevent "stretching" when geometry appears/disappears
                     valid_mask = dists < (dx * 2.0)
                     if valid_mask.any():
                         blend = self.vertex_blend_factor
                         verts[valid_mask] = (1.0 - blend) * verts[valid_mask] + blend * self._prev_verts[indices[valid_mask]]
                 except Exception as e:
                     gs.logger.debug(f"Reconstruction: Vertex blending failed: {e}")
-            
-            # Cache current blended vertices for next frame
+
             self._prev_verts = verts.copy()
 
-            # PyVista uses VTK face format: [num_verts, v0, v1, v2, ...]
-            # Our density field has maximum density inside the object, so the isosurface gradient 
-            # points INWARD. We must reverse the winding order (v0, v1, v2 -> v2, v1, v0) 
-            # so the normals point OUTWARD for Unity.
+            # Reverse winding order so normals point OUTWARD for Unity
             faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
-            faces = faces[:, ::-1]  # Reverse columns to flip winding
-            
+            faces = faces[:, ::-1]
+
             mesh = trimesh.Trimesh(
                 vertices=verts,
                 faces=faces,
@@ -442,13 +446,13 @@ class SurfaceReconstructor:
                 process=False
             )
 
-            # Taubin smoothing preserves volume better than Laplacian
+            # Taubin smoothing (1 iteration for light cleanup)
             if len(mesh.vertices) > 0:
                 try:
-                    trimesh.smoothing.filter_taubin(mesh, iterations=3)
+                    trimesh.smoothing.filter_taubin(mesh, iterations=1)
                 except Exception:
                     try:
-                        trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=2)
+                        trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=1)
                     except Exception as e:
                         gs.logger.debug(f"Smoothing failed: {e}")
 
@@ -456,30 +460,83 @@ class SurfaceReconstructor:
                     gs.logger.warning("Smoothing produced NaN vertices, using unsmoothed mesh")
                     mesh = trimesh.Trimesh(
                         vertices=verts, faces=faces,
-                        vertex_normals=normals, process=False
+                        process=False
                     )
 
             gs.logger.debug(f"Reconstruction: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
             self.reconstructed_mesh = mesh
-            
+
         except Exception as e:
             import traceback
             gs.logger.warning(f"Reconstruction failed: {e}")
             traceback.print_exc()
 
     def _create_splashsurf_mesh(self):
-        """Legacy SplashSurf reconstruction."""
+        """Direct in-process SplashSurf reconstruction.
+
+        Bypasses the Genesis pu.particles_to_mesh() wrapper which forks a subprocess
+        per frame to work around a pysplashsurf memory leak. Instead, we call
+        pysplashsurf directly in-process and use malloc_trim() to reclaim memory.
+        This eliminates ~115ms/frame of multiprocessing overhead.
+        """
         try:
-            particles = self._get_active_particles(use_cache=False)
+            import contextlib
+            import ctypes
+            import ctypes.util
+            import pysplashsurf
+
+            profiler = getattr(self.env.scene.profiling_options, 'profiler', None)
+
+            def profile_block(name):
+                if profiler:
+                    return profiler.time(name)
+                return contextlib.nullcontext()
+
+            with profile_block("splashsurf_get_particles"):
+                particles = self._get_active_particles(use_cache=False)
+
             if particles is None or len(particles) == 0:
                 return
-                
-            # Use ~1.0x particle radius for reconstruction
-            # SplashSurf handles neighborhood search internally
-            self.reconstructed_mesh = pu.particles_to_mesh(
-                positions=particles,
-                radius=self.particle_radius * 1.5,
-                backend='splashsurf'
-            )
+
+            radius = self.particle_radius * 1.5
+
+            with profile_block("splashsurf_core_meshing"):
+                mesh_with_data, _ = pysplashsurf.reconstruction_pipeline(
+                    particles,
+                    particle_radius=radius,
+                    smoothing_length=2.0,
+                    cube_size=0.8,
+                    iso_surface_threshold=0.6,
+                    mesh_smoothing_weights=True,
+                    mesh_smoothing_iters=25,
+                    normals_smoothing_iters=10,
+                    mesh_cleanup=True,
+                    compute_normals=True,
+                    multi_threading=True,
+                )
+                vertices = mesh_with_data.mesh.vertices
+                triangles = mesh_with_data.mesh.triangles
+                normals = mesh_with_data.point_attributes["normals"]
+                del mesh_with_data  # Release C++ wrapper immediately
+
+            with profile_block("splashsurf_build_trimesh"):
+                mesh = trimesh.Trimesh(
+                    vertices=vertices, faces=triangles,
+                    face_normals=normals, process=False
+                )
+                # Reverse winding order so normals point OUTWARD for Unity
+                mesh.faces = mesh.faces[:, ::-1]
+                self.reconstructed_mesh = mesh
+
+            with profile_block("splashsurf_mem_cleanup"):
+                # Reclaim leaked pysplashsurf memory without subprocess overhead
+                try:
+                    libc = ctypes.CDLL(ctypes.util.find_library("c"))
+                    libc.malloc_trim(0)
+                except Exception:
+                    pass
+
         except Exception as e:
+            import traceback
             gs.logger.warning(f"SplashSurf failed: {e}")
+            traceback.print_exc()
