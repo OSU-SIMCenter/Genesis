@@ -1064,7 +1064,7 @@ class LegacyCoupler(RBC):
                 m_C = self.mpm_solver.grid[f, I, i_b].mass_thermal
                 if m_C > gs.EPS:
                     T_C = self.mpm_solver.grid[f, I, i_b].temp
-                    laplacian = qd.float(0.0)
+                    laplacian = gs.qd_float(0.0)
                     
                     I_left = I + qd.Vector([-1, 0, 0])
                     I_right = I + qd.Vector([1, 0, 0])

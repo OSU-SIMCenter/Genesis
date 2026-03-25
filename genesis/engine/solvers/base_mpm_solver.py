@@ -1097,6 +1097,36 @@ class BaseMPMSolver(Solver):
                     F[i_b_, i_p_, i, j] = self.particles[f, i_p, i_b].F[i, j]
 
     @qd.kernel
+    def _kernel_set_particles_temp(
+        self,
+        f: qd.i32,
+        particles_idx: qd.types.ndarray(),
+        envs_idx: qd.types.ndarray(),
+        temps: qd.types.ndarray(),  # shape [B, n_particles]
+    ):
+        if qd.static(self._enable_thermal):
+            for i_p_, i_b_ in qd.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
+                i_p = particles_idx[i_b_, i_p_]
+                i_b = envs_idx[i_b_]
+                self.particles[f, i_p, i_b].temp = temps[i_b_, i_p_]
+
+    @qd.kernel
+    def _kernel_get_particles_temp(
+        self,
+        f: qd.i32,
+        particle_start: qd.i32,
+        n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(),
+        temps: qd.types.ndarray(),
+    ):
+        if qd.static(self._enable_thermal):
+            for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+                i_p = i_p_ + particle_start
+                i_b = envs_idx[i_b_]
+                temps[i_b_, i_p_] = self.particles[f, i_p, i_b].temp
+
+
+    @qd.kernel
     def _kernel_set_particles_active(
         self,
         f: qd.i32,

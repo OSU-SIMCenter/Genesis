@@ -300,10 +300,16 @@ class SurfaceReconstructor:
             return contextlib.nullcontext()
         try:
           with profile_block("hybrid_get_particles"):
-            mpm_entity = self.env.mpm_entity
-            particles_pos = mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
-            particles_F = mpm_entity.get_particles_F(envs_idx=0).squeeze(0)
-            particles_active = mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
+            try:
+                mpm_entity = self.env.mpm_entity
+                particles_pos = mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+                particles_F = mpm_entity.get_particles_F(envs_idx=0).squeeze(0)
+                particles_active = mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
+            except Exception:
+                mpm_entity = self.env.mpm_entity
+                particles_pos = mpm_entity.get_particles_pos()
+                particles_F = mpm_entity.get_particles_F()
+                particles_active = mpm_entity.get_particles_active()
 
             n_particles = particles_pos.shape[0]
             if n_particles == 0:
