@@ -350,10 +350,11 @@ class SurfaceReconstructor:
             if required_cells > self.grid_res:
                 dx = max_extent / (self.grid_res - 1)
                 min_bound = np.floor(raw_min / dx) * dx
-                gs.logger.warning(
-                    f"Reconstruction: Particles exceed fixed grid ({required_cells} > {self.grid_res}), "
-                    f"adjusting dx={dx:.6f} (influence_r/dx={self.influence_radius / dx:.2f})"
-                )
+                # Suppress warning:
+                # gs.logger.warning(
+                #     f"Reconstruction: Particles exceed fixed grid ({required_cells} > {self.grid_res}), "
+                #     f"adjusting dx={dx:.6f} (influence_r/dx={self.influence_radius / dx:.2f})"
+                # )
 
             # Detect grid origin shift — reset temporal blending when grid jumps
             grid_origin = min_bound.copy()
