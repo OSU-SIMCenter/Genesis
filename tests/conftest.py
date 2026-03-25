@@ -213,17 +213,20 @@ def _torch_get_gpu_idx(device):
         return 0
 
     if sys.platform == "linux":
-        import torch
-
-        device_property = torch.cuda.get_device_properties(device)
-        device_uuid = str(device_property.uuid)
-
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
-            with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
-                device_info = f.read()
-            if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
-                return device_idx
+        if os.path.exists(nvidia_gpu_interface_path):
+            import torch
+
+            device_property = torch.cuda.get_device_properties(device)
+            device_uuid = str(device_property.uuid)
+
+            for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
+                with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
+                    device_info = f.read()
+                if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
+                    return device_idx
+        else:
+            return device
 
     return -1
 
