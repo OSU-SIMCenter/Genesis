@@ -30,10 +30,11 @@ class InductionHeater:
         self.static_verts = static_verts
         self.static_faces = static_faces
 
-    def step_heat(self, dt: float, surface_power: float, skin_depth: float):
+    def step_heat(self, dt: float, surface_power: float = 2000.0, skin_depth: float = 0.02, coil_center=None, coil_radius: float = 0.3):
         """
-        Apply a single step of radial induction heating using the SDF skin effect.
-        The formula applied is:
+        Inject heat into the particle domain using an induction profile.
+        Heat falls off exponentially proportional to depth inside the reconstructed surface.
+        If coil_center is provided (like [x,y,z]), heating is strictly masked to within coil_radius. applied is:
             delta_T = surface_power * exp(-depth / skin_depth) * dt
 
         Parameters
@@ -99,6 +100,19 @@ class InductionHeater:
 
         # 5. Compute heating delta
         delta_temp = surface_power * np.exp(-depth / skin_depth) * dt
+        
+        # 5b. Apply positional mask if coil bounds provided
+        if coil_center is not None:
+            c = np.array(coil_center, dtype=np.float64)
+            # Usually induction coils check radial distance on XZ plane, or full 3D depending on orientation.
+            # Assuming a standard 3D spherical/radial mask
+            dists = np.linalg.norm(pos_np - c, axis=1)
+            mask = dists <= coil_radius
+            delta_temp[~mask] = 0.0
+
+        # Debug logging
+        if delta_temp.max() > 0:
+            gs.logger.info(f"Induction Heating: max deltaT/step = {delta_temp.max():.4f} K")
 
         # 6. Push new heat state
         new_temp = current_temp + delta_temp

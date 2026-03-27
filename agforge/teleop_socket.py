@@ -28,23 +28,20 @@ FORCE_SCALE = 10.0  # Scale factor for client force/strain values (client sends 
 
 
 class InputMapper:
-    """
-    Maps client (Unity) coordinates to Genesis robot qpos.
-    """
-    def __init__(self, cylinder_height: float,
-                 genesis_billet_end: float = -0.0383,
-                 unity_base_offset: float = -0.59):
-        self.genesis_end = genesis_billet_end
-        self.genesis_start = genesis_billet_end + cylinder_height
-        self.unity_end = -0.14 
-        self.unity_start = 1.04 
-    
-    def map_client_to_qpos(self, translation: float, rotation: float):
-        x = translation
-        x1, y1 = self.unity_end, self.genesis_end
-        x2, y2 = self.unity_start, self.genesis_start
-        slider_qpos = y1 + (x - x1) * (y2 - y1) / (x2 - x1)
+    """Translates billet-local offsets (in physics meters) to Genesis robot qpos."""
+    def __init__(self, robot_cfg):
+        # Calculate exactly where the robot press touches the edge of the billet
+        billet_base_x = robot_cfg.cylinder_pos[0] - (robot_cfg.cylinder_height / 2.0)
+        hammer_half_width = robot_cfg.cylinder_radius * 0.5
         
+        # The slider's qpos exactly at contact is the billet's base minus the hammer's half-width
+        contact_qpos = billet_base_x - hammer_half_width
+        
+        self.genesis_end = contact_qpos
+        self.genesis_start = contact_qpos + robot_cfg.cylinder_height
+    
+    def map_client_to_qpos(self, physics_offset: float, rotation: float):
+        slider_qpos = self.genesis_end + physics_offset
         hinge_qpos = math.radians(rotation)
         return slider_qpos, hinge_qpos
 
@@ -106,12 +103,12 @@ async def simulation_loop(websocket, state: StrikeController):
                 # 2. Reconstruction & IO (always send when should_send is True)
                 # Note: state.env.scene.profiling_options is accessible
                 with state._profile("teleop_io"):
-                    vertices, triangles, particles, particles_temp = await state.update_and_get_recon_data()
+                    vertices, triangles, particles, vertices_temp = await state.update_and_get_recon_data()
                     
                     v_flat, v_count = _prepare_array(vertices, np.float32)
                     t_flat, t_count = _prepare_array(triangles, np.int32)
                     p_flat, p_count = _prepare_array(particles, np.float32)
-                    temp_flat, temp_count = _prepare_array(particles_temp, np.float32)
+                    temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
                     
                     header = {
                         "steps": [0],
@@ -191,8 +188,8 @@ async def handle_client(websocket, state: StrikeController, path=None):
     state.is_client_connected = True
     
     # Input mapper is specific to this socket interface
-    if not hasattr(state, 'input_mapper'):
-        state.input_mapper = InputMapper(cylinder_height=state.env.cfg.robot.cylinder_height)
+    # Instantiate mapper taking advantage of robot configuration
+    state.input_mapper = InputMapper(robot_cfg=state.env.cfg.robot)
 
     producer_task = asyncio.create_task(simulation_loop(websocket, state))
 
@@ -218,11 +215,13 @@ async def handle_client(websocket, state: StrikeController, path=None):
                         await state.set_qpos(qpos)
                         state.new_input_received = True
 
-                elif packet.get("request") == "heat":
-                    active = packet.get("active", False)
-                    power = packet.get("power", 2000.0)
-                    skin_depth = packet.get("skin_depth", 0.02)
-                    await state.set_heating(active, power, skin_depth)
+                elif packet.get("request") == "thermal_toggle":
+                    enabled = packet.get("enabled", False)
+                    power = packet.get("power_level", 3000.0)
+                    skin_depth = packet.get("skin_depth", 0.05)
+                    coil_pos = packet.get("coil_local_pos", [0.0, 0.0, 0.0])
+                    coil_radius = packet.get("coil_radius", 0.3)
+                    await state.set_thermal_state(enabled, power, skin_depth, coil_pos, coil_radius)
 
                 elif packet.get("request") == "strike":
                     if state.strike_state == StrikeState.IDLE:

@@ -76,8 +76,8 @@ class StrikeController:
         # Checkpointing
         self.checkpoints = []
         
-        # Transformation constants for Unity (visualization)
-        self._init_transforms()
+        # Transformation constants for Unity (visualization) - Deprecated
+        # self._init_transforms()
         
         # Optimization: Pre-allocated tensors
         self._vel_cmd = torch.zeros(4, device=self.env.device)
@@ -86,9 +86,11 @@ class StrikeController:
         self._force_next_apply = True
 
         # Thermal state logic
-        self.is_heating = False
+        self.thermal_enabled = False
         self.heating_power = 2000.0
         self.skin_depth = 0.02
+        self.coil_position = None
+        self.coil_radius = 0.3
         self.heater = None
 
         # Stability checking state
@@ -105,26 +107,25 @@ class StrikeController:
         self.gripper_closed_pos = xml_generator.gripper_slide_range[1]
         self.gripper_open_pos = xml_generator.gripper_slide_range[0]
 
-    def _init_transforms(self):
-        # Constants from teleop_socket.py
-        TRANSFORM_SCALE = 31.275
-        TRANSFORM_HEIGHT_FACTOR = 0.375
-        
-        self.unity_translation = -(self.env.cfg.robot.cylinder_pos + np.array([-TRANSFORM_HEIGHT_FACTOR * self.env.cfg.robot.cylinder_height, 0, 0]))
-        self.unity_scale = np.array((TRANSFORM_SCALE,) * 3)
-        self.unity_translation_tensor = torch.tensor(self.unity_translation, dtype=torch.float32, device=self.env.device).view(1, 3)
-        self.unity_scale_tensor = torch.tensor((TRANSFORM_SCALE,) * 3, dtype=torch.float32, device=self.env.device).view(1, 3)
 
-    async def set_heating(self, active: bool, power: float = 2000.0, skin_depth: float = 0.02):
-        """Toggles the induction heating state from clients."""
+    async def set_thermal_state(self, enabled: bool, power: float = 2000.0, skin_depth: float = 0.02, coil_local_pos=None, coil_radius: float = 0.3):
+        """Toggles induction heating. All coordinates are in raw physics meters."""
         async with self.lock:
-            self.is_heating = active
+            self.thermal_enabled = enabled
             self.heating_power = power
             self.skin_depth = skin_depth
-            if active:
-                gs.logger.info(f"Heating ACTIVATED (power={power}, skin_depth={skin_depth})")
+            
+            if coil_local_pos is not None:
+                self.coil_position = list(coil_local_pos)  # Already in physics meters
+                self.coil_radius = coil_radius              # Already in physics meters
             else:
-                gs.logger.info("Heating DEACTIVATED")
+                self.coil_position = None
+                self.coil_radius = 0.3
+                
+            if enabled:
+                gs.logger.info(f"Thermal ACTIVATED (power={power}, coil_pos={self.coil_position}, radius={self.coil_radius})")
+            else:
+                gs.logger.info("Thermal FROZEN")
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
@@ -457,8 +458,9 @@ class StrikeController:
         if hasattr(self.env.scene.sim.coupler, 'clear_link_coupling_forces'):
             self.env.scene.sim.coupler.clear_link_coupling_forces()
 
-        # 3b. Heat injection
-        if self.is_heating:
+        # 3b. Thermodynamics
+        frozen_temps_tensor = None
+        if self.thermal_enabled:
             with self._profile("teleop_heating"):
                 if self.heater is None:
                     from agforge.thermal import InductionHeater
@@ -467,7 +469,11 @@ class StrikeController:
                         entity=self.env.mpm_entity, 
                         reconstructor=self.reconstructor
                     )
-                self.heater.step_heat(self.env.scene.sim.dt, self.heating_power, self.skin_depth)
+                self.heater.step_heat(self.env.scene.sim.dt, self.heating_power, self.skin_depth, self.coil_position, self.coil_radius)
+        else:
+            # Thermal Freezing: Disable natural diffusion by snapshotting temperatures before physics step
+            if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
+                frozen_temps_tensor = self.env.mpm_entity.get_particles_temp().clone()
 
         # 4. Physics Step
         physics_failed = False
@@ -477,6 +483,10 @@ class StrikeController:
             except Exception as e:
                 gs.logger.error(f"Physics step failed: {e}")
                 physics_failed = True
+
+        # Restore frozen temperatures to halt diffusion if thermal_enabled == False
+        if not self.thermal_enabled and frozen_temps_tensor is not None and not physics_failed:
+            self.env.mpm_entity.set_particles_temp(frozen_temps_tensor)
 
         self._physics_step_counter += 1
 
@@ -584,27 +594,44 @@ class StrikeController:
                 vertices = self._apply_transformation(vertices_raw)
             
             triangles = self.reconstructor.reconstructed_mesh.faces.copy()
-            triangles[:, [1, 2]] = triangles[:, [2, 1]]
+            # Winding reversal is now handled by Unity after axis conversion
             
-            # Extract thermal data
+            # Extract and spatial-interpolate thermal data to vertices
             if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
                 particles_temp = self.env.scene.sim.mpm_solver.particles.temp.to_numpy()[0, :, 0]
+                
+                import scipy.spatial
+                parts_np = particles.cpu().numpy().squeeze()
+                if isinstance(vertices_raw, torch.Tensor):
+                    verts_np = vertices_raw.cpu().numpy()
+                else:
+                    verts_np = vertices_raw
+                    
+                # Guard against degenerate mesh/particles
+                if parts_np.shape[0] >= 3 and verts_np.shape[0] > 0:
+                    tree = scipy.spatial.cKDTree(parts_np)
+                    dists, indices = tree.query(verts_np, k=3)
+                    
+                    # Inverse distance weighting
+                    dists = np.maximum(dists, 1e-6)  # Avoid div by zero
+                    weights = 1.0 / dists
+                    weight_sums = weights.sum(axis=1)
+                    neighbor_temps = particles_temp[indices]
+                    
+                    vertices_temp = (neighbor_temps * weights).sum(axis=1) / weight_sums
+                    vertices_temp = vertices_temp.astype(np.float32)
+                else:
+                    vertices_temp = np.zeros(verts_np.shape[0], dtype=np.float32)
             else:
-                particles_temp = np.zeros(points.shape[0], dtype=np.float32)
+                vertices_temp = np.zeros(vertices_raw.shape[0] if hasattr(vertices_raw, 'shape') else 0, dtype=np.float32)
             
-            return vertices, triangles, points, particles_temp
+            return vertices, triangles, points, vertices_temp
 
     def _apply_transformation(self, points):
-        """Transform points to Unity space."""
+        """Return raw physics-space coordinates. Unity handles all visual transforms."""
         if isinstance(points, torch.Tensor):
-            points = points + self.unity_translation_tensor
-            points = points * self.unity_scale_tensor
-            points[:, 0] *= -1 
-        else: 
-            points = points + self.unity_translation.reshape(1, 3)
-            points = points * self.unity_scale.reshape(1, 3)
-            points[:, 0] *= -1
-        return points
+            return points.clone()
+        return points.copy()
 
     def _save_checkpoint_impl(self):
         # Genesis SimState
@@ -620,9 +647,11 @@ class StrikeController:
             'strike_state': self.strike_state,
             'qpos': self.qpos.clone(),
             'recon_state': self.reconstructor.get_state(),
-            'is_heating': self.is_heating,
+            'thermal_enabled': self.thermal_enabled,
             'heating_power': self.heating_power,
-            'skin_depth': self.skin_depth
+            'skin_depth': self.skin_depth,
+            'coil_position': self.coil_position,
+            'coil_radius': self.coil_radius
         }
         self.checkpoints.append(ckpt)
         if len(self.checkpoints) > MAX_CHECKPOINTS:
@@ -673,9 +702,11 @@ class StrikeController:
                 self.reconstructor.reset()
                 self.reconstructor.create_reconstructed_mesh()
                 
-            self.is_heating = ckpt.get('is_heating', False)
+            self.thermal_enabled = ckpt.get('thermal_enabled', False)
             self.heating_power = ckpt.get('heating_power', 2000.0)
             self.skin_depth = ckpt.get('skin_depth', 0.02)
+            self.coil_position = ckpt.get('coil_position', None)
+            self.coil_radius = ckpt.get('coil_radius', 0.3)
 
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
