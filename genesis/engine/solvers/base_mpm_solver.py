@@ -282,7 +282,7 @@ class BaseMPMSolver(Solver):
                     "calculated based on `grid_density`). Simulation might be unstable."
                 )
                 
-            if self._enable_thermal:
+            if self._enable_thermal and self._alpha_thermal > 0:
                 dt_cfl = self._dx ** 2 / (6.0 * self._alpha_thermal)
                 if self.substep_dt > dt_cfl:
                     gs.logger.warning(
@@ -721,6 +721,7 @@ class BaseMPMSolver(Solver):
             self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
             if qd.static(self._enable_thermal):
                 self.grid[f, i, j, k, i_b].temp = gs.qd_float(0.0)
+                self.grid[f, i, j, k, i_b].temp_diffused = gs.qd_float(0.0)
                 self.grid[f, i, j, k, i_b].mass_thermal = gs.qd_float(0.0)
 
             self.grid.grad[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
