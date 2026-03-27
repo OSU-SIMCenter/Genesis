@@ -6,11 +6,17 @@ from agforge.thermal import InductionHeater
 def main():
     gs.init(backend=gs.gpu)
 
+    # CFL note: For E=2e8, rho=8000 → wave speed c = √(E/ρ) ≈ 158 m/s.
+    # With grid_density=64, dx ≈ 0.0156 m → CFL limit: sub_dt < dx/c ≈ 9.9e-5 s.
+    # Using dt=2e-3, substeps=32 → sub_dt = 6.25e-5 s (safety factor ~0.63). ✓
+    dt = 2e-3
+    substeps = 32
+
     scene = gs.Scene(
         show_viewer=True,
         sim_options=gs.options.SimOptions(
-            dt=2e-3, 
-            substeps=10
+            dt=dt,
+            substeps=substeps,
         ),
         viewer_options=gs.options.ViewerOptions(
             res=(1280, 960),
@@ -53,14 +59,14 @@ def main():
             self.mpm_entity = mpm_entity
             if not hasattr(self.scene, 'profiling_options'):
                 self.scene.profiling_options = None
-                
+
     mock_env = MockEnv(scene, billet)
 
     print("Setting up Induction Heater...")
     # 1. We create the surface reconstructor explicitly
     reconstructor = SurfaceReconstructor(
         env=mock_env,
-        grid_res=64, # matches default
+        grid_res=64,
         backend="hybrid",
     )
 
@@ -68,27 +74,26 @@ def main():
     heater = InductionHeater(
         solver=scene.sim.mpm_solver,
         entity=billet,
-        reconstructor=reconstructor
+        reconstructor=reconstructor,
     )
 
     # Run the induction heating loop
     print("Beginning 1.0 second of induction heating...")
-    dt = scene.sim.dt
     heating_duration = 1.0
-    power = 2000.0 # Kelvin/sec at surface
-    skin_depth = 0.02 # 2cm skin depth
+    power = 2000.0       # Kelvin/sec at surface
+    skin_depth = 0.02    # 2cm skin depth
 
     # Simulation loop
     for i in range(int(heating_duration / dt)):
         # Calculate new surface mesh (only costs 10-15ms!)
         reconstructor.create_reconstructed_mesh()
-        
+
         # Apply heat
         heater.step_heat(dt, power, skin_depth)
-        
+
         # Step physics
         scene.step()
-        
+
         if i % 50 == 0:
             temps = billet.get_particles_temp().cpu().numpy().squeeze()
             print(f"Frame {i:3d}: Max Temp = {np.max(temps):.1f} K, Min Temp = {np.min(temps):.1f} K")
@@ -96,7 +101,7 @@ def main():
     print("\nHeating complete. Allowing thermal diffusion to settle for 2.0 seconds...")
     for i in range(int(2.0 / dt)):
         scene.step()
-        
+
         if i % 50 == 0:
             temps = billet.get_particles_temp().cpu().numpy().squeeze()
             print(f"Diffusion {i:3d}: Max Temp = {np.max(temps):.1f} K, Min Temp = {np.min(temps):.1f} K")
