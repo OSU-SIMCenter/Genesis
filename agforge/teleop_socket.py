@@ -106,11 +106,12 @@ async def simulation_loop(websocket, state: StrikeController):
                 # 2. Reconstruction & IO (always send when should_send is True)
                 # Note: state.env.scene.profiling_options is accessible
                 with state._profile("teleop_io"):
-                    vertices, triangles, particles = await state.update_and_get_recon_data()
+                    vertices, triangles, particles, particles_temp = await state.update_and_get_recon_data()
                     
                     v_flat, v_count = _prepare_array(vertices, np.float32)
                     t_flat, t_count = _prepare_array(triangles, np.int32)
                     p_flat, p_count = _prepare_array(particles, np.float32)
+                    temp_flat, temp_count = _prepare_array(particles_temp, np.float32)
                     
                     header = {
                         "steps": [0],
@@ -120,11 +121,12 @@ async def simulation_loop(websocket, state: StrikeController):
                         "counts": {
                             "vertices": v_count,
                             "faces": t_count,
-                            "particles": p_count
+                            "particles": p_count,
+                            "temperatures": temp_count
                         }
                     }
                     header_json = json.dumps(header).encode('utf-8')
-                    binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes()
+                    binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes() + temp_flat.tobytes()
                     message = struct.pack('<I', len(header_json)) + header_json + binary_body
                     
                     await websocket.send(message)
@@ -215,6 +217,12 @@ async def handle_client(websocket, state: StrikeController, path=None):
                         qpos[0, 1] = hinge_qpos
                         await state.set_qpos(qpos)
                         state.new_input_received = True
+
+                elif packet.get("request") == "heat":
+                    active = packet.get("active", False)
+                    power = packet.get("power", 2000.0)
+                    skin_depth = packet.get("skin_depth", 0.02)
+                    await state.set_heating(active, power, skin_depth)
 
                 elif packet.get("request") == "strike":
                     if state.strike_state == StrikeState.IDLE:

@@ -85,6 +85,12 @@ class StrikeController:
         self._dofs_idx_local = torch.tensor([0, 1, 2, 3], device=self.env.device)
         self._force_next_apply = True
 
+        # Thermal state logic
+        self.is_heating = False
+        self.heating_power = 2000.0
+        self.skin_depth = 0.02
+        self.heater = None
+
         # Stability checking state
         self._physics_step_counter = 0
         self._stability_grace_steps = 0  # Suppress checks after undo/reset to let state settle
@@ -108,6 +114,17 @@ class StrikeController:
         self.unity_scale = np.array((TRANSFORM_SCALE,) * 3)
         self.unity_translation_tensor = torch.tensor(self.unity_translation, dtype=torch.float32, device=self.env.device).view(1, 3)
         self.unity_scale_tensor = torch.tensor((TRANSFORM_SCALE,) * 3, dtype=torch.float32, device=self.env.device).view(1, 3)
+
+    async def set_heating(self, active: bool, power: float = 2000.0, skin_depth: float = 0.02):
+        """Toggles the induction heating state from clients."""
+        async with self.lock:
+            self.is_heating = active
+            self.heating_power = power
+            self.skin_depth = skin_depth
+            if active:
+                gs.logger.info(f"Heating ACTIVATED (power={power}, skin_depth={skin_depth})")
+            else:
+                gs.logger.info("Heating DEACTIVATED")
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
@@ -440,6 +457,18 @@ class StrikeController:
         if hasattr(self.env.scene.sim.coupler, 'clear_link_coupling_forces'):
             self.env.scene.sim.coupler.clear_link_coupling_forces()
 
+        # 3b. Heat injection
+        if self.is_heating:
+            with self._profile("teleop_heating"):
+                if self.heater is None:
+                    from agforge.thermal import InductionHeater
+                    self.heater = InductionHeater(
+                        solver=self.env.scene.sim.mpm_solver, 
+                        entity=self.env.mpm_entity, 
+                        reconstructor=self.reconstructor
+                    )
+                self.heater.step_heat(self.env.scene.sim.dt, self.heating_power, self.skin_depth)
+
         # 4. Physics Step
         physics_failed = False
         with self._profile("teleop_physics"):
@@ -557,7 +586,13 @@ class StrikeController:
             triangles = self.reconstructor.reconstructed_mesh.faces.copy()
             triangles[:, [1, 2]] = triangles[:, [2, 1]]
             
-            return vertices, triangles, points
+            # Extract thermal data
+            if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
+                particles_temp = self.env.scene.sim.mpm_solver.particles.temp.to_numpy()[0, :, 0]
+            else:
+                particles_temp = np.zeros(points.shape[0], dtype=np.float32)
+            
+            return vertices, triangles, points, particles_temp
 
     def _apply_transformation(self, points):
         """Transform points to Unity space."""
@@ -584,7 +619,10 @@ class StrikeController:
             'sim_state': sim_state,
             'strike_state': self.strike_state,
             'qpos': self.qpos.clone(),
-            'recon_state': self.reconstructor.get_state()
+            'recon_state': self.reconstructor.get_state(),
+            'is_heating': self.is_heating,
+            'heating_power': self.heating_power,
+            'skin_depth': self.skin_depth
         }
         self.checkpoints.append(ckpt)
         if len(self.checkpoints) > MAX_CHECKPOINTS:
@@ -634,6 +672,10 @@ class StrikeController:
             else:
                 self.reconstructor.reset()
                 self.reconstructor.create_reconstructed_mesh()
+                
+            self.is_heating = ckpt.get('is_heating', False)
+            self.heating_power = ckpt.get('heating_power', 2000.0)
+            self.skin_depth = ckpt.get('skin_depth', 0.02)
 
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
