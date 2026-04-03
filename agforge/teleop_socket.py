@@ -29,20 +29,17 @@ FORCE_SCALE = 10.0  # Scale factor for client force/strain values (client sends 
 
 class InputMapper:
     """Translates billet-local offsets (in physics meters) to Genesis robot qpos."""
-    def __init__(self, robot_cfg):
-        # Calculate exactly where the robot press touches the edge of the billet
-        billet_base_x = robot_cfg.cylinder_pos[0] - (robot_cfg.cylinder_height / 2.0)
-        hammer_half_width = robot_cfg.cylinder_radius * 0.5
-        
-        # The slider's qpos exactly at contact is the billet's base minus the hammer's half-width
-        contact_qpos = billet_base_x - hammer_half_width
-        
-        self.genesis_end = contact_qpos
-        self.genesis_start = contact_qpos + robot_cfg.cylinder_height
+    def __init__(self):
+        self.billet_base_x = None  # Populated dynamically by the first mesh generation
     
     def map_client_to_qpos(self, physics_offset: float, rotation: float):
-        slider_qpos = self.genesis_end + physics_offset
-        hinge_qpos = math.radians(rotation)
+        if self.billet_base_x is None:
+            gs.logger.warning("Attempted to map inputs before dynamic mesh bounds were captured!")
+            return 0.0, 0.0
+            
+        # Moving in a positive translation from Unity directly translates down the billet
+        slider_qpos = self.billet_base_x + physics_offset
+        hinge_qpos = math.radians(-rotation)  # hinge rotation = -billet rotation
         return slider_qpos, hinge_qpos
 
 
@@ -106,6 +103,15 @@ async def simulation_loop(websocket, state: StrikeController):
                     vertices, triangles, particles, vertices_temp = await state.update_and_get_recon_data()
                     
                     v_flat, v_count = _prepare_array(vertices, np.float32)
+                    
+                    # 3. ONCE-AT-START: Dynamically lock the base coordinate once the mesh is built
+                    # We grab exactly maximum-X from the true Marching Cubes vertices array,
+                    # because maxX is the real physical fixed end in Genesis!
+                    if getattr(state, "input_mapper", None) and state.input_mapper.billet_base_x is None:
+                        if v_count > 0:
+                            state.input_mapper.billet_base_x = float(np.max(v_flat[0::3]))
+                            gs.logger.info(f"Locked dynamic physics mesh bounds (maxX): {state.input_mapper.billet_base_x}")
+                            
                     t_flat, t_count = _prepare_array(triangles, np.int32)
                     p_flat, p_count = _prepare_array(particles, np.float32)
                     temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
@@ -188,8 +194,7 @@ async def handle_client(websocket, state: StrikeController, path=None):
     state.is_client_connected = True
     
     # Input mapper is specific to this socket interface
-    # Instantiate mapper taking advantage of robot configuration
-    state.input_mapper = InputMapper(robot_cfg=state.env.cfg.robot)
+    state.input_mapper = InputMapper()
 
     producer_task = asyncio.create_task(simulation_loop(websocket, state))
 
@@ -233,6 +238,10 @@ async def handle_client(websocket, state: StrikeController, path=None):
                          qpos[0, 0] = slider_qpos
                          qpos[0, 1] = hinge_qpos
                          await state.set_qpos(qpos)
+                         
+                         # Force the robot to this exact position NOW before the state
+                         # transitions to APPROACHING (which skips the normal apply_action path)
+                         state.robot.apply_action(qpos)
 
                          # PROCEED WITH STRIKE
                          raw_force = packet.get("force", 0.05)  # Default 0.05 -> 0.5 strain after scaling
