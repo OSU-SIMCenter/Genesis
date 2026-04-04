@@ -96,6 +96,11 @@ class RobotOptions(Options):
     time_unit_str: str = "rtu"
     robot_time_to_seconds: float = 1.
 
+    # Induction Coil physical placeholders (Unity Sync)
+    coil_offset_x: float = -0.129891413331031800
+    coil_length: float = 0.037
+    coil_radius: float = 0.04
+
     # Declare fields for pydantic — Optional because they are computed in model_post_init
     cylinder_diameter: Optional[float] = None
     cylinder_radius: Optional[float] = None
@@ -221,6 +226,9 @@ class AgilityForgeOptions(Options):
             lower_bound=self.robot.mpm_lower_bound,
             upper_bound=self.robot.mpm_upper_bound,
             enable_CPIC=True,  # Improved rigid-MPM contact accuracy
+            enable_thermal=True,
+            default_initial_temperature=293.0,
+            thermal_time_scale=1000.0,  # Fast-forward thermal processes (cooling/diffusion) by 1000x
         )
         self.env = EnvOptions(
             num_envs=1,
@@ -313,6 +321,10 @@ class TeleopOptions(AgilityForgeOptions):
     adaptive_control: AdaptiveControlConfig = AdaptiveControlConfig()
     safety: SafetyOptions = SafetyOptions()
     print_profiling_on_exit: bool = True  # Print profiler visualizations on shutdown
+    
+    # Induction Heater physical configurations
+    heating_power: float = 2000.0
+    skin_depth: float = 0.02
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002

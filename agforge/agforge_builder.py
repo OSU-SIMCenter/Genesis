@@ -24,6 +24,11 @@ class RobotXMLGenerator:
             robot_cfg.cylinder_radius * 0.4,  # Y-dimension (width/thickness)
             robot_cfg.cylinder_radius * 1.2,  # Z-dimension (depth)
         ])
+
+        # Induction coil visualizer metrics
+        self.coil_offset_x = robot_cfg.coil_offset_x
+        self.coil_length = robot_cfg.coil_length
+        self.coil_radius = robot_cfg.coil_radius
         
         # Gripper movement is defined to open and close around the cylinder
         gripper_closed_y = robot_cfg.cylinder_radius - (self.gripper_size[1] * 0.5)
@@ -33,10 +38,11 @@ class RobotXMLGenerator:
         self.gripper_start_pos_y = gripper_open_y
         self.gripper_slide_range = np.array([0, slide_distance])
         
-        # The main slider's range covers the length of the cylinder with padding
+        # The main slider's range covers the length of the cylinder with massive padding
+        # to ensure the offset induction coil can travel fully over the metal billet
         self.slider_range = np.array([
-            robot_cfg.cylinder_pos[0] - robot_cfg.cylinder_height * 0.75,
-            robot_cfg.cylinder_pos[0] + robot_cfg.cylinder_height * 0.75
+            robot_cfg.cylinder_pos[0] - robot_cfg.cylinder_height * 2.0 - abs(self.coil_offset_x),
+            robot_cfg.cylinder_pos[0] + robot_cfg.cylinder_height * 2.0 + abs(self.coil_offset_x)
         ])
         
         # The hinge is positioned vertically centered with the cylinder
@@ -61,6 +67,9 @@ class RobotXMLGenerator:
     <body name="base_plate" pos="0 0 0">
       <joint name="x_slider" type="slide" axis="1 0 0" range="{self._to_str(self.slider_range)}"/>
       <inertial pos="0 0 0" mass="1e-7" diaginertia="1e-7 1e-7 1e-7"/>
+
+      <!-- Translucent Induction Coil visualizer linked safely to the slider arm without physics collision -->
+      <geom type="cylinder" size="{self.coil_radius:.4f} {self.coil_length/2.0:.4f}" pos="{self.coil_offset_x:.4f} 0 {self.hinge_pos_z:.4f}" euler="0 90 0" rgba="1 0.5 0.0 0.4" contype="0" conaffinity="0"/>
 
       <body name="hinge_cylinder" pos="0 0 {self.hinge_pos_z:.4f}">
         <joint name="x_hinge" type="hinge" axis="1 0 0"/>

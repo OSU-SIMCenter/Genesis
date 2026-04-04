@@ -87,11 +87,22 @@ class StrikeController:
 
         # Thermal state logic
         self.thermal_enabled = False
-        self.heating_power = 2000.0
-        self.skin_depth = 0.02
-        self.coil_position = None
-        self.coil_radius = 0.3
+        self.heating_power = self.env.cfg.heating_power
+        self.skin_depth = self.env.cfg.skin_depth
         self.heater = None
+
+        # Initialize billet to physical room temperature (293.0 K)
+        try:
+            if hasattr(self.env, 'mpm_entity') and hasattr(self.env.mpm_entity, 'get_particles_temp'):
+                current_temps = self.env.mpm_entity.get_particles_temp()
+                if current_temps is not None:
+                    base_temps = torch.ones_like(current_temps) * 293.0
+                    self.env.mpm_entity.set_particles_temp(base_temps)
+                    import quadrants as qd
+                    qd.sync()
+                    gs.logger.info("Initialized billet thermal baseline to 293.0 K")
+        except Exception as e:
+            gs.logger.warning(f"Could not initialize base temperatures: {e}")
 
         # Stability checking state
         self._physics_step_counter = 0
@@ -108,22 +119,13 @@ class StrikeController:
         self.gripper_open_pos = xml_generator.gripper_slide_range[0]
 
 
-    async def set_thermal_state(self, enabled: bool, power: float = 2000.0, skin_depth: float = 0.02, coil_local_pos=None, coil_radius: float = 0.3):
-        """Toggles induction heating. All coordinates are in raw physics meters."""
+    async def set_thermal_state(self, enabled: bool):
+        """Toggles induction heating."""
         async with self.lock:
             self.thermal_enabled = enabled
-            self.heating_power = power
-            self.skin_depth = skin_depth
-            
-            if coil_local_pos is not None:
-                self.coil_position = list(coil_local_pos)  # Already in physics meters
-                self.coil_radius = coil_radius              # Already in physics meters
-            else:
-                self.coil_position = None
-                self.coil_radius = 0.3
                 
             if enabled:
-                gs.logger.info(f"Thermal ACTIVATED (power={power}, coil_pos={self.coil_position}, radius={self.coil_radius})")
+                gs.logger.info(f"Thermal ACTIVATED (power={self.heating_power}W)")
             else:
                 gs.logger.info("Thermal FROZEN")
 
@@ -460,6 +462,9 @@ class StrikeController:
 
         # 3b. Thermodynamics
         frozen_temps_tensor = None
+        _temps_before_heating = None
+        _temps_after_heating = None
+        _is_striking = self.strike_state not in (StrikeState.IDLE, StrikeState.HOLDING)
         if self.thermal_enabled:
             with self._profile("teleop_heating"):
                 if self.heater is None:
@@ -469,7 +474,32 @@ class StrikeController:
                         entity=self.env.mpm_entity, 
                         reconstructor=self.reconstructor
                     )
-                self.heater.step_heat(self.env.scene.sim.dt, self.heating_power, self.skin_depth, self.coil_position, self.coil_radius)
+                
+                if not _is_striking:
+                    # Only do induction heating + snapshots when NOT in a strike
+                    # (avoids 2 extra GPU syncs that serialize the pipeline during fast strike loops)
+                    _temps_before_heating = self.env.mpm_entity.get_particles_temp().clone()
+                    
+                    # Ride the sidecar! Calculate absolute physics position dynamically from the sliding arm
+                    current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else 0.0
+                    dynamic_coil_x = current_slider_x + self.env.cfg.robot.coil_offset_x
+                    
+                    # Hardcode Y to 0 and Z to the cylinder's world center
+                    coil_center = [dynamic_coil_x, 0.0, self.env.cfg.robot.cylinder_pos[2]]
+                    
+                    self.heater.step_heat(
+                        self.env.scene.sim.dt, 
+                        self.heating_power, 
+                        self.skin_depth, 
+                        coil_center, 
+                        self.env.cfg.robot.coil_length / 2.0
+                    )
+                    
+                    # Snapshot after induction heating (before engine physics)
+                    _temps_after_heating = self.env.mpm_entity.get_particles_temp().clone()
+                else:
+                    # During strikes: just snapshot pre-physics temps (1 GPU sync instead of 3)
+                    _temps_after_heating = self.env.mpm_entity.get_particles_temp().clone()
         else:
             # Thermal Freezing: Disable natural diffusion by snapshotting temperatures before physics step
             if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
@@ -489,6 +519,100 @@ class StrikeController:
             self.env.mpm_entity.set_particles_temp(frozen_temps_tensor)
 
         self._physics_step_counter += 1
+        
+        # --- Thermal Telemetry ---
+        # During strikes: log every 3rd frame to reduce GPU sync overhead
+        # During idle/heating: log every frame for full fidelity
+        _telemetry_interval = 3 if _is_striking else 1
+        if self.thermal_enabled and self._physics_step_counter % _telemetry_interval == 0:
+            try:
+                temps_after_physics = self.env.mpm_entity.get_particles_temp()
+                t = temps_after_physics.float()
+                
+                # Temperature distribution
+                avg_t = t.mean().item()
+                min_t = t.min().item()
+                max_t = t.max().item()
+                std_t = t.std().item()
+                
+                # Total thermal energy: E = Σ(m_real * Cp * T)
+                particle_mass_scaled = self.env.scene.sim.mpm_solver.particles_info[0].mass
+                particle_mass = particle_mass_scaled / self.env.scene.sim.mpm_solver._particle_volume_scale
+                Cp = self.env.scene.sim.mpm_solver._default_heat_capacity
+                n_particles = t.numel()
+                total_energy_kJ = (particle_mass * Cp * t.sum().item()) / 1000.0
+                
+                # Induction contribution (how much did the heater add?)
+                induction_avg_dT = 0.0
+                induction_max_dT = 0.0
+                induction_energy_W = 0.0
+                n_heated = 0
+                if _temps_before_heating is not None and _temps_after_heating is not None:
+                    dT_induction = (_temps_after_heating - _temps_before_heating).float()
+                    induction_avg_dT = dT_induction.mean().item()
+                    induction_max_dT = dT_induction.max().item()
+                    n_heated = int((dT_induction.abs() > 1e-6).sum().item())
+                    # Energy injected this step: ΔE = Σ(m * Cp * dT)
+                    induction_energy_J = particle_mass * Cp * dT_induction.sum().item()
+                    induction_energy_W = induction_energy_J / self.env.scene.sim.dt  # Watts
+                
+                # Engine contribution (cooling + diffusion + adiabatic combined)
+                engine_min_dT = 0.0
+                engine_max_dT = 0.0
+                n_cooling = 0
+                n_heating = 0
+                cooling_avg = 0.0
+                heating_avg = 0.0
+                cooling_energy_W = 0.0
+                heating_energy_W = 0.0
+                if _temps_after_heating is not None:
+                    dT_engine = (temps_after_physics - _temps_after_heating).float()
+                    engine_min_dT = dT_engine.min().item()  # most negative = strongest cooling
+                    engine_max_dT = dT_engine.max().item()  # most positive = strongest adiabatic heating
+                    
+                    # Breakdown: particles being cooled vs heated by engine
+                    cooling_mask = dT_engine < -1e-8
+                    heating_mask = dT_engine > 1e-8
+                    n_cooling = int(cooling_mask.sum().item())
+                    n_heating = int(heating_mask.sum().item())
+                    if n_cooling > 0:
+                        cooling_avg = dT_engine[cooling_mask].mean().item()
+                        cooling_energy_J = particle_mass * Cp * dT_engine[cooling_mask].sum().item()
+                        cooling_energy_W = cooling_energy_J / self.env.scene.sim.dt
+                    if n_heating > 0:
+                        heating_avg = dT_engine[heating_mask].mean().item()
+                        heating_energy_J = particle_mass * Cp * dT_engine[heating_mask].sum().item()
+                        heating_energy_W = heating_energy_J / self.env.scene.sim.dt
+                
+                # Label mechanisms based on context:
+                # During strikes: cooling ≈ contact (h_contact=5000 >> h_air=50), heating = adiabatic
+                # During idle: cooling = air (no rigid body contact), heating ≈ 0
+                cool_label = "contact" if _is_striking else "air"
+                heat_label = "adiabatic"
+                
+                # Build log line
+                log_parts = [
+                    f"♨️ THERMAL │ "
+                    f"Avg: {avg_t:.1f}K  Min: {min_t:.1f}K  Max: {max_t:.1f}K  σ: {std_t:.2f}K │ "
+                    f"E_total: {total_energy_kJ:.1f}kJ"
+                ]
+                
+                if not _is_striking:
+                    # Full induction detail when not striking
+                    log_parts.append(
+                        f" │ Induction: avg +{induction_avg_dT:.4f}K  max +{induction_max_dT:.4f}K  "
+                        f"({n_heated}/{n_particles} particles, {induction_energy_W:.1f}W)"
+                    )
+                
+                # Engine breakdown: cooling vs heating with energy in Watts
+                log_parts.append(
+                    f" │ {cool_label}({n_cooling}p): avg {cooling_avg:+.4f}K  peak {engine_min_dT:+.4f}K  {cooling_energy_W:.0f}W"
+                    f" │ {heat_label}({n_heating}p): avg {heating_avg:+.4f}K  peak {engine_max_dT:+.4f}K  {heating_energy_W:.0f}W"
+                )
+                
+                gs.logger.info("".join(log_parts))
+            except Exception as e:
+                gs.logger.warning(f"Thermal telemetry failed: {e}")
 
         # 4b. Stability Check (separate from physics for accurate profiling)
         # - Always fires on physics exceptions (regardless of grace period)
@@ -601,7 +725,7 @@ class StrikeController:
                 particles_temp = self.env.scene.sim.mpm_solver.particles.temp.to_numpy()[0, :, 0]
                 
                 import scipy.spatial
-                parts_np = particles.cpu().numpy().squeeze()
+                parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
                 if isinstance(vertices_raw, torch.Tensor):
                     verts_np = vertices_raw.cpu().numpy()
                 else:
@@ -649,9 +773,7 @@ class StrikeController:
             'recon_state': self.reconstructor.get_state(),
             'thermal_enabled': self.thermal_enabled,
             'heating_power': self.heating_power,
-            'skin_depth': self.skin_depth,
-            'coil_position': self.coil_position,
-            'coil_radius': self.coil_radius
+            'skin_depth': self.skin_depth
         }
         self.checkpoints.append(ckpt)
         if len(self.checkpoints) > MAX_CHECKPOINTS:
@@ -705,8 +827,6 @@ class StrikeController:
             self.thermal_enabled = ckpt.get('thermal_enabled', False)
             self.heating_power = ckpt.get('heating_power', 2000.0)
             self.skin_depth = ckpt.get('skin_depth', 0.02)
-            self.coil_position = ckpt.get('coil_position', None)
-            self.coil_radius = ckpt.get('coil_radius', 0.3)
 
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
@@ -761,6 +881,17 @@ class StrikeController:
                 
             self.env.reset()
             
+            # Re-initialize room temperature (reset wipes custom states)
+            try:
+                if hasattr(self.env, 'mpm_entity') and hasattr(self.env.mpm_entity, 'get_particles_temp'):
+                    current_temps = self.env.mpm_entity.get_particles_temp()
+                    if current_temps is not None:
+                        base_temps = torch.ones_like(current_temps) * 293.0
+                        self.env.mpm_entity.set_particles_temp(base_temps)
+                        gs.logger.info(f"Initialized room temp: {base_temps.shape}, mean: {base_temps.mean().item()} K")
+            except Exception as e:
+                gs.logger.error(f"Failed to set room temperature: {e}")
+
             import quadrants as qd
             qd.sync()
             if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
