@@ -461,8 +461,10 @@ class LegacyCoupler(RBC):
                         
                         if is_surface == 1:
                             h_air = self.mpm_solver._h_air
-                            # k = h * A / (M * Cp) -> approx A = dx^2 for a cell face
-                            k_air = (h_air * (self.mpm_solver.dx ** 2)) / (self.mpm_solver.grid[f, I, i_b].mass_thermal * self.mpm_solver._default_heat_capacity)
+                            # k = h * A / (M_real * Cp) -> approx A = dx^2 for a cell face
+                            # N.B. mass_thermal is inflated by _particle_volume_scale; divide it out for real physics
+                            mass_thermal_real = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
+                            k_air = (h_air * (self.mpm_solver.dx ** 2)) / (mass_thermal_real * self.mpm_solver._default_heat_capacity)
                             decay_air = qd.math.exp(-k_air * self.mpm_solver.substep_dt)
                             T_air = 293.15 # Room temp
                             self.mpm_solver.grid[f, I, i_b].temp = T_air + (self.mpm_solver.grid[f, I, i_b].temp - T_air) * decay_air
@@ -483,7 +485,8 @@ class LegacyCoupler(RBC):
                                     # If within 1 grid cell of the surface, apply contact cooling (overrides air)
                                     if signed_dist < self.mpm_solver.dx:
                                         h_contact = self.mpm_solver._h_contact
-                                        k_contact = (h_contact * (self.mpm_solver.dx ** 2)) / (self.mpm_solver.grid[f, I, i_b].mass_thermal * self.mpm_solver._default_heat_capacity)
+                                        mass_thermal_real_c = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
+                                        k_contact = (h_contact * (self.mpm_solver.dx ** 2)) / (mass_thermal_real_c * self.mpm_solver._default_heat_capacity)
                                         decay_contact = qd.math.exp(-k_contact * self.mpm_solver.substep_dt)
                                         T_rigid = 293.15 # Rigid bodies are assumed infinite heat sinks
                                         self.mpm_solver.grid[f, I, i_b].temp = T_rigid + (self.mpm_solver.grid[f, I, i_b].temp - T_rigid) * decay_contact
@@ -1109,6 +1112,10 @@ class LegacyCoupler(RBC):
                     
                     T_new = T_C + alpha * dt / (dx * dx) * laplacian
                     self.mpm_solver.grid[f, I, i_b].temp_diffused = T_new
+                else:
+                    # Empty cells must have ambient temp so surface particles don't read 0K via G2P.
+                    # Without this, the B-spline stencil bleeds zeroed memory into surface particles.
+                    self.mpm_solver.grid[f, I, i_b].temp_diffused = gs.qd_float(293.15)
 
     def couple(self, f):
         # MPM <-> all others

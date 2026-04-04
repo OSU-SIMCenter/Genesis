@@ -77,11 +77,12 @@ async def simulation_loop(websocket, state: StrikeController):
             
             # Helper dynamic attribute for manual inputs (socket only)
             has_input = getattr(state, 'new_input_received', False)
+            is_heating = getattr(state, 'thermal_enabled', False)
             
             # Check if we need to send mesh data (e.g., after undo/reset)
             pending_send = getattr(state, 'pending_mesh_send', False)
             
-            should_step = is_active or needs_stabilization or has_input
+            should_step = is_active or needs_stabilization or has_input or is_heating
             should_send = should_step or pending_send
             
             if not should_send:
@@ -222,11 +223,7 @@ async def handle_client(websocket, state: StrikeController, path=None):
 
                 elif packet.get("request") == "thermal_toggle":
                     enabled = packet.get("enabled", False)
-                    power = packet.get("power_level", 3000.0)
-                    skin_depth = packet.get("skin_depth", 0.05)
-                    coil_pos = packet.get("coil_local_pos", [0.0, 0.0, 0.0])
-                    coil_radius = packet.get("coil_radius", 0.3)
-                    await state.set_thermal_state(enabled, power, skin_depth, coil_pos, coil_radius)
+                    await state.set_thermal_state(enabled)
 
                 elif packet.get("request") == "strike":
                     if state.strike_state == StrikeState.IDLE:

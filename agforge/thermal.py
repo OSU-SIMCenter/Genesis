@@ -32,17 +32,19 @@ class InductionHeater:
 
     def step_heat(self, dt: float, surface_power: float = 2000.0, skin_depth: float = 0.02, coil_center=None, coil_radius: float = 0.3):
         """
-        Inject heat into the particle domain using an induction profile.
+        Inject heat energy into the particle domain using an induction profile.
         Heat falls off exponentially proportional to depth inside the reconstructed surface.
-        If coil_center is provided (like [x,y,z]), heating is strictly masked to within coil_radius. applied is:
-            delta_T = surface_power * exp(-depth / skin_depth) * dt
+        If coil_center is provided (like [x,y,z]), heating is strictly masked to within coil_radius.
+
+        Temperature rise is computed via energy conservation: dT = P * dt / (m * Cp)
 
         Parameters
         ----------
         dt : float
             Time step for the heating duration.
         surface_power : float
-            Heating power measured in Kelvin/second at the absolute boundary.
+            Heating power in Watts at the absolute surface boundary.
+            Distributed per-particle with exponential skin-depth falloff.
         skin_depth : float
             The e-folding depth parameter for exponential falloff.
         """
@@ -98,8 +100,14 @@ class InductionHeater:
             gs.logger.warning("InductionHeater: NaN detected in current particle temps, skipping heat step.")
             return
 
-        # 5. Compute heating delta
-        delta_temp = surface_power * np.exp(-depth / skin_depth) * dt
+        # 5. Compute heating delta via energy conservation: dT = P * dt / (m * Cp)
+        # NOTE: Genesis inflates particle mass by _particle_volume_scale (1e3) for numerical
+        # stability. This cancels internally in the engine (mass/volume = rho), but we need
+        # the real physical mass here for correct energy-to-temperature conversion.
+        particle_mass_scaled = self.solver.particles_info[0].mass
+        particle_mass = particle_mass_scaled / self.solver._particle_volume_scale
+        Cp = self.solver._default_heat_capacity
+        delta_temp = surface_power * np.exp(-depth / skin_depth) * dt / (particle_mass * Cp)
         
         # 5b. Apply positional mask if coil bounds provided
         if coil_center is not None:
@@ -109,10 +117,6 @@ class InductionHeater:
             dists = np.linalg.norm(pos_np - c, axis=1)
             mask = dists <= coil_radius
             delta_temp[~mask] = 0.0
-
-        # Debug logging
-        if delta_temp.max() > 0:
-            gs.logger.info(f"Induction Heating: max deltaT/step = {delta_temp.max():.4f} K")
 
         # 6. Push new heat state
         new_temp = current_temp + delta_temp
@@ -124,3 +128,4 @@ class InductionHeater:
             new_temp_tensor = new_temp_tensor.unsqueeze(0)
 
         self.entity.set_particles_temp(new_temp_tensor)
+        return float(delta_temp.max())
