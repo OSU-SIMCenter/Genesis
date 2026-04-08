@@ -170,6 +170,9 @@ class StrikeController:
         new_temps = temps.clone()
         new_temps[0] = temps[0] + sink_rate * (T_ambient - temps[0])
         self.env.mpm_entity.set_particles_temp(new_temps)
+        
+        # Return dT for telemetry
+        return new_temps - temps
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
@@ -555,7 +558,11 @@ class StrikeController:
         physics_failed = False
         with self._profile("teleop_physics"):
             try:
-                self.env.scene.step(update_visualizer=False)
+                # Physics step
+                with self._profile("sim_step"):
+                    if hasattr(self.env.mpm_entity, 'clear_thermal_telemetry_buffers'):
+                        self.env.mpm_entity.clear_thermal_telemetry_buffers()
+                    self.env.scene.step(update_visualizer=False)
             except Exception as e:
                 gs.logger.error(f"Physics step failed: {e}")
                 physics_failed = True
@@ -569,8 +576,9 @@ class StrikeController:
         # --- Fixed-End Heat Sink (Dirichlet BC) ---
         # Model heat conduction into the bulk billet by clamping particles
         # near the held end toward ambient temperature.
+        self._dt_heat_sink = None
         if self.thermal_enabled and not physics_failed:
-            self._apply_fixed_end_heat_sink()
+            self._dt_heat_sink = self._apply_fixed_end_heat_sink()
         
         # --- Thermal Telemetry ---
         # During strikes: log every 3rd frame to reduce GPU sync overhead
@@ -594,73 +602,68 @@ class StrikeController:
                 n_particles = t.numel()
                 total_energy_kJ = (particle_mass * Cp * t.sum().item()) / 1000.0
                 
-                # Induction contribution (how much did the heater add?)
-                induction_avg_dT = 0.0
-                induction_max_dT = 0.0
-                induction_energy_W = 0.0
-                n_heated = 0
+                # Helper to convert a dT tensor into summary telemetry
+                def summarize_dT(dT_tensor, threshold=1e-6):
+                    if dT_tensor is None:
+                        return 0, 0.0, 0.0, 0.0
+                    mask = dT_tensor.abs() > threshold
+                    n_p = int(mask.sum().item())
+                    if n_p == 0:
+                        return 0, 0.0, 0.0, 0.0
+                    active_dT = dT_tensor[mask]
+                    avg_dt = active_dT.mean().item()
+                    max_dt = dT_tensor.min().item() if avg_dt < 0 else dT_tensor.max().item()
+                    energy_W = (particle_mass * Cp * dT_tensor.sum().item()) / self.env.scene.sim.dt
+                    return n_p, avg_dt, max_dt, energy_W
+
+                # --- 1. Induction ---
+                induction_avg_dT = 0.0; induction_max_dT = 0.0; induction_energy_W = 0.0; n_heated = 0
                 if _temps_before_heating is not None and _temps_after_heating is not None:
                     dT_induction = (_temps_after_heating - _temps_before_heating).float()
-                    induction_avg_dT = dT_induction.mean().item()
-                    induction_max_dT = dT_induction.max().item()
-                    n_heated = int((dT_induction.abs() > 1e-6).sum().item())
-                    # Energy injected this step: ΔE = Σ(m * Cp * dT)
-                    induction_energy_J = particle_mass * Cp * dT_induction.sum().item()
-                    induction_energy_W = induction_energy_J / self.env.scene.sim.dt  # Watts
+                    n_heated, induction_avg_dT, induction_max_dT, induction_energy_W = summarize_dT(dT_induction)
+
+                # --- 2. Heat Sink ---
+                dt_sink_tensor = self._dt_heat_sink.float() if self._dt_heat_sink is not None else None
+                n_sink, avg_sink, pk_sink, w_sink = summarize_dT(dt_sink_tensor)
+
+                # --- 3. Engine Mechanisms ---
+                dT_conv = self.env.mpm_entity.get_particles_dT_conv().float()
+                dT_rad = self.env.mpm_entity.get_particles_dT_rad().float()
+                dT_contact = self.env.mpm_entity.get_particles_dT_contact().float()
+                dT_adiabatic = self.env.mpm_entity.get_particles_dT_adiabatic().float()
+
+                n_conv, avg_conv, pk_conv, w_conv = summarize_dT(dT_conv)
+                n_rad, avg_rad, pk_rad, w_rad = summarize_dT(dT_rad)
+                n_contact, avg_contact, pk_contact, w_contact = summarize_dT(dT_contact)
+                n_adia, avg_adia, pk_adia, w_adia = summarize_dT(dT_adiabatic)
                 
-                # Engine contribution (cooling + diffusion + adiabatic combined)
-                engine_min_dT = 0.0
-                engine_max_dT = 0.0
-                n_cooling = 0
-                n_heating = 0
-                cooling_avg = 0.0
-                heating_avg = 0.0
-                cooling_energy_W = 0.0
-                heating_energy_W = 0.0
-                if _temps_after_heating is not None:
-                    dT_engine = (temps_after_physics - _temps_after_heating).float()
-                    engine_min_dT = dT_engine.min().item()  # most negative = strongest cooling
-                    engine_max_dT = dT_engine.max().item()  # most positive = strongest adiabatic heating
-                    
-                    # Breakdown: particles being cooled vs heated by engine
-                    cooling_mask = dT_engine < -1e-8
-                    heating_mask = dT_engine > 1e-8
-                    n_cooling = int(cooling_mask.sum().item())
-                    n_heating = int(heating_mask.sum().item())
-                    if n_cooling > 0:
-                        cooling_avg = dT_engine[cooling_mask].mean().item()
-                        cooling_energy_J = particle_mass * Cp * dT_engine[cooling_mask].sum().item()
-                        cooling_energy_W = cooling_energy_J / self.env.scene.sim.dt
-                    if n_heating > 0:
-                        heating_avg = dT_engine[heating_mask].mean().item()
-                        heating_energy_J = particle_mass * Cp * dT_engine[heating_mask].sum().item()
-                        heating_energy_W = heating_energy_J / self.env.scene.sim.dt
-                
-                # Label mechanisms based on context:
-                # During strikes: cooling ≈ contact (h_contact=5000 >> h_air=15, + radiation), heating = adiabatic
-                # During idle: cooling = air convection + Stefan-Boltzmann radiation, heating ≈ 0
-                cool_label = "contact" if _is_striking else "air+rad"
-                heat_label = "adiabatic"
-                
-                # Build log line
+                def W_str(watts):
+                    if abs(watts) > 1e6:
+                        return f"{watts/1e6:+.1f}MW"
+                    if abs(watts) > 1e3:
+                        return f"{watts/1e3:+.1f}kW"
+                    return f"{watts:+.0f}W"
+
+                # Build log
                 log_parts = [
-                    f"♨️ THERMAL │ "
-                    f"Avg: {avg_t:.1f}K  Min: {min_t:.1f}K  Max: {max_t:.1f}K  σ: {std_t:.2f}K │ "
-                    f"E_total: {total_energy_kJ:.1f}kJ"
+                    f"♨️ THERMAL │ Avg: {avg_t:.1f}K Min: {min_t:.1f}K Max: {max_t:.1f}K σ: {std_t:.1f}K │ E: {total_energy_kJ:.1f}kJ"
                 ]
                 
-                if not _is_striking:
-                    # Full induction detail when not striking
-                    log_parts.append(
-                        f" │ Induction: avg +{induction_avg_dT:.4f}K  max +{induction_max_dT:.4f}K  "
-                        f"({n_heated}/{n_particles} particles, {induction_energy_W:.1f}W)"
-                    )
+                if n_heated > 0:
+                    log_parts.append(f"\n  Induction: {induction_avg_dT:+.1f}K avg, {induction_max_dT:+.1f}K pk ({W_str(induction_energy_W)})")
                 
-                # Engine breakdown: cooling vs heating with energy in Watts
-                log_parts.append(
-                    f" │ {cool_label}({n_cooling}p): avg {cooling_avg:+.4f}K  peak {engine_min_dT:+.4f}K  {cooling_energy_W:.0f}W"
-                    f" │ {heat_label}({n_heating}p): avg {heating_avg:+.4f}K  peak {engine_max_dT:+.4f}K  {heating_energy_W:.0f}W"
-                )
+                if n_conv > 0 or n_rad > 0:
+                    log_parts.append(f"\n  Convection: {avg_conv:+.2f}K avg, {pk_conv:+.2f}K pk ({W_str(w_conv)})")
+                    log_parts.append(f"\n  Radiation: {avg_rad:+.2f}K avg, {pk_rad:+.2f}K pk ({W_str(w_rad)})")
+                
+                if n_contact > 0:
+                    log_parts.append(f"\n  Contact: {avg_contact:+.2f}K avg, {pk_contact:+.2f}K pk ({W_str(w_contact)})")
+                
+                if n_adia > 0:
+                    log_parts.append(f"\n  Adiabatic: {avg_adia:+.2f}K avg, {pk_adia:+.2f}K pk ({W_str(w_adia)})")
+                    
+                if n_sink > 0:
+                    log_parts.append(f"\n  HeatSink: {avg_sink:+.2f}K avg, {pk_sink:+.2f}K pk ({W_str(w_sink)})")
                 
                 gs.logger.info("".join(log_parts))
             except Exception as e:

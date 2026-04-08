@@ -471,20 +471,25 @@ class LegacyCoupler(RBC):
                             h_air = self.mpm_solver._h_air  # already scaled by thermal_time_scale
                             k_air = (h_air * A_cell) / (mass_thermal_real * Cp)
                             decay_air = qd.math.exp(-k_air * self.mpm_solver.substep_dt)
+                            dT_conv = (T_cell - T_amb) * (1.0 - decay_air)
+                            self.mpm_solver.grid[f, I, i_b].dT_conv -= dT_conv
+
+                            T_cell_after_air = T_cell - dT_conv
 
                             # --- Radiation: Stefan-Boltzmann (linearized for exponential stability) ---
                             # Q_rad = ε·σ·A·(T⁴ - T_amb⁴) ≈ h_rad·A·(T - T_amb)
                             # where h_rad = ε·σ·(T² + T_amb²)·(T + T_amb)
                             emissivity = self.mpm_solver._emissivity
                             sigma = 5.67e-8
-                            h_rad = emissivity * sigma * (T_cell * T_cell + T_amb * T_amb) * (T_cell + T_amb)
+                            h_rad = emissivity * sigma * (T_cell_after_air * T_cell_after_air + T_amb * T_amb) * (T_cell_after_air + T_amb)
                             # Scale by thermal_time_scale (h_air is pre-scaled, radiation must be scaled dynamically)
                             h_rad_scaled = h_rad * self.mpm_solver._thermal_time_scale
                             k_rad = (h_rad_scaled * A_cell) / (mass_thermal_real * Cp)
                             decay_rad = qd.math.exp(-k_rad * self.mpm_solver.substep_dt)
+                            dT_rad = (T_cell_after_air - T_amb) * (1.0 - decay_rad)
+                            self.mpm_solver.grid[f, I, i_b].dT_rad -= dT_rad
 
-                            # Combined: multiply independent decay factors
-                            self.mpm_solver.grid[f, I, i_b].temp = T_amb + (T_cell - T_amb) * decay_air * decay_rad
+                            self.mpm_solver.grid[f, I, i_b].temp = T_cell_after_air - dT_rad
                         
                         # --- Contact Cooling (Conduction with Rigid Bodies) ---
                         if qd.static(self.rigid_solver.is_active):
@@ -506,7 +511,11 @@ class LegacyCoupler(RBC):
                                         k_contact = (h_contact * (self.mpm_solver.dx ** 2)) / (mass_thermal_real_c * self.mpm_solver._default_heat_capacity)
                                         decay_contact = qd.math.exp(-k_contact * self.mpm_solver.substep_dt)
                                         T_rigid = 293.15 # Rigid bodies are assumed infinite heat sinks
-                                        self.mpm_solver.grid[f, I, i_b].temp = T_rigid + (self.mpm_solver.grid[f, I, i_b].temp - T_rigid) * decay_contact
+                                        
+                                        T_cell_before_contact = self.mpm_solver.grid[f, I, i_b].temp
+                                        dT_contact = (T_cell_before_contact - T_rigid) * (1.0 - decay_contact)
+                                        self.mpm_solver.grid[f, I, i_b].dT_contact -= dT_contact
+                                        self.mpm_solver.grid[f, I, i_b].temp = T_cell_before_contact - dT_contact
 
                 # gravity
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
