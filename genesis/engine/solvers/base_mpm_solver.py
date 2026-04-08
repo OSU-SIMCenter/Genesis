@@ -53,6 +53,7 @@ class BaseMPMSolver(Solver):
         self._h_contact = options.thermal_contact_conductivity * self._thermal_time_scale
         self._h_air = options.thermal_air_conductivity * self._thermal_time_scale
         self._alpha_thermal = options.default_thermal_diffusivity * self._thermal_time_scale
+        self._emissivity = options.emissivity  # Stefan-Boltzmann emissivity (not pre-scaled; computed dynamically)
 
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
 

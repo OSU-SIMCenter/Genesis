@@ -577,7 +577,8 @@ class MPMOptions(Options):
     default_thermal_diffusivity: float = 1.1e-5  # m^2/s (Steel)
     default_heat_capacity: float = 450.0  # J/(kg K) (Steel)
     thermal_contact_conductivity: float = 5000.0  # W/(m^2 K)
-    thermal_air_conductivity: float = 50.0  # W/(m^2 K)
+    thermal_air_conductivity: float = 15.0  # W/(m^2 K) (natural convection, ASM Handbook)
+    emissivity: float = 0.8  # Stefan-Boltzmann emissivity (oxidized steel at >500°C)
     T_ref: float = 293.15  # Reference temperature for Johnson-Cook
     T_melt: float = 1793.0  # Melting point for 4340 steel
 

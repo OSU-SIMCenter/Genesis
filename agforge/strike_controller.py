@@ -129,6 +129,48 @@ class StrikeController:
             else:
                 gs.logger.info("Thermal FROZEN")
 
+    def _apply_fixed_end_heat_sink(self):
+        """Apply Dirichlet BC at the fixed end to model bulk billet conduction.
+
+        Particles within the fixed region have their temperature lerped back
+        toward ambient. The lerp strength increases toward the boundary:
+        - At the inner edge (closest to free end): gentle pull (alpha ~ 0)
+        - At the far end of the fixed region: full clamp (alpha ~ 1)
+
+        This models heat conduction into the infinite thermal mass of the
+        remaining billet beyond the simulated section.
+        """
+        T_ambient = 293.0
+
+        pos = self.env.mpm_entity.get_particles_pos()    # [1, N, 3]
+        temps = self.env.mpm_entity.get_particles_temp()  # [1, N]
+
+        # Fixed region is on the +X end of the billet
+        fixed_bounds = self.env.fixed_region_bounds  # [3, 2] -> [[x_lo, x_hi], ...]
+        x_min = fixed_bounds[0, 0].item()  # Inner edge (closest to free end)
+        x_max = fixed_bounds[0, 1].item()  # Outer boundary
+        region_width = x_max - x_min
+        if region_width <= 0:
+            return
+
+        x_pos = pos[0, :, 0]  # [N] particle X positions
+
+        # Alpha ramps from 0 at x_min to 1 at x_max (linear gradient)
+        alpha = ((x_pos - x_min) / region_width).clamp(0.0, 1.0)
+
+        # Only apply to particles inside the fixed region
+        in_region = (x_pos >= x_min).float()
+        alpha = alpha * in_region
+
+        # Scale sink rate by thermal_time_scale * dt so it matches other thermal processes
+        thermal_ts = self.env.scene.sim.mpm_solver._thermal_time_scale
+        sink_rate = (alpha * thermal_ts * self.env.scene.sim.dt).clamp(0.0, 1.0)
+
+        # Lerp toward ambient: T_new = T + rate * (T_ambient - T)
+        new_temps = temps.clone()
+        new_temps[0] = temps[0] + sink_rate * (T_ambient - temps[0])
+        self.env.mpm_entity.set_particles_temp(new_temps)
+
     async def set_qpos(self, new_qpos):
         async with self.lock:
             # Only clamp slider/hinge, grippers managed by logic if striking
@@ -487,8 +529,12 @@ class StrikeController:
                     # Hardcode Y to 0 and Z to the cylinder's world center
                     coil_center = [dynamic_coil_x, 0.0, self.env.cfg.robot.cylinder_pos[2]]
                     
+                    # Scale dt by thermal_time_scale so induction heating
+                    # is balanced with engine-side cooling/diffusion
+                    thermal_dt = self.env.scene.sim.dt * self.env.scene.sim.mpm_solver._thermal_time_scale
+
                     self.heater.step_heat(
-                        self.env.scene.sim.dt, 
+                        thermal_dt, 
                         self.heating_power, 
                         self.skin_depth, 
                         coil_center, 
@@ -519,6 +565,12 @@ class StrikeController:
             self.env.mpm_entity.set_particles_temp(frozen_temps_tensor)
 
         self._physics_step_counter += 1
+
+        # --- Fixed-End Heat Sink (Dirichlet BC) ---
+        # Model heat conduction into the bulk billet by clamping particles
+        # near the held end toward ambient temperature.
+        if self.thermal_enabled and not physics_failed:
+            self._apply_fixed_end_heat_sink()
         
         # --- Thermal Telemetry ---
         # During strikes: log every 3rd frame to reduce GPU sync overhead
@@ -585,9 +637,9 @@ class StrikeController:
                         heating_energy_W = heating_energy_J / self.env.scene.sim.dt
                 
                 # Label mechanisms based on context:
-                # During strikes: cooling ≈ contact (h_contact=5000 >> h_air=50), heating = adiabatic
-                # During idle: cooling = air (no rigid body contact), heating ≈ 0
-                cool_label = "contact" if _is_striking else "air"
+                # During strikes: cooling ≈ contact (h_contact=5000 >> h_air=15, + radiation), heating = adiabatic
+                # During idle: cooling = air convection + Stefan-Boltzmann radiation, heating ≈ 0
+                cool_label = "contact" if _is_striking else "air+rad"
                 heat_label = "adiabatic"
                 
                 # Build log line
