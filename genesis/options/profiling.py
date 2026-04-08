@@ -78,7 +78,13 @@ class ProfilingOptions(Options):
             recon_rebind: bool = True
             recon_transform: bool = True
             render: bool = True
-
+            apply_action: bool = True
+            clear_forces: bool = True
+            heating: bool = True
+            thermal_bcs: bool = True
+            thermal_telemetry: bool = True
+            stability: bool = True
+            record: bool = True
 
         scene: Scene = Scene()
         simulator: Simulator = Simulator()

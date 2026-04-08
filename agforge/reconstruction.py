@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import trimesh
 import trimesh.smoothing
-import quadrants as qd
+import quadrants as qd  # type: ignore
 import genesis as gs
 import genesis.utils.particle as pu
 import pyvista as pv
@@ -25,6 +25,7 @@ class SurfaceReconstructor:
         self.recon_enabled = True
         self.recon_frame_interval = 3  # Reconstruct every 3 frames
         self.frame_counter = 0
+        self.mesh_version = 0
         
         # Compatibility / Configuration
         self.sampling_method = SamplingMethod.VOXEL_STRATIFIED
@@ -92,6 +93,7 @@ class SurfaceReconstructor:
         self.reconstructed_mesh = state['mesh'].copy()
         self.recon_enabled = state.get('recon_enabled', True)
         self.frame_counter = state.get('frame_counter', 0)
+        self.mesh_version += 1
         self.density_initialized = False
         self._prev_grid_origin = None
         self._prev_verts = None
@@ -102,6 +104,7 @@ class SurfaceReconstructor:
     def reset(self):
         self.reconstructed_mesh = trimesh.Trimesh()
         self.frame_counter = 0
+        self.mesh_version += 1
         self._cached_particles = None
         self.skinning_enabled = False
         self.density_initialized = False
@@ -152,11 +155,11 @@ class SurfaceReconstructor:
     @qd.kernel
     def _compute_density_kernel(
         self, 
-        particles_pos: qd.types.ndarray(),
-        particles_F: qd.types.ndarray(),
-        active_mask: qd.types.ndarray(),
+        particles_pos: qd.types.ndarray(),  # type: ignore
+        particles_F: qd.types.ndarray(),  # type: ignore
+        active_mask: qd.types.ndarray(),  # type: ignore
         n_particles: int,
-        lower_bound: qd.types.vector(3, float),
+        lower_bound: qd.types.vector(3, float),  # type: ignore
         dx: float,
         influence_radius: float
     ):
@@ -284,6 +287,7 @@ class SurfaceReconstructor:
         if not should_reconstruct and (self.frame_counter % self.recon_frame_interval != 0):
             return
         self.create_reconstructed_mesh(is_deforming=is_deforming)
+        self.mesh_version += 1
 
     def create_reconstructed_mesh(self, is_deforming: bool = False):
         # Legacy SplashSurf Path

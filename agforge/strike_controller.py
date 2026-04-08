@@ -98,7 +98,7 @@ class StrikeController:
                 if current_temps is not None:
                     base_temps = torch.ones_like(current_temps) * 293.0
                     self.env.mpm_entity.set_particles_temp(base_temps)
-                    import quadrants as qd
+                    import quadrants as qd  # type: ignore
                     qd.sync()
                     gs.logger.info("Initialized billet thermal baseline to 293.0 K")
         except Exception as e:
@@ -497,13 +497,15 @@ class StrikeController:
             self.strike_step_count += 1
 
         # 2. Apply Actions (if not handled by strike logic, handle idle holding)
-        if self.strike_state == StrikeState.IDLE or self.strike_state == StrikeState.HOLDING:
-            qpos = await self.get_qpos()
-            self.robot.apply_action(qpos)
+        with self._profile("teleop_apply_action"):
+            if self.strike_state == StrikeState.IDLE or self.strike_state == StrikeState.HOLDING:
+                qpos = await self.get_qpos()
+                self.robot.apply_action(qpos)
 
         # 3. Clear Forces
-        if hasattr(self.env.scene.sim.coupler, 'clear_link_coupling_forces'):
-            self.env.scene.sim.coupler.clear_link_coupling_forces()
+        with self._profile("teleop_clear_forces"):
+            if hasattr(self.env.scene.sim.coupler, 'clear_link_coupling_forces'):
+                self.env.scene.sim.coupler.clear_link_coupling_forces()
 
         # 3b. Thermodynamics
         frozen_temps_tensor = None
@@ -541,7 +543,8 @@ class StrikeController:
                         self.heating_power, 
                         self.skin_depth, 
                         coil_center, 
-                        self.env.cfg.robot.coil_length / 2.0
+                        self.env.cfg.robot.coil_length / 2.0,
+                        profile_ctx=self._profile
                     )
                     
                     # Snapshot after induction heating (before engine physics)
@@ -568,106 +571,109 @@ class StrikeController:
                 physics_failed = True
 
         # Restore frozen temperatures to halt diffusion if thermal_enabled == False
-        if not self.thermal_enabled and frozen_temps_tensor is not None and not physics_failed:
-            self.env.mpm_entity.set_particles_temp(frozen_temps_tensor)
+        with self._profile("teleop_thermal_bcs"):
+            if not self.thermal_enabled and frozen_temps_tensor is not None and not physics_failed:
+                self.env.mpm_entity.set_particles_temp(frozen_temps_tensor)
 
-        self._physics_step_counter += 1
+            self._physics_step_counter += 1
 
-        # --- Fixed-End Heat Sink (Dirichlet BC) ---
-        # Model heat conduction into the bulk billet by clamping particles
-        # near the held end toward ambient temperature.
-        self._dt_heat_sink = None
-        if self.thermal_enabled and not physics_failed:
-            self._dt_heat_sink = self._apply_fixed_end_heat_sink()
+            # --- Fixed-End Heat Sink (Dirichlet BC) ---
+            # Model heat conduction into the bulk billet by clamping particles
+            # near the held end toward ambient temperature.
+            self._dt_heat_sink = None
+            if self.thermal_enabled and not physics_failed:
+                self._dt_heat_sink = self._apply_fixed_end_heat_sink()
         
         # --- Thermal Telemetry ---
-        # During strikes: log every 3rd frame to reduce GPU sync overhead
-        # During idle/heating: log every frame for full fidelity
-        _telemetry_interval = 3 if _is_striking else 1
-        if self.thermal_enabled and self._physics_step_counter % _telemetry_interval == 0:
-            try:
-                temps_after_physics = self.env.mpm_entity.get_particles_temp()
-                t = temps_after_physics.float()
-                
-                # Temperature distribution
-                avg_t = t.mean().item()
-                min_t = t.min().item()
-                max_t = t.max().item()
-                std_t = t.std().item()
-                
-                # Total thermal energy: E = Σ(m_real * Cp * T)
-                particle_mass_scaled = self.env.scene.sim.mpm_solver.particles_info[0].mass
-                particle_mass = particle_mass_scaled / self.env.scene.sim.mpm_solver._particle_volume_scale
-                Cp = self.env.scene.sim.mpm_solver._default_heat_capacity
-                n_particles = t.numel()
-                total_energy_kJ = (particle_mass * Cp * t.sum().item()) / 1000.0
-                
-                # Helper to convert a dT tensor into summary telemetry
-                def summarize_dT(dT_tensor, threshold=1e-6):
-                    if dT_tensor is None:
-                        return 0, 0.0, 0.0, 0.0
-                    mask = dT_tensor.abs() > threshold
-                    n_p = int(mask.sum().item())
-                    if n_p == 0:
-                        return 0, 0.0, 0.0, 0.0
-                    active_dT = dT_tensor[mask]
-                    avg_dt = active_dT.mean().item()
-                    max_dt = dT_tensor.min().item() if avg_dt < 0 else dT_tensor.max().item()
-                    energy_W = (particle_mass * Cp * dT_tensor.sum().item()) / self.env.scene.sim.dt
-                    return n_p, avg_dt, max_dt, energy_W
-
-                # --- 1. Induction ---
-                induction_avg_dT = 0.0; induction_max_dT = 0.0; induction_energy_W = 0.0; n_heated = 0
-                if _temps_before_heating is not None and _temps_after_heating is not None:
-                    dT_induction = (_temps_after_heating - _temps_before_heating).float()
-                    n_heated, induction_avg_dT, induction_max_dT, induction_energy_W = summarize_dT(dT_induction)
-
-                # --- 2. Heat Sink ---
-                dt_sink_tensor = self._dt_heat_sink.float() if self._dt_heat_sink is not None else None
-                n_sink, avg_sink, pk_sink, w_sink = summarize_dT(dt_sink_tensor)
-
-                # --- 3. Engine Mechanisms ---
-                dT_conv = self.env.mpm_entity.get_particles_dT_conv().float()
-                dT_rad = self.env.mpm_entity.get_particles_dT_rad().float()
-                dT_contact = self.env.mpm_entity.get_particles_dT_contact().float()
-                dT_adiabatic = self.env.mpm_entity.get_particles_dT_adiabatic().float()
-
-                n_conv, avg_conv, pk_conv, w_conv = summarize_dT(dT_conv)
-                n_rad, avg_rad, pk_rad, w_rad = summarize_dT(dT_rad)
-                n_contact, avg_contact, pk_contact, w_contact = summarize_dT(dT_contact)
-                n_adia, avg_adia, pk_adia, w_adia = summarize_dT(dT_adiabatic)
-                
-                def W_str(watts):
-                    if abs(watts) > 1e6:
-                        return f"{watts/1e6:+.1f}MW"
-                    if abs(watts) > 1e3:
-                        return f"{watts/1e3:+.1f}kW"
-                    return f"{watts:+.0f}W"
-
-                # Build log
-                log_parts = [
-                    f"♨️ THERMAL │ Avg: {avg_t:.1f}K Min: {min_t:.1f}K Max: {max_t:.1f}K σ: {std_t:.1f}K │ E: {total_energy_kJ:.1f}kJ"
-                ]
-                
-                if n_heated > 0:
-                    log_parts.append(f"\n  Induction: {induction_avg_dT:+.1f}K avg, {induction_max_dT:+.1f}K pk ({W_str(induction_energy_W)})")
-                
-                if n_conv > 0 or n_rad > 0:
-                    log_parts.append(f"\n  Convection: {avg_conv:+.2f}K avg, {pk_conv:+.2f}K pk ({W_str(w_conv)})")
-                    log_parts.append(f"\n  Radiation: {avg_rad:+.2f}K avg, {pk_rad:+.2f}K pk ({W_str(w_rad)})")
-                
-                if n_contact > 0:
-                    log_parts.append(f"\n  Contact: {avg_contact:+.2f}K avg, {pk_contact:+.2f}K pk ({W_str(w_contact)})")
-                
-                if n_adia > 0:
-                    log_parts.append(f"\n  Adiabatic: {avg_adia:+.2f}K avg, {pk_adia:+.2f}K pk ({W_str(w_adia)})")
+        # Log every 3rd frame during strikes, and every 5th frame during idle/heating
+        _telemetry_interval = 3 if _is_striking else 5
+        with self._profile("teleop_thermal_telemetry"):
+            if self.thermal_enabled and self._physics_step_counter % _telemetry_interval == 0:
+                try:
+                    temps_after_physics = self.env.mpm_entity.get_particles_temp()
+                    t = temps_after_physics.float()
                     
-                if n_sink > 0:
-                    log_parts.append(f"\n  HeatSink: {avg_sink:+.2f}K avg, {pk_sink:+.2f}K pk ({W_str(w_sink)})")
-                
-                gs.logger.info("".join(log_parts))
-            except Exception as e:
-                gs.logger.warning(f"Thermal telemetry failed: {e}")
+                    # Total thermal energy: E = Σ(m_real * Cp * T)
+                    particle_mass_scaled = self.env.scene.sim.mpm_solver.particles_info[0].mass
+                    particle_mass = particle_mass_scaled / self.env.scene.sim.mpm_solver._particle_volume_scale
+                    Cp = self.env.scene.sim.mpm_solver._default_heat_capacity
+                    n_particles = t.numel()
+                    
+                    import torch
+                    all_dT_names = []
+                    all_dT_tensors = []
+
+                    if _temps_before_heating is not None and _temps_after_heating is not None:
+                        all_dT_names.append("Induction")
+                        all_dT_tensors.append((_temps_after_heating - _temps_before_heating).float().squeeze(-1).view(-1))
+
+                    # --- Engine Mechanisms ---
+                    all_dT_names.extend(["Convection", "Radiation", "Contact", "Adiabatic"])
+                    all_dT_tensors.extend([
+                        self.env.mpm_entity.get_particles_dT_conv().float().squeeze(-1).view(-1),
+                        self.env.mpm_entity.get_particles_dT_rad().float().squeeze(-1).view(-1),
+                        self.env.mpm_entity.get_particles_dT_contact().float().squeeze(-1).view(-1),
+                        self.env.mpm_entity.get_particles_dT_adiabatic().float().squeeze(-1).view(-1)
+                    ])
+                    
+                    if self._dt_heat_sink is not None:
+                        all_dT_names.append("HeatSink")
+                        all_dT_tensors.append(self._dt_heat_sink.float().squeeze(-1).view(-1))
+
+                    def W_str(watts):
+                        if abs(watts) > 1e6:
+                            return f"{watts/1e6:+.1f}MW"
+                        if abs(watts) > 1e3:
+                            return f"{watts/1e3:+.1f}kW"
+                        return f"{watts:+.0f}W"
+
+                    log_parts = []
+                    
+                    if len(all_dT_tensors) > 0:
+                        dTs = torch.stack(all_dT_tensors) # shape: [N_cats, N_particles]
+                        mask = dTs.abs() > 1e-6
+                        
+                        # 1. Parallel mathematical reductions
+                        n_heated = mask.sum(dim=1)
+                        sums = dTs.sum(dim=1)
+                        
+                        safe_n = n_heated.clamp(min=1).float()
+                        means = (dTs * mask).sum(dim=1) / safe_n
+                        
+                        mins = dTs.amin(dim=1)
+                        maxes = dTs.amax(dim=1)
+                        pks = torch.where(means < 0, mins, maxes)
+                        
+                        # 2. Gather global temperature bounds
+                        global_tensor = torch.stack([t.mean(), t.min(), t.max(), t.std(), t.sum()])
+                        
+                        # 3. Exactly ONE PCIe cross-bus sync point!
+                        all_stats = torch.cat([global_tensor, n_heated.float(), means, pks, sums]).cpu().numpy()
+                        
+                        # 4. Telemetry string generation
+                        avg_t, min_t, max_t, std_t, sum_t = all_stats[:5]
+                        total_energy_kJ = (particle_mass * Cp * sum_t) / 1000.0
+                        
+                        log_parts.append(f"♨️ THERMAL │ Avg: {avg_t:.1f}K Min: {min_t:.1f}K Max: {max_t:.1f}K σ: {std_t:.1f}K │ E: {total_energy_kJ:.1f}kJ")
+                        
+                        num_cats = len(all_dT_names)
+                        dt_sim = self.env.scene.sim.dt
+                        
+                        n_arr = all_stats[5:5+num_cats]
+                        mean_arr = all_stats[5+num_cats:5+2*num_cats]
+                        pk_arr = all_stats[5+2*num_cats:5+3*num_cats]
+                        sum_arr = all_stats[5+3*num_cats:5+4*num_cats]
+                        
+                        for i, name in enumerate(all_dT_names):
+                            if n_arr[i] > 0:
+                                energy_W = (particle_mass * Cp * sum_arr[i]) / dt_sim
+                                # Format strings exactly as before
+                                log_parts.append(f"\n  {name}: {mean_arr[i]:+.2f}K avg, {pk_arr[i]:+.2f}K pk ({W_str(energy_W)})")
+                    
+                    if log_parts:
+                        gs.logger.info("".join(log_parts))
+                except Exception as e:
+                    gs.logger.warning(f"Thermal telemetry failed: {e}")
 
         # 4b. Stability Check (separate from physics for accurate profiling)
         # - Always fires on physics exceptions (regardless of grace period)
@@ -677,36 +683,37 @@ class StrikeController:
         #   from residual elastic energy in the restored state)
         safety = getattr(self.env.cfg, 'safety', None)
 
-        if physics_failed:
-            needs_check = True
-        elif self._stability_grace_steps > 0:
-            self._stability_grace_steps -= 1
-            needs_check = False
-        elif safety and safety.enabled:
-            is_in_strike = self.strike_state not in (StrikeState.IDLE, StrikeState.HOLDING)
-            needs_check = is_in_strike or (self._physics_step_counter % safety.check_interval == 0)
-        else:
-            needs_check = False
+        with self._profile("teleop_stability"):
+            if physics_failed:
+                needs_check = True
+            elif self._stability_grace_steps > 0:
+                self._stability_grace_steps -= 1
+                needs_check = False
+            elif safety and safety.enabled:
+                is_in_strike = self.strike_state not in (StrikeState.IDLE, StrikeState.HOLDING)
+                needs_check = is_in_strike or (self._physics_step_counter % safety.check_interval == 0)
+            else:
+                needs_check = False
 
-        if needs_check:
-            try:
-                if physics_failed:
-                    raise SimulationStabilityError("Physics step threw an exception")
-                self._check_stability()
-            except SimulationStabilityError as e:
-                gs.logger.error(f"CRITICAL STABILITY FAILURE: {e}")
-                if safety and safety.auto_reset:
-                    gs.logger.warning(">>> Auto-Undo Triggered by System Protection (Reverting to Checkpoint) <<<")
-                    if len(self.checkpoints) > 0:
-                        await self.load_checkpoint()
+            if needs_check:
+                try:
+                    if physics_failed:
+                        raise SimulationStabilityError("Physics step threw an exception")
+                    self._check_stability()
+                except SimulationStabilityError as e:
+                    gs.logger.error(f"CRITICAL STABILITY FAILURE: {e}")
+                    if safety and safety.auto_reset:
+                        gs.logger.warning(">>> Auto-Undo Triggered by System Protection (Reverting to Checkpoint) <<<")
+                        if len(self.checkpoints) > 0:
+                            await self.load_checkpoint()
+                        else:
+                            gs.logger.warning("No checkpoint available for undo. Forcing full reset.")
+                            await self.reset_simulation()
+                        return
+                    elif physics_failed:
+                        return
                     else:
-                        gs.logger.warning("No checkpoint available for undo. Forcing full reset.")
-                        await self.reset_simulation()
-                    return
-                elif physics_failed:
-                    return
-                else:
-                    raise
+                        raise
 
         # 5. Render Update
         if self.env.scene.visualizer:
@@ -853,7 +860,7 @@ class StrikeController:
             
             self.env.scene.sim.reset(ckpt['sim_state'])
             
-            import quadrants as qd
+            import quadrants as qd  # type: ignore
             qd.sync()
             if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
                 self.env.scene.sim.mpm_solver.update_render_fields()
@@ -947,7 +954,7 @@ class StrikeController:
             except Exception as e:
                 gs.logger.error(f"Failed to set room temperature: {e}")
 
-            import quadrants as qd
+            import quadrants as qd  # type: ignore
             qd.sync()
             if hasattr(self.env.scene.sim.mpm_solver, 'update_render_fields'):
                 self.env.scene.sim.mpm_solver.update_render_fields()
