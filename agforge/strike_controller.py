@@ -145,30 +145,32 @@ class StrikeController:
         pos = self.env.mpm_entity.get_particles_pos()    # [1, N, 3]
         temps = self.env.mpm_entity.get_particles_temp()  # [1, N]
 
-        # Fixed region is on the +X end of the billet
-        fixed_bounds = self.env.fixed_region_bounds  # [3, 2] -> [[x_lo, x_hi], ...]
-        x_min = fixed_bounds[0, 0].item()  # Inner edge (closest to free end)
-        x_max = fixed_bounds[0, 1].item()  # Outer boundary
-        region_width = x_max - x_min
-        if region_width <= 0:
-            return
-
         x_pos = pos[0, :, 0]  # [N] particle X positions
 
-        # Alpha ramps from 0 at x_min to 1 at x_max (linear gradient)
-        alpha = ((x_pos - x_min) / region_width).clamp(0.0, 1.0)
+        # Fixed region is on the +X end of the billet
+        fixed_bounds = self.env.fixed_region_bounds  # [3, 2] -> [[x_lo, x_hi], ...]
+        x_max = fixed_bounds[0, 1].item()  # Very tip of +X end
+        
+        global_x_min = x_pos.min().item()
+        L = x_max - global_x_min
+        if L <= 0:
+            return
 
-        # Only apply to particles inside the fixed region
-        in_region = (x_pos >= x_min).float()
-        alpha = alpha * in_region
+        # 0% to 11% from fixed end -> 100% clamped.
+        # 11% to 21% from fixed end -> Smooth linear fade to 0%.
+        x_clamp = x_max - 0.11 * L
+        x_fade = x_max - 0.21 * L
+        
+        # Calculate alpha:
+        # > x_clamp : alpha = 1.0
+        # < x_fade  : alpha = 0.0
+        alpha = ((x_pos - x_fade) / (x_clamp - x_fade)).clamp(0.0, 1.0)
 
-        # Scale sink rate by thermal_time_scale * dt so it matches other thermal processes
-        thermal_ts = self.env.scene.sim.mpm_solver._thermal_time_scale
-        sink_rate = (alpha * thermal_ts * self.env.scene.sim.dt).clamp(0.0, 1.0)
-
-        # Lerp toward ambient: T_new = T + rate * (T_ambient - T)
+        # We need a true Dirichlet constraint: at alpha=1, temperature MUST be locked to ambient.
+        # Instead of scaling by dt (which acts like weak convective cooling and loses to the induction coil),
+        # we directly lerp the temperature tensor every frame.
         new_temps = temps.clone()
-        new_temps[0] = temps[0] + sink_rate * (T_ambient - temps[0])
+        new_temps[0] = temps[0] * (1.0 - alpha) + T_ambient * alpha
         self.env.mpm_entity.set_particles_temp(new_temps)
         
         # Return dT for telemetry
