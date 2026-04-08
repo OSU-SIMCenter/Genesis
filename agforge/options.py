@@ -228,7 +228,7 @@ class AgilityForgeOptions(Options):
             enable_CPIC=True,  # Improved rigid-MPM contact accuracy
             enable_thermal=True,
             default_initial_temperature=293.0,
-            thermal_time_scale=1000.0,  # Fast-forward thermal processes (cooling/diffusion) by 1000x
+            thermal_time_scale=20000.0,  # Map thermal time to wall-clock time (balanced heating/cooling)
         )
         self.env = EnvOptions(
             num_envs=1,
@@ -323,7 +323,7 @@ class TeleopOptions(AgilityForgeOptions):
     print_profiling_on_exit: bool = True  # Print profiler visualizations on shutdown
     
     # Induction Heater physical configurations
-    heating_power: float = 2000.0
+    heating_power: float = 12000.0  # 12 kW (heats billet to 1000°C in ~16s with thermal_time_scale=20000)
     skin_depth: float = 0.02
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08

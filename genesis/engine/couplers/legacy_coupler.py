@@ -460,14 +460,31 @@ class LegacyCoupler(RBC):
                             is_surface = 1
                         
                         if is_surface == 1:
-                            h_air = self.mpm_solver._h_air
-                            # k = h * A / (M_real * Cp) -> approx A = dx^2 for a cell face
+                            T_cell = self.mpm_solver.grid[f, I, i_b].temp
+                            T_amb = 293.15  # Room temp
                             # N.B. mass_thermal is inflated by _particle_volume_scale; divide it out for real physics
                             mass_thermal_real = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
-                            k_air = (h_air * (self.mpm_solver.dx ** 2)) / (mass_thermal_real * self.mpm_solver._default_heat_capacity)
+                            Cp = self.mpm_solver._default_heat_capacity
+                            A_cell = self.mpm_solver.dx ** 2  # one cell face area
+
+                            # --- Air Convection: Newton's Law of Cooling ---
+                            h_air = self.mpm_solver._h_air  # already scaled by thermal_time_scale
+                            k_air = (h_air * A_cell) / (mass_thermal_real * Cp)
                             decay_air = qd.math.exp(-k_air * self.mpm_solver.substep_dt)
-                            T_air = 293.15 # Room temp
-                            self.mpm_solver.grid[f, I, i_b].temp = T_air + (self.mpm_solver.grid[f, I, i_b].temp - T_air) * decay_air
+
+                            # --- Radiation: Stefan-Boltzmann (linearized for exponential stability) ---
+                            # Q_rad = ε·σ·A·(T⁴ - T_amb⁴) ≈ h_rad·A·(T - T_amb)
+                            # where h_rad = ε·σ·(T² + T_amb²)·(T + T_amb)
+                            emissivity = self.mpm_solver._emissivity
+                            sigma = 5.67e-8
+                            h_rad = emissivity * sigma * (T_cell * T_cell + T_amb * T_amb) * (T_cell + T_amb)
+                            # Scale by thermal_time_scale (h_air is pre-scaled, radiation must be scaled dynamically)
+                            h_rad_scaled = h_rad * self.mpm_solver._thermal_time_scale
+                            k_rad = (h_rad_scaled * A_cell) / (mass_thermal_real * Cp)
+                            decay_rad = qd.math.exp(-k_rad * self.mpm_solver.substep_dt)
+
+                            # Combined: multiply independent decay factors
+                            self.mpm_solver.grid[f, I, i_b].temp = T_amb + (T_cell - T_amb) * decay_air * decay_rad
                         
                         # --- Contact Cooling (Conduction with Rigid Bodies) ---
                         if qd.static(self.rigid_solver.is_active):

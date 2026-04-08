@@ -104,19 +104,27 @@ class InductionHeater:
         # NOTE: Genesis inflates particle mass by _particle_volume_scale (1e3) for numerical
         # stability. This cancels internally in the engine (mass/volume = rho), but we need
         # the real physical mass here for correct energy-to-temperature conversion.
+        #
+        # surface_power is TOTAL coil power in Watts, distributed across particles
+        # proportionally to their skin-depth profile weight: w_i = exp(-depth_i / skin_depth).
+        # Each particle's share: P_i = surface_power * w_i / Σ(w_j)
         particle_mass_scaled = self.solver.particles_info[0].mass
         particle_mass = particle_mass_scaled / self.solver._particle_volume_scale
         Cp = self.solver._default_heat_capacity
-        delta_temp = surface_power * np.exp(-depth / skin_depth) * dt / (particle_mass * Cp)
-        
-        # 5b. Apply positional mask if coil bounds provided
+        weights = np.exp(-depth / skin_depth)
+
+        # 5b. Apply positional mask if coil bounds provided (BEFORE normalization
+        # so that surface_power is distributed only among particles inside the coil)
         if coil_center is not None:
             c = np.array(coil_center, dtype=np.float64)
-            # Usually induction coils check radial distance on XZ plane, or full 3D depending on orientation.
-            # Assuming a standard 3D spherical/radial mask
             dists = np.linalg.norm(pos_np - c, axis=1)
             mask = dists <= coil_radius
-            delta_temp[~mask] = 0.0
+            weights[~mask] = 0.0
+
+        weight_sum = weights.sum()
+        if weight_sum < 1e-12:
+            return 0.0  # no particles to heat
+        delta_temp = surface_power * weights / weight_sum * dt / (particle_mass * Cp)
 
         # 6. Push new heat state
         new_temp = current_temp + delta_temp
