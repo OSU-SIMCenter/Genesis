@@ -491,31 +491,7 @@ class LegacyCoupler(RBC):
 
                             self.mpm_solver.grid[f, I, i_b].temp = T_cell_after_air - dT_rad
                         
-                        # --- Contact Cooling (Conduction with Rigid Bodies) ---
-                        if qd.static(self.rigid_solver.is_active):
-                            pos_world = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
-                            for i_g in range(self.rigid_solver.n_geoms):
-                                if geoms_info.needs_coup[i_g]:
-                                    signed_dist = sdf.sdf_func_world(
-                                        geoms_state=geoms_state,
-                                        geoms_info=geoms_info,
-                                        sdf_info=sdf_info,
-                                        pos_world=pos_world,
-                                        geom_idx=i_g,
-                                        batch_idx=i_b,
-                                    )
-                                    # If within 1 grid cell of the surface, apply contact cooling (overrides air)
-                                    if signed_dist < self.mpm_solver.dx:
-                                        h_contact = self.mpm_solver._h_contact
-                                        mass_thermal_real_c = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
-                                        k_contact = (h_contact * (self.mpm_solver.dx ** 2)) / (mass_thermal_real_c * self.mpm_solver._default_heat_capacity)
-                                        decay_contact = qd.math.exp(-k_contact * self.mpm_solver.substep_dt)
-                                        T_rigid = 293.15 # Rigid bodies are assumed infinite heat sinks
-                                        
-                                        T_cell_before_contact = self.mpm_solver.grid[f, I, i_b].temp
-                                        dT_contact = (T_cell_before_contact - T_rigid) * (1.0 - decay_contact)
-                                        self.mpm_solver.grid[f, I, i_b].dT_contact -= dT_contact
-                                        self.mpm_solver.grid[f, I, i_b].temp = T_cell_before_contact - dT_contact
+
 
                 # gravity
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
