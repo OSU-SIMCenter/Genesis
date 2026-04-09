@@ -672,6 +672,15 @@ class BaseMPMSolver(Solver):
                 with profiler.time("mpm_apply_constraints") if True else contextlib.suppress():
                     self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
+            if qd.static(self._enable_thermal) and qd.static(self.sim.coupler.rigid_solver.is_active):
+                with profiler.time("mpm_thermal_contact") if True else contextlib.suppress():
+                    self.apply_particle_thermal_contact(
+                        f,
+                        self.sim.coupler.rigid_solver.geoms_state,
+                        self.sim.coupler.rigid_solver.geoms_info,
+                        self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
+                    )
+
             # FIXME: Use existing errno mechanism for this.
             if self.sim.options.check_bounds:
                 with profiler.time("mpm_check_valid") if True else contextlib.suppress():
@@ -1407,6 +1416,54 @@ class BaseMPMSolver(Solver):
 
                 dv = self.substep_dt * (spring_force + damping_force) / mass
                 self.particles[f + 1, i_p, i_b].vel = vel + dv
+
+    @qd.kernel
+    def apply_particle_thermal_contact(
+        self,
+        f: qd.i32,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        sdf_info: array_class.SDFInfo,
+    ):
+        for i_p, i_b in qd.ndrange(self._n_particles, self._B):
+            pos_world = self.particles[f + 1, i_p, i_b].pos
+            temp_old = self.particles[f + 1, i_p, i_b].temp
+            
+            # Check distance against all rigid geometries
+            for i_g in range(self.sim.coupler.rigid_solver.n_geoms):
+                if geoms_info.needs_coup[i_g]:
+                    signed_dist = sdf.sdf_func_world(
+                        geoms_state=geoms_state,
+                        geoms_info=geoms_info,
+                        sdf_info=sdf_info,
+                        pos_world=pos_world,
+                        geom_idx=i_g,
+                        batch_idx=i_b,
+                    )
+                    
+                    # Physical Contact Trigger: the particle's physical sphere must be touching
+                    if signed_dist <= self._particle_size / 2.0:
+                        T_rigid = 293.15
+                        
+                        # Stable Thermal Mass (Real inherent mass)
+                        mass_thermal_real = self.particles_info[i_p].mass / self._particle_volume_scale
+                        Cp = self._default_heat_capacity
+                        
+                        # Contact Area of a particle (approximation: cross-section of the particle sphere)
+                        radius = self._particle_size / 2.0
+                        A_contact = qd.math.pi * (radius ** 2.0)
+                        
+                        # Apply stable exponential Robin decay
+                        h_contact = self._h_contact
+                        k_contact = (h_contact * A_contact) / (mass_thermal_real * Cp)
+                        
+                        decay_contact = qd.math.exp(-k_contact * self.substep_dt)
+                        
+                        dT_val = (temp_old - T_rigid) * (1.0 - decay_contact)
+                        temp_old = temp_old - dT_val
+                        self.particles[f + 1, i_p, i_b].dT_contact -= dT_val
+                        
+            self.particles[f + 1, i_p, i_b].temp = temp_old
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
