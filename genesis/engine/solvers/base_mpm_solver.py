@@ -672,13 +672,16 @@ class BaseMPMSolver(Solver):
                 with profiler.time("mpm_apply_constraints") if True else contextlib.suppress():
                     self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
-            if qd.static(self._enable_thermal) and qd.static(self.sim.coupler.rigid_solver.is_active):
-                with profiler.time("mpm_thermal_contact") if True else contextlib.suppress():
-                    self.apply_particle_thermal_contact(
+            if qd.static(self.sim.coupler.rigid_solver.is_active):
+                with profiler.time("mpm_particle_contact") if True else contextlib.suppress():
+                    self.apply_particle_contact(
                         f,
                         self.sim.coupler.rigid_solver.geoms_state,
                         self.sim.coupler.rigid_solver.geoms_info,
+                        self.sim.coupler.rigid_solver.links_state,
+                        self.sim.coupler.rigid_solver._rigid_global_info,
                         self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
+                        self.sim.coupler.rigid_solver.collider._collider_static_config,
                     )
 
             # FIXME: Use existing errno mechanism for this.
@@ -1418,52 +1421,109 @@ class BaseMPMSolver(Solver):
                 self.particles[f + 1, i_p, i_b].vel = vel + dv
 
     @qd.kernel
-    def apply_particle_thermal_contact(
+    def apply_particle_contact(
         self,
         f: qd.i32,
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
         sdf_info: array_class.SDFInfo,
+        collider_static_config: qd.template(),
     ):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
-            pos_world = self.particles[f + 1, i_p, i_b].pos
-            temp_old = self.particles[f + 1, i_p, i_b].temp
-            
-            # Check distance against all rigid geometries
-            for i_g in range(self.sim.coupler.rigid_solver.n_geoms):
-                if geoms_info.needs_coup[i_g]:
-                    signed_dist = sdf.sdf_func_world(
-                        geoms_state=geoms_state,
-                        geoms_info=geoms_info,
-                        sdf_info=sdf_info,
-                        pos_world=pos_world,
-                        geom_idx=i_g,
-                        batch_idx=i_b,
-                    )
-                    
-                    # Physical Contact Trigger: the particle's physical sphere must be touching
-                    if signed_dist <= self._particle_size / 2.0:
-                        T_rigid = 293.15
+            if self.particles_ng[f + 1, i_p, i_b].active:
+                pos = self.particles[f + 1, i_p, i_b].pos
+                vel = self.particles[f + 1, i_p, i_b].vel
+                
+                temp_old = qd.cast(0.0, gs.qd_float)
+                if qd.static(self._enable_thermal):
+                    temp_old = self.particles[f + 1, i_p, i_b].temp
+                
+                # Check distance against all rigid geometries
+                for i_g in qd.static(range(self.sim.coupler.rigid_solver.n_geoms)):
+                    if geoms_info.needs_coup[i_g]:
+                        signed_dist = sdf.sdf_func_world(
+                            geoms_state=geoms_state,
+                            geoms_info=geoms_info,
+                            sdf_info=sdf_info,
+                            pos_world=pos,
+                            geom_idx=i_g,
+                            batch_idx=i_b,
+                        )
                         
-                        # Stable Thermal Mass (Real inherent mass)
-                        mass_thermal_real = self.particles_info[i_p].mass / self._particle_volume_scale
-                        Cp = self._default_heat_capacity
+                        margin = self._particle_size * 0.5
                         
-                        # Contact Area of a particle (approximation: cross-section of the particle sphere)
-                        radius = self._particle_size / 2.0
-                        A_contact = qd.math.pi * (radius ** 2.0)
+                        # 1. MECHANICAL COLLISION
+                        if qd.static(self.sim.coupler._rigid_mpm):
+                            if signed_dist < margin:
+                                normal_rigid = sdf.sdf_func_normal_world(
+                                    geoms_state=geoms_state,
+                                    geoms_info=geoms_info,
+                                    rigid_global_info=rigid_global_info,
+                                    collider_static_config=collider_static_config,
+                                    sdf_info=sdf_info,
+                                    pos_world=pos,
+                                    geom_idx=i_g,
+                                    batch_idx=i_b,
+                                )
+                                
+                                # Hard non-penetration projection
+                                pos = pos - (signed_dist - margin) * normal_rigid
+                                self.particles[f + 1, i_p, i_b].pos = pos
+                                
+                                # Friction & Restitution
+                                vel_rigid = self.sim.coupler.rigid_solver._func_vel_at_point(
+                                    pos_world=pos,
+                                    link_idx=geoms_info.link_idx[i_g],
+                                    i_b=i_b,
+                                    links_state=links_state,
+                                )
+                                
+                                rvel = vel - vel_rigid
+                                rvel_normal_magnitude = rvel.dot(normal_rigid)
+                                
+                                if rvel_normal_magnitude < 0:
+                                    rvel_tan = rvel - rvel_normal_magnitude * normal_rigid
+                                    rvel_tan_norm = rvel_tan.norm(gs.EPS)
+                                    
+                                    # Tangential friction
+                                    rvel_tan = (
+                                        rvel_tan
+                                        / rvel_tan_norm
+                                        * qd.max(0.0, rvel_tan_norm + rvel_normal_magnitude * geoms_info.coup_friction[i_g])
+                                    )
+                                    # Normal restitution
+                                    rvel_normal = -normal_rigid * rvel_normal_magnitude * geoms_info.coup_restitution[i_g]
+                                    
+                                    vel = vel_rigid + rvel_tan + rvel_normal
+                                    self.particles[f + 1, i_p, i_b].vel = vel
                         
-                        # Apply stable exponential Robin decay
-                        h_contact = self._h_contact
-                        k_contact = (h_contact * A_contact) / (mass_thermal_real * Cp)
-                        
-                        decay_contact = qd.math.exp(-k_contact * self.substep_dt)
-                        
-                        dT_val = (temp_old - T_rigid) * (1.0 - decay_contact)
-                        temp_old = temp_old - dT_val
-                        self.particles[f + 1, i_p, i_b].dT_contact -= dT_val
-                        
-            self.particles[f + 1, i_p, i_b].temp = temp_old
+                        # 2. THERMAL CONTACT
+                        if qd.static(self._enable_thermal):
+                            if signed_dist <= margin: # Physical contact Trigger
+                                T_rigid = 293.15
+                                
+                                # Stable Thermal Mass (Real inherent mass)
+                                mass_thermal_real = self.particles_info[i_p].mass / self._particle_volume_scale
+                                Cp = self._default_heat_capacity
+                                
+                                # Contact Area of a particle
+                                radius = self._particle_size / 2.0
+                                A_contact = qd.math.pi * (radius ** 2.0)
+                                
+                                # Apply stable exponential Robin decay
+                                h_contact = self._h_contact
+                                k_contact = (h_contact * A_contact) / (mass_thermal_real * Cp)
+                                
+                                decay_contact = qd.math.exp(-k_contact * self.substep_dt)
+                                
+                                dT_val = (temp_old - T_rigid) * (1.0 - decay_contact)
+                                temp_old = temp_old - dT_val
+                                self.particles[f + 1, i_p, i_b].dT_contact -= dT_val
+                                
+                if qd.static(self._enable_thermal):
+                    self.particles[f + 1, i_p, i_b].temp = temp_old
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
