@@ -1108,7 +1108,11 @@ class LegacyCoupler(RBC):
                         if m_N > gs.EPS:
                             laplacian += (qd.math.min(m_C, m_N) / m_C) * (self.mpm_solver.grid[f, I_front, i_b].temp - T_C)
 
-                    alpha = self.mpm_solver._alpha_thermal
+                    # Dynamic thermal diffusivity: α(T) = k(T) / (ρ · Cp(T))
+                    k_local = self.mpm_solver.get_steel_thermal_conductivity(T_C)
+                    Cp_local = self.mpm_solver.get_steel_cp(T_C)
+                    rho = gs.qd_float(7850.0)  # kg/m^3 (AISI 4340 steel density)
+                    alpha = (k_local / (rho * Cp_local)) * self.mpm_solver._thermal_time_scale
                     dx = self.mpm_solver.dx
                     dt = self.mpm_solver.substep_dt
                     
