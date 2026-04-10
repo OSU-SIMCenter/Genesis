@@ -597,7 +597,45 @@ class StrikeController:
             self._dt_heat_sink = None
             if self.thermal_enabled and not physics_failed:
                 self._dt_heat_sink = self._apply_fixed_end_heat_sink()
-        
+
+            # --- DEBUG TEMP OVERRIDE ---
+            # Uncomment the block below to manually test visual alignment of the induction coil and press geometry.
+            # This completely overrides all thermal physics and boundary conditions to forcefully render
+            # particles inside the geometrical bounds as brightly colored (orange/yellow) for alignment debugging.
+            #
+            # import torch
+            # pos = self.env.mpm_entity.get_particles_pos()
+            # slider_x = self.qpos[0, 0].item() if self.qpos is not None else 0.0
+            # 
+            # # ** 1. Coil Calculation (1300K) **
+            # c_x = slider_x + self.env.cfg.robot.coil_offset_x
+            # dx_coil = pos[:, :, 0] - c_x
+            # coil_mask = torch.abs(dx_coil) <= (self.env.cfg.robot.coil_length / 2.0)
+            # 
+            # # ** 2. Press Calculation (1800K) **
+            # # The gripper X-position tracks the slider exactly (no offset).
+            # # The X half-length of the gripper box in the MJCF is defined as 0.5 * cylinder_radius.
+            # dx_press = pos[:, :, 0] - slider_x
+            # press_mask = torch.abs(dx_press) <= (self.env.cfg.robot.cylinder_radius * 0.5)
+            # 
+            # curr_temps = self.env.mpm_entity.get_particles_temp()
+            # # Handle shape dynamically
+            # if coil_mask.dim() < curr_temps.dim():
+            #     coil_mask = coil_mask.unsqueeze(-1)
+            #     press_mask = press_mask.unsqueeze(-1)
+            #     
+            # # Base temperature (293K)
+            # debug_temps = torch.full_like(curr_temps, 293.0)
+            # 
+            # # Overlay Coil mask (1300K - glowing orange/red)
+            # debug_temps = torch.where(coil_mask, torch.tensor(1300.0, device=pos.device, dtype=curr_temps.dtype), debug_temps)
+            # 
+            # # Overlay Press mask (1800K - bright yellow/white for contrast)
+            # debug_temps = torch.where(press_mask, torch.tensor(1800.0, device=pos.device, dtype=curr_temps.dtype), debug_temps)
+            # 
+            # self.env.mpm_entity.set_particles_temp(debug_temps)
+            # ---------------------------
+
         # --- Thermal Telemetry ---
         # Log every 3rd frame during strikes, and every 5th frame during idle/heating
         _telemetry_interval = 3 if _is_striking else 5
