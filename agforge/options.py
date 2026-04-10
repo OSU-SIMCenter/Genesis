@@ -128,7 +128,7 @@ class RobotOptions(Options):
         # --- Perform all calculations first ---
         self.cylinder_diameter = (1.0 * ureg.inch).to(ureg.meter).magnitude
         self.cylinder_radius = self.cylinder_diameter / 2
-        self.cylinder_height = 6 * self.cylinder_radius
+        self.cylinder_height = 8 * self.cylinder_radius
         self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
         self.cylinder_euler = (0.0, 90.0, 0.0)
 
