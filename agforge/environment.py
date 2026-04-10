@@ -277,21 +277,24 @@ class AgilityForgeEnv:
 
     def _setup_entities(self):
         """Creates the MPM object and the target shape visual guide."""
-        sampler_src = resource_path("pbs_samples/cylinder.ptc")
+        custom_sampler = None
         if self.cfg.env.particle_sampler != "default":
-            sampler_src = self.cfg.env.particle_sampler
+            custom_sampler = self.cfg.env.particle_sampler
+
+        material_kwargs = dict(
+            E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
+        )
+        if custom_sampler is not None:
+            material_kwargs["sampler"] = custom_sampler
 
         self.mpm_entity = self.scene.add_entity(
             material=gs.materials.MPM.ElastoPlastic(
-                E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
                 von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress,
-                sampler=sampler_src,
+                **material_kwargs,
             ) if not getattr(self.cfg.mat, 'use_johnson_cook', False) else JohnsonCookPlasticity(
-                E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
-                # J-C Params
                 A=self.cfg.mat.jc_A, B=self.cfg.mat.jc_B, n=self.cfg.mat.jc_n,
                 C=self.cfg.mat.jc_C, eps0=self.cfg.mat.jc_eps0,
-                sampler=sampler_src,
+                **material_kwargs,
             ),
             morph=gs.morphs.Cylinder(
                 radius=self.cfg.robot.cylinder_radius, height=self.cfg.robot.cylinder_height, pos=self.cfg.robot.cylinder_pos, euler=self.cfg.robot.cylinder_euler
