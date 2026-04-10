@@ -323,7 +323,7 @@ class TeleopOptions(AgilityForgeOptions):
     print_profiling_on_exit: bool = True  # Print profiler visualizations on shutdown
     
     # Induction Heater physical configurations
-    heating_power: float = 12000.0  # 12 kW (heats billet to 1000°C in ~16s with thermal_time_scale=20000)
+    heating_power: float = 10000.0  # 10 kW (heats billet to 1000°C in ~16s with thermal_time_scale=20000)
     skin_depth: Optional[float] = None # Calculated parametrically based on cylinder radius
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
