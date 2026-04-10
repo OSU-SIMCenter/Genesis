@@ -324,7 +324,7 @@ class TeleopOptions(AgilityForgeOptions):
     
     # Induction Heater physical configurations
     heating_power: float = 12000.0  # 12 kW (heats billet to 1000°C in ~16s with thermal_time_scale=20000)
-    skin_depth: float = 0.02
+    skin_depth: Optional[float] = None # Calculated parametrically based on cylinder radius
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002
@@ -359,6 +359,6 @@ class TeleopOptions(AgilityForgeOptions):
         # Override default
         self.strike.approach_speed = parametric_speed
         
-        # We can also log this if we had a logger here, but simple assignment is fine.
-        # It will be visible in the StrikeController logs.
+        # Calculate skin depth parametrically (1/3 of the cylinder radius for realistic through-heating)
+        self.skin_depth = self.robot.cylinder_radius / 3.0
 
