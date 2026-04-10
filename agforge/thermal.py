@@ -162,8 +162,11 @@ class InductionHeater:
             # so that surface_power is distributed only among particles inside the coil)
             if coil_center is not None:
                 c = np.array(coil_center, dtype=np.float64)
-                dists = np.linalg.norm(self._cached_pos - c, axis=1)
-                mask = dists <= coil_radius
+                
+                # 1D slice along the X-axis (Infinite Radius Cylinder)
+                # Note: The caller passes 'coil_length / 2.0' into the coil_radius parameter
+                dx = self._cached_pos[:, 0] - c[0]
+                mask = np.abs(dx) <= coil_radius
                 weights[~mask] = 0.0
 
             weight_sum = weights.sum()
