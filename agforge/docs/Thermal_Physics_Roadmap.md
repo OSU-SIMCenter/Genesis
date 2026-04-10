@@ -2,53 +2,64 @@
 
 This document outlines the known missing physical phenomena and architectural improvements required to upgrade the hot forging thermal simulation from its current state to a mathematically rigorous metallurgical digital twin.
 
-## 1. Thermal Radiation (Stefan-Boltzmann Law)
+## 1. Dynamic Thermal Diffusivity ($\alpha$)
+**Priority: HIGH** | **Location:** `genesis/options/solvers.py` & `legacy_coupler.py`
+
+Thermal diffusivity dictates how fast internal heat spreads through a material structure.
+- **Current Implementation:** A static `1.1e-5 m^2/s` acts globally.
+- **Missing Physics:** Diffusivity mathematically drops by >50% at 1000K because thermal conductivity explicitly decays and specific heat drastically spikes. 
+- **Impact:** The intensely hot core of the modeled billet bleeds its heat into the colder outer skin almost twice as fast as it physically should, severely blurring our visual thermal gradients.
+- **Solution:** Inject $k(T)$ and $C_p(T)$ into the Laplacian diffusion tensor sequentially.
+
+## 2. Conjugate Heat Transfer (Dynamic Die Thermodynamics)
 **Priority: HIGH** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
 
-Currently, the engine efficiently simulates internal conduction (Laplacian grid diffusion) and ambient air convection (Newton's Law of Cooling). However, at forging temperatures ($>1000$K), thermal radiation becomes the dominant mechanism for heat loss by a massive margin.
-
-- **Current Implementation:** Convection cools linearly ($T_{surface} - T_{ambient}$).
-- **Missing Physics:** Radiation scales to the fourth power ($T_{surface}^4 - T_{ambient}^4$). 
-- **Impact:** Glowing steel at 1500K currently retains heat incorrectly in open air, staying uniformly hot much longer than physical steel would in a forge.
-- **Solution:** Add a `k_radiation` scaling exponential decay factor to the "Surface Cells" detection loop inside `mpm_grid_op`, pulling heavily from the surface temperature differential.
-
-## 2. Electromagnetics: Induction Edge-Effect Crowding
-**Priority: HIGH** | **Location:** `agforge/thermal.py`
-
-The current induction heating model applies heat through a basic spatial distance field (SDF), scaling heat deposition symmetrically based on Euclidean distance away from the boundary mesh using $e^{-\text{depth}/\text{skin\_depth}}$.
-
-- **Missing Physics:** True induction heating is governed by magnetic flux lines, which violently crowd around tight geometries (sharp corners, thin flanges, extrusions). 
-- **Impact:** The SDF completely ignores geometric curvature, heating a perfectly flat plate and a sharp 90-degree corner at the exact same uniform rate. This ignores the real-world metallurgical hazard where corners melt before the core even begins to warm up.
-- **Solution:** Pre-calculate vertex curvatures on the `reconstructed_mesh` and use the curvature scalar to locally amplify the applied `surface_power` per-particle to approximate flux crowding.
-
-## 3. Thermal Strain (Volumetric Expansion)
-**Priority: MEDIUM** | **Location:** `genesis/engine/materials/MPM/elasto_plastic.py`
-
-The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Softening** (exponentially destroying Yield Stress as particles approach $T_{melt}$). However, it lacks **Thermal Strain**.
-
-- **Missing Physics:** Material expands when heated. The Deformation Gradient tensor ($F$) currently lacks a $\alpha \Delta T$ volumetric expansion multiplier. 
-- **Impact:** The steel billet does not visually or physically swell when raised from 293K to 1500K. Consequently, when the forged part eventually cools down, the engine cannot mathematically predict volumetric shrinkage tolerances.
-- **Solution:** Inject a thermal strain coefficient ($\alpha$) and structurally expand the diagonal components of the particle $U \cdot S \cdot V^T$ tracking matrices proportionally to the current Delta-T relative to $293.15$K.
-
-## 4. Sub-Routine: High-Temperature Specific Heat ($C_p$) Curves
-**Priority: LOW** | **Location:** `genesis/engine/solvers/base_mpm_solver.py`
-
-Heat capacity governs exactly how much energy is required to raise matter by $1$ Kelvin.
-
-- **Current Implementation:** $C_p$ is parsed as a universal mathematical constant (`_default_heat_capacity`).
-- **Missing Physics:** In high-carbon steels, specific heat spikes massively near phase change boundaries. 
-- **Impact:** The induction process currently heats the metal linearly up to the melting point, ignoring the immense "hidden" energy (enthalpy of fusion/phase change) required to push through the final state transformation.
-- **Solution:** Replace the single $C_p$ scalar with an interpolated curve mapped against the particle's current $T\_star$ value before executing the $dT$ thermodynamic transfer equation.
-
-## 5. Conjugate Heat Transfer (Dynamic Die Thermodynamics)
-**Priority: LOW** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
-
 When the hot billet touches the cold die, the simulation currently initiates "Contact Cooling" successfully.
-
 - **Current Implementation:** The rigid die geometries are modeled as **"Infinite Heat Sinks"** locked permanently at $293.15$K. 
 - **Missing Physics:** Real dies rapidly absorb extreme heat during high-speed hammer strikes, diminishing their contact cooling effectiveness on subsequent hits.
 - **Impact:** The simulation assumes the anvil/press is always perfectly cold, unnaturally maximizing the thermodynamic bleed-off rate from the billet during continuous striking routines.
 - **Solution:** Add macroscopic thermal arrays to `RigidSolver` bodies to track cumulative heat deposition from the MPM grid, eventually mapping cooling lines back into the die.
+
+## 3. Electromagnetics: Induction Edge-Effect Crowding
+**Priority: HIGH** | **Location:** `agforge/thermal.py`
+
+The current induction heating model applies heat through a basic spatial distance field (SDF), scaling heat deposition symmetrically based on Euclidean distance away from the boundary mesh using $e^{-\text{depth}/\text{skin\_depth}}$.
+- **Missing Physics:** True induction heating is governed by magnetic flux lines, which violently crowd around tight geometries (sharp corners, thin flanges, extrusions). 
+- **Impact:** The SDF completely ignores geometric curvature, heating a perfectly flat plate and a sharp 90-degree corner at the exact same uniform rate. This ignores the real-world metallurgical hazard where corners melt before the core even begins to warm up.
+- **Solution:** Pre-calculate vertex curvatures on the `reconstructed_mesh` and use the curvature scalar to locally amplify the applied `surface_power` per-particle to approximate flux crowding.
+
+## 4. Thermal Strain (Volumetric Expansion)
+**Priority: MEDIUM** | **Location:** `genesis/engine/materials/MPM/elasto_plastic.py`
+
+The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Softening** (exponentially destroying Yield Stress as particles approach $T_{melt}$). However, it lacks **Thermal Strain**.
+- **Missing Physics:** Material expands when heated. The Deformation Gradient tensor ($F$) currently lacks a $\alpha \Delta T$ volumetric expansion multiplier. 
+- **Impact:** The steel billet does not visually or physically swell when raised from 293K to 1500K. Consequently, when the forged part eventually cools down, the engine cannot mathematically predict volumetric shrinkage tolerances.
+- **Solution:** Inject a thermal strain coefficient ($\alpha$) and structurally expand the diagonal components of the particle $U \cdot S \cdot V^T$ tracking matrices proportionally to the current Delta-T relative to $293.15$K.
+
+## 5. Die Contact Pressure vs. Heat Transfer Coupling
+**Priority: MEDIUM** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
+
+- **Current Implementation:** Contact heat exchange drains universally at `5000 W/m²K` regardless of physical pressing force.
+- **Missing Physics:** Real microscopic metal air gaps severely limit contact conduction ($\approx 2000$) until the hydraulic press physically crushes the structural bounds together tightly ($\approx 10000+$).
+- **Impact:** The cold robotic die artificially rapidly drains heat when it is mechanically just resting gently on the billet.
+- **Solution:** Couple $h_{contact}$ geometrically to the localized particle stress tensor $\sigma_{contact}$ near the active boundary layer.
+
+## 6. Dynamic Emissivity (Scale Shedding)
+**Priority: LOW** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
+
+- **Current Implementation:** Stefan-Boltzmann Emissivity is globally locked to `0.80`.
+- **Missing Physics:** While 0.80 is immensely accurate for oxidized heat scale in open air, violently striking the billet mechanically shatters the black oxide scale, exposing the shiny raw internal steel matrix which possesses an $\approx 0.3$ emissivity.
+- **Impact:** Struck boundary surfaces should temporarily cool significantly slower via radiation than undisturbed rough surfaces.
+
+---
+
+## Implemented Features
+
+### Thermal Radiation (Stefan-Boltzmann Law)
+*Status: Successfully integrated a linearized exponential decay formulation of the Stefan-Boltzmann radiaton curve directly into the MPM grid solver.*
+
+### High-Temperature Specific Heat ($C_p$) Curves
+*Status: Replaced scalar constant with a dynamic piecewise tensor evaluated completely natively within Taichi kernels globally, and mapped directly into Python via numpy arrays.*
 
 ---
 
