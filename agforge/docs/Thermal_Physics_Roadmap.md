@@ -2,16 +2,7 @@
 
 This document outlines the known missing physical phenomena and architectural improvements required to upgrade the hot forging thermal simulation from its current state to a mathematically rigorous metallurgical digital twin.
 
-## 1. Dynamic Thermal Diffusivity ($\alpha$)
-**Priority: HIGH** | **Location:** `genesis/options/solvers.py` & `legacy_coupler.py`
-
-Thermal diffusivity dictates how fast internal heat spreads through a material structure.
-- **Current Implementation:** A static `1.1e-5 m^2/s` acts globally.
-- **Missing Physics:** Diffusivity mathematically drops by >50% at 1000K because thermal conductivity explicitly decays and specific heat drastically spikes. 
-- **Impact:** The intensely hot core of the modeled billet bleeds its heat into the colder outer skin almost twice as fast as it physically should, severely blurring our visual thermal gradients.
-- **Solution:** Inject $k(T)$ and $C_p(T)$ into the Laplacian diffusion tensor sequentially.
-
-## 2. Conjugate Heat Transfer (Dynamic Die Thermodynamics)
+## 1. Conjugate Heat Transfer (Dynamic Die Thermodynamics)
 **Priority: HIGH** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
 
 When the hot billet touches the cold die, the simulation currently initiates "Contact Cooling" successfully.
@@ -20,7 +11,7 @@ When the hot billet touches the cold die, the simulation currently initiates "Co
 - **Impact:** The simulation assumes the anvil/press is always perfectly cold, unnaturally maximizing the thermodynamic bleed-off rate from the billet during continuous striking routines.
 - **Solution:** Add macroscopic thermal arrays to `RigidSolver` bodies to track cumulative heat deposition from the MPM grid, eventually mapping cooling lines back into the die.
 
-## 3. Electromagnetics: Induction Edge-Effect Crowding
+## 2. Electromagnetics: Induction Edge-Effect Crowding
 **Priority: HIGH** | **Location:** `agforge/thermal.py`
 
 The current induction heating model applies heat through a basic spatial distance field (SDF), scaling heat deposition symmetrically based on Euclidean distance away from the boundary mesh using $e^{-\text{depth}/\text{skin\_depth}}$.
@@ -28,7 +19,7 @@ The current induction heating model applies heat through a basic spatial distanc
 - **Impact:** The SDF completely ignores geometric curvature, heating a perfectly flat plate and a sharp 90-degree corner at the exact same uniform rate. This ignores the real-world metallurgical hazard where corners melt before the core even begins to warm up.
 - **Solution:** Pre-calculate vertex curvatures on the `reconstructed_mesh` and use the curvature scalar to locally amplify the applied `surface_power` per-particle to approximate flux crowding.
 
-## 4. Thermal Strain (Volumetric Expansion)
+## 3. Thermal Strain (Volumetric Expansion)
 **Priority: MEDIUM** | **Location:** `genesis/engine/materials/MPM/elasto_plastic.py`
 
 The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Softening** (exponentially destroying Yield Stress as particles approach $T_{melt}$). However, it lacks **Thermal Strain**.
@@ -36,7 +27,7 @@ The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Soften
 - **Impact:** The steel billet does not visually or physically swell when raised from 293K to 1500K. Consequently, when the forged part eventually cools down, the engine cannot mathematically predict volumetric shrinkage tolerances.
 - **Solution:** Inject a thermal strain coefficient ($\alpha$) and structurally expand the diagonal components of the particle $U \cdot S \cdot V^T$ tracking matrices proportionally to the current Delta-T relative to $293.15$K.
 
-## 5. Die Contact Pressure vs. Heat Transfer Coupling
+## 4. Die Contact Pressure vs. Heat Transfer Coupling
 **Priority: MEDIUM** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
 
 - **Current Implementation:** Contact heat exchange drains universally at `5000 W/m²K` regardless of physical pressing force.
@@ -44,7 +35,7 @@ The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Soften
 - **Impact:** The cold robotic die artificially rapidly drains heat when it is mechanically just resting gently on the billet.
 - **Solution:** Couple $h_{contact}$ geometrically to the localized particle stress tensor $\sigma_{contact}$ near the active boundary layer.
 
-## 6. Dynamic Emissivity (Scale Shedding)
+## 5. Dynamic Emissivity (Scale Shedding)
 **Priority: LOW** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
 
 - **Current Implementation:** Stefan-Boltzmann Emissivity is globally locked to `0.80`.
@@ -60,6 +51,9 @@ The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Soften
 
 ### High-Temperature Specific Heat ($C_p$) Curves
 *Status: Replaced scalar constant with a dynamic piecewise tensor evaluated completely natively within Taichi kernels globally, and mapped directly into Python via numpy arrays.*
+
+### Dynamic Thermal Diffusivity ($\alpha$)
+*Status: Replaced the static global diffusivity constant with per-cell dynamic computation: α(T) = k(T) / (ρ · Cp(T)), using a new `get_steel_thermal_conductivity` Taichi kernel. Heat conduction now correctly slows by >50% at forging temperatures.*
 
 ---
 
