@@ -610,7 +610,9 @@ class StrikeController:
                     # Total thermal energy: E = Σ(m_real * Cp * T)
                     particle_mass_scaled = self.env.scene.sim.mpm_solver.particles_info[0].mass
                     particle_mass = particle_mass_scaled / self.env.scene.sim.mpm_solver._particle_volume_scale
-                    Cp = self.env.scene.sim.mpm_solver._default_heat_capacity
+                    import torch
+                    from agforge.thermal import get_steel_cp_numpy
+                    cp_tensor = torch.tensor(get_steel_cp_numpy(t.cpu().numpy()), device=t.device)
                     n_particles = t.numel()
                     
                     import torch
@@ -649,7 +651,7 @@ class StrikeController:
                         
                         # 1. Parallel mathematical reductions
                         n_heated = mask.sum(dim=1)
-                        sums = dTs.sum(dim=1)
+                        energy_sums = (dTs * cp_tensor).sum(dim=1)
                         
                         safe_n = n_heated.clamp(min=1).float()
                         means = (dTs * mask).sum(dim=1) / safe_n
@@ -658,15 +660,15 @@ class StrikeController:
                         maxes = dTs.amax(dim=1)
                         pks = torch.where(means < 0, mins, maxes)
                         
-                        # 2. Gather global temperature bounds
-                        global_tensor = torch.stack([t.mean(), t.min(), t.max(), t.std(), t.sum()])
+                        # 2. Gather global temperature bounds (and energy sum)
+                        global_tensor = torch.stack([t.mean(), t.min(), t.max(), t.std(), (t * cp_tensor).sum()])
                         
                         # 3. Exactly ONE PCIe cross-bus sync point!
-                        all_stats = torch.cat([global_tensor, n_heated.float(), means, pks, sums]).cpu().numpy()
+                        all_stats = torch.cat([global_tensor, n_heated.float(), means, pks, energy_sums]).cpu().numpy()
                         
                         # 4. Telemetry string generation
                         avg_t, min_t, max_t, std_t, sum_t = all_stats[:5]
-                        total_energy_kJ = (particle_mass * Cp * sum_t) / 1000.0
+                        total_energy_kJ = (particle_mass * sum_t) / 1000.0
                         
                         log_parts.append(f"♨️ THERMAL │ Avg: {avg_t:.1f}K Min: {min_t:.1f}K Max: {max_t:.1f}K σ: {std_t:.1f}K │ E: {total_energy_kJ:.1f}kJ")
                         
@@ -680,7 +682,7 @@ class StrikeController:
                         
                         for i, name in enumerate(all_dT_names):
                             if n_arr[i] > 0:
-                                energy_W = (particle_mass * Cp * sum_arr[i]) / dt_sim
+                                energy_W = (particle_mass * sum_arr[i]) / dt_sim
                                 # Format strings exactly as before
                                 log_parts.append(f"\n  {name}: {mean_arr[i]:+.2f}K avg, {pk_arr[i]:+.2f}K pk ({W_str(energy_W)})")
                     

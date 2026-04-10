@@ -464,7 +464,7 @@ class LegacyCoupler(RBC):
                             T_amb = 293.15  # Room temp
                             # N.B. mass_thermal is inflated by _particle_volume_scale; divide it out for real physics
                             mass_thermal_real = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
-                            Cp = self.mpm_solver._default_heat_capacity
+                            Cp = self.mpm_solver.get_steel_cp(T_cell)
                             A_cell = self.mpm_solver.dx ** 2  # one cell face area
 
                             # --- Air Convection: Newton's Law of Cooling ---
