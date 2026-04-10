@@ -147,14 +147,12 @@ class StrikeController:
 
         x_pos = pos[0, :, 0]  # [N] particle X positions
 
-        # Fixed region is on the +X end of the billet
-        fixed_bounds = self.env.fixed_region_bounds  # [3, 2] -> [[x_lo, x_hi], ...]
-        x_max = fixed_bounds[0, 1].item()  # Very tip of +X end
-        
-        global_x_min = x_pos.min().item()
-        L = x_max - global_x_min
-        if L <= 0:
-            return
+        # Parametrically lock the bounds to the initial cylinder dimensions
+        # This prevents the clamp zone from dragging/shrinking when the hammer squishes the billet, 
+        # and ignores the artificially oversized 'fixed_region_bounds' box.
+        L = self.env.cfg.robot.cylinder_height
+        cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
+        x_max = cylinder_center_x + (L / 2.0)
 
         # 0% to 11% from fixed end -> 100% clamped.
         # 11% to 21% from fixed end -> Smooth linear fade to 0%.
@@ -166,11 +164,24 @@ class StrikeController:
         # < x_fade  : alpha = 0.0
         alpha = ((x_pos - x_fade) / (x_clamp - x_fade)).clamp(0.0, 1.0)
 
-        # We need a true Dirichlet constraint: at alpha=1, temperature MUST be locked to ambient.
-        # Instead of scaling by dt (which acts like weak convective cooling and loses to the induction coil),
-        # we directly lerp the temperature tensor every frame.
+        # We need a true Dirichlet constraint: at alpha=1, temperature MUST be locked to a heat sink target.
+        # We decouple the physical drain from visuals: we clamp to 1/3 of the ACTIVE ZONE average temp.
+        active_mask = x_pos < x_fade
+        active_temps = temps[0][active_mask]
+        
+        if active_temps.numel() > 0:
+            active_avg = active_temps.mean().item()
+        else:
+            active_avg = T_ambient
+            
+        # Delta-T formulation: anchors at room temp, scales the gradient gap smoothly
+        target_calc = T_ambient + (active_avg - T_ambient) * (1.0 / 2.0)
+        
+        # Max out the base temperature at 900K so it never visually emits a glow, matching dummy structure
+        target_clamp_temp = min(900.0, max(T_ambient, target_calc))
+
         new_temps = temps.clone()
-        new_temps[0] = temps[0] * (1.0 - alpha) + T_ambient * alpha
+        new_temps[0] = temps[0] * (1.0 - alpha) + target_clamp_temp * alpha
         self.env.mpm_entity.set_particles_temp(new_temps)
         
         # Return dT for telemetry
@@ -808,6 +819,14 @@ class StrikeController:
                     
                     vertices_temp = (neighbor_temps * weights).sum(axis=1) / weight_sums
                     vertices_temp = vertices_temp.astype(np.float32)
+                    
+                    # NOTE ON VISUAL DECOUPLING:
+                    # We previously decoupled the physics and visual temperatures here by forcing 
+                    # vertices_temp over the clamp region to strictly 293.15K using a spatial mask.
+                    # This was abandoned because clamping the actual physical heat sink target to 850K (above) 
+                    # naturally prevents it from glowing in the renderer without needing separate arrays.
+                    # If the colormap ever breaks this aesthetic, you can re-apply an alpha mesh fade here 
+                    # directly to `vertices_temp` before it's shipped to Unity.
                 else:
                     vertices_temp = np.zeros(verts_np.shape[0], dtype=np.float32)
             else:
