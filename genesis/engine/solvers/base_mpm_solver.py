@@ -350,6 +350,20 @@ class BaseMPMSolver(Solver):
         return qd.ndrange(3, 3, 3)
 
     @qd.func
+    def get_steel_cp(self, temp):
+        # Temperature-dependent specific heat for AISI 4340 and low-alloy steels
+        cp = gs.qd_float(450.0) # Baseline room temp
+        if temp >= 1000.0:
+            cp = gs.qd_float(750.0)
+        elif temp >= 700.0:
+            u = (temp - gs.qd_float(700.0)) / gs.qd_float(300.0)
+            cp = gs.qd_float(580.0) + u * gs.qd_float(70.0)
+        elif temp > 293.15:
+            u = (temp - gs.qd_float(293.15)) / gs.qd_float(406.85)
+            cp = gs.qd_float(450.0) + u * gs.qd_float(130.0)
+        return cp
+
+    @qd.func
     def get_particle_thermal_state(self, f: qd.i32, i_p: qd.i32, i_b: qd.i32):
         temp = gs.qd_float(293.15)
         plastic_strain = gs.qd_float(0.0)
@@ -365,7 +379,7 @@ class BaseMPMSolver(Solver):
         if qd.static(self._enable_thermal):
             fraction = 0.9
             rho = self.particles_info[i_p].mass / qd.math.max(self._particle_volume, gs.EPS)
-            Cp = self._default_heat_capacity
+            Cp = self.get_steel_cp(self.particles[f, i_p, i_b].temp)
             if delta_gamma > 0.0:
                 vol_work = effective_yield * delta_gamma
                 self.particles[f, i_p, i_b].plastic_strain += delta_gamma
@@ -1501,7 +1515,8 @@ class BaseMPMSolver(Solver):
                                 
                                 # Stable Thermal Mass (Real inherent mass)
                                 mass_thermal_real = self.particles_info[i_p].mass / self._particle_volume_scale
-                                Cp = self._default_heat_capacity
+                                particle_temp_current = self.particles[f + 1, i_p, i_b].temp
+                                Cp = self.get_steel_cp(particle_temp_current)
                                 
                                 # Contact Area of a particle
                                 radius = self._particle_size / 2.0

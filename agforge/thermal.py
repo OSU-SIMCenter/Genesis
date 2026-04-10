@@ -4,6 +4,25 @@ import igl
 
 import genesis as gs
 
+def get_steel_cp_numpy(temp: np.ndarray) -> np.ndarray:
+    """Numpy vectorized computation of temperature-dependent specific heat for low-alloy steel."""
+    cp = np.full_like(temp, 450.0)
+    
+    mask_high = temp >= 1000.0
+    cp[mask_high] = 750.0
+    
+    mask_mid = (temp >= 700.0) & (temp < 1000.0)
+    if np.any(mask_mid):
+        u = (temp[mask_mid] - 700.0) / 300.0
+        cp[mask_mid] = 580.0 + u * 70.0
+        
+    mask_low = (temp > 293.15) & (temp < 700.0)
+    if np.any(mask_low):
+        u = (temp[mask_low] - 293.15) / 406.85
+        cp[mask_low] = 450.0 + u * 130.0
+        
+    return cp
+
 
 class InductionHeater:
     def __init__(self, solver, entity, reconstructor=None, static_verts=None, static_faces=None):
@@ -134,7 +153,7 @@ class InductionHeater:
             # Each particle's share: P_i = surface_power * w_i / Σ(w_j)
             particle_mass_scaled = self.solver.particles_info[0].mass
             particle_mass = particle_mass_scaled / self.solver._particle_volume_scale
-            Cp = self.solver._default_heat_capacity
+            Cp = get_steel_cp_numpy(current_temp)
             
             # Use cached weights to avoid exponential block repeats
             weights = self._cached_weights.copy()
