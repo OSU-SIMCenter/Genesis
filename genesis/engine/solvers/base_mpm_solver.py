@@ -364,6 +364,21 @@ class BaseMPMSolver(Solver):
         return cp
 
     @qd.func
+    def get_steel_thermal_conductivity(self, temp):
+        # Temperature-dependent thermal conductivity for AISI 4340 low-alloy steel (W/mK)
+        # Data from ASM Handbook Vol. 1 & MatWeb 4340 datasheet
+        k = gs.qd_float(44.0)  # Baseline room temp
+        if temp >= 1000.0:
+            k = gs.qd_float(27.0)
+        elif temp >= 700.0:
+            u = (temp - gs.qd_float(700.0)) / gs.qd_float(300.0)
+            k = gs.qd_float(35.0) - u * gs.qd_float(8.0)
+        elif temp > 293.15:
+            u = (temp - gs.qd_float(293.15)) / gs.qd_float(406.85)
+            k = gs.qd_float(44.0) - u * gs.qd_float(9.0)
+        return k
+
+    @qd.func
     def get_particle_thermal_state(self, f: qd.i32, i_p: qd.i32, i_b: qd.i32):
         temp = gs.qd_float(293.15)
         plastic_strain = gs.qd_float(0.0)
