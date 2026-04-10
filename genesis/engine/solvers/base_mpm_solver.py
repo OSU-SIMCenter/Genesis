@@ -1531,7 +1531,10 @@ class BaseMPMSolver(Solver):
                         # 2. THERMAL CONTACT
                         if qd.static(self._enable_thermal):
                             if signed_dist <= margin: # Physical contact Trigger
-                                T_rigid = 293.15
+                                T_ambient = 293.15
+                                # Interface effusivity approximation (flash boundary heating)
+                                # Steel on steel instantaneously meets exactly at the midpoint
+                                T_rigid = T_ambient + (temp_old - T_ambient) * 0.5
                                 
                                 # Stable Thermal Mass (Real inherent mass)
                                 mass_thermal_real = self.particles_info[i_p].mass / self._particle_volume_scale
