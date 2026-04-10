@@ -177,8 +177,9 @@ class StrikeController:
         # Delta-T formulation: anchors at room temp, scales the gradient gap smoothly
         target_calc = T_ambient + (active_avg - T_ambient) * (1.0 / 2.0)
         
-        # Max out the base temperature at 900K so it never visually emits a glow, matching dummy structure
-        target_clamp_temp = min(900.0, max(T_ambient, target_calc))
+        # Floor safely to ambient. Note: we no longer cap the physical boundaries to 900K! 
+        # The metal can reach 1200K natively; visualization limits are handled separately.
+        target_clamp_temp = max(T_ambient, target_calc)
 
         new_temps = temps.clone()
         new_temps[0] = temps[0] * (1.0 - alpha) + target_clamp_temp * alpha
@@ -801,6 +802,21 @@ class StrikeController:
                 
                 import scipy.spatial
                 parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
+                
+                # --- VISUAL STATE OVERRIDE ---
+                # We fade the visual temperatures of the 11-21% clamp zone down to 900K *before* the KD-Tree
+                # so the renderer keeps the dummy handle black, without capping the actual physics engine.
+                L_v = self.env.cfg.robot.cylinder_height
+                cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
+                x_max_v = cylinder_center_x + (L_v / 2.0)
+                
+                x_clamp_v = x_max_v - 0.11 * L_v
+                x_fade_v = x_max_v - 0.21 * L_v
+                
+                alpha_vis = np.clip((parts_np[:, 0] - x_fade_v) / (x_clamp_v - x_fade_v), 0.0, 1.0)
+                target_vis = np.minimum(particles_temp, 900.0)
+                particles_temp = particles_temp * (1.0 - alpha_vis) + target_vis * alpha_vis
+                
                 if isinstance(vertices_raw, torch.Tensor):
                     verts_np = vertices_raw.cpu().numpy()
                 else:
@@ -819,14 +835,6 @@ class StrikeController:
                     
                     vertices_temp = (neighbor_temps * weights).sum(axis=1) / weight_sums
                     vertices_temp = vertices_temp.astype(np.float32)
-                    
-                    # NOTE ON VISUAL DECOUPLING:
-                    # We previously decoupled the physics and visual temperatures here by forcing 
-                    # vertices_temp over the clamp region to strictly 293.15K using a spatial mask.
-                    # This was abandoned because clamping the actual physical heat sink target to 850K (above) 
-                    # naturally prevents it from glowing in the renderer without needing separate arrays.
-                    # If the colormap ever breaks this aesthetic, you can re-apply an alpha mesh fade here 
-                    # directly to `vertices_temp` before it's shipped to Unity.
                 else:
                     vertices_temp = np.zeros(verts_np.shape[0], dtype=np.float32)
             else:
