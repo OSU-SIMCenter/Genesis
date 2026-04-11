@@ -2,16 +2,7 @@
 
 This document outlines the known missing physical phenomena and architectural improvements required to upgrade the hot forging thermal simulation from its current state to a mathematically rigorous metallurgical digital twin.
 
-## 1. Conjugate Heat Transfer (Dynamic Die Thermodynamics)
-**Priority: HIGH** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
-
-When the hot billet touches the cold die, the simulation currently initiates "Contact Cooling" successfully.
-- **Current Implementation:** The rigid die geometries are modeled as **"Infinite Heat Sinks"** locked permanently at $293.15$K. 
-- **Missing Physics:** Real dies rapidly absorb extreme heat during high-speed hammer strikes, diminishing their contact cooling effectiveness on subsequent hits.
-- **Impact:** The simulation assumes the anvil/press is always perfectly cold, unnaturally maximizing the thermodynamic bleed-off rate from the billet during continuous striking routines.
-- **Solution:** Add macroscopic thermal arrays to `RigidSolver` bodies to track cumulative heat deposition from the MPM grid, eventually mapping cooling lines back into the die.
-
-## 2. Electromagnetics: Induction Edge-Effect Crowding
+## 1. Electromagnetics: Induction Edge-Effect Crowding
 **Priority: HIGH** | **Location:** `agforge/thermal.py`
 
 The current induction heating model applies heat through a basic spatial distance field (SDF), scaling heat deposition symmetrically based on Euclidean distance away from the boundary mesh using $e^{-\text{depth}/\text{skin\_depth}}$.
@@ -19,7 +10,7 @@ The current induction heating model applies heat through a basic spatial distanc
 - **Impact:** The SDF completely ignores geometric curvature, heating a perfectly flat plate and a sharp 90-degree corner at the exact same uniform rate. This ignores the real-world metallurgical hazard where corners melt before the core even begins to warm up.
 - **Solution:** Pre-calculate vertex curvatures on the `reconstructed_mesh` and use the curvature scalar to locally amplify the applied `surface_power` per-particle to approximate flux crowding.
 
-## 3. Thermal Strain (Volumetric Expansion)
+## 2. Thermal Strain (Volumetric Expansion)
 **Priority: MEDIUM** | **Location:** `genesis/engine/materials/MPM/elasto_plastic.py`
 
 The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Softening** (exponentially destroying Yield Stress as particles approach $T_{melt}$). However, it lacks **Thermal Strain**.
@@ -27,7 +18,7 @@ The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Soften
 - **Impact:** The steel billet does not visually or physically swell when raised from 293K to 1500K. Consequently, when the forged part eventually cools down, the engine cannot mathematically predict volumetric shrinkage tolerances.
 - **Solution:** Inject a thermal strain coefficient ($\alpha$) and structurally expand the diagonal components of the particle $U \cdot S \cdot V^T$ tracking matrices proportionally to the current Delta-T relative to $293.15$K.
 
-## 4. Die Contact Pressure vs. Heat Transfer Coupling
+## 3. Die Contact Pressure vs. Heat Transfer Coupling
 **Priority: MEDIUM** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
 
 - **Current Implementation:** Contact heat exchange drains universally at `5000 W/m²K` regardless of physical pressing force.
@@ -35,7 +26,7 @@ The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Soften
 - **Impact:** The cold robotic die artificially rapidly drains heat when it is mechanically just resting gently on the billet.
 - **Solution:** Couple $h_{contact}$ geometrically to the localized particle stress tensor $\sigma_{contact}$ near the active boundary layer.
 
-## 5. Dynamic Emissivity (Scale Shedding)
+## 4. Dynamic Emissivity (Scale Shedding)
 **Priority: LOW** | **Location:** `genesis/engine/couplers/legacy_coupler.py`
 
 - **Current Implementation:** Stefan-Boltzmann Emissivity is globally locked to `0.80`.
@@ -54,6 +45,18 @@ The viscoplastic Johnson-Cook implementation flawlessly handles **Thermal Soften
 
 ### Dynamic Thermal Diffusivity ($\alpha$)
 *Status: Replaced the static global diffusivity constant with per-cell dynamic computation: α(T) = k(T) / (ρ · Cp(T)), using a new `get_steel_thermal_conductivity` Taichi kernel. Heat conduction now correctly slows by >50% at forging temperatures.*
+
+### Contact Cooling (Stateless Conjugate Heat Transfer)
+*Status: Replaced the naive 293K "Infinite Sink" boundary that caused the "Freezing Anvil" effect with a dynamic interface effusivity approximation. By driving the contact layer to the exact thermodynamic midpoint between $T_{particle}$ and $293.15K$, the simulation prevents artificial surface freezing while remaining 100% stateless and deterministic for reinforcement learning and physical repeatability.*
+
+### Induction Coil Geometry (1D Cylindrical Mask)
+*Status: Replaced the original 3D spherical distance mask with a 1D X-axis slice that simulates an infinite-radius cylindrical heating zone. The coil now heats uniformly across the billet's full cross-section, defined strictly by the coil's axial length and position along X.*
+
+### Parametric Skin Depth ($\delta = R/3$)
+*Status: Replaced the hardcoded `skin_depth = 0.02` (20mm) with a parametric calculation: `skin_depth = cylinder_radius / 3.0`. This follows the industrial rule-of-thumb ($R \approx 3\delta$) for through-heating billets, and automatically adapts when billet geometry changes.*
+
+### Induction Power Calibration
+*Status: Tuned coil power from 12kW to 10kW for realistic thermal scaling of a 1-inch diameter AISI 4340 billet at deliberate teleop feed rates.*
 
 ---
 
@@ -84,19 +87,18 @@ The following are mathematical or architectural flaws in features that *are* imp
 - **Fix:** Track cumulative `plastic_strain` (already stored on particles) and compute `strain_rate` from `delta_gamma / dt`. Use these to compute the full three-term Johnson-Cook yield stress.
 - **Note:** This is more of an intentionally simplified model than a strict bug. The `plastic_strain` field is already tracked on particles (line 363) — the data is there, it just isn't fed back into the yield calculation.
 
-### Bug 4: Induction Heating Ignores `thermal_time_scale`
+### Bug 4: ~~Induction Heating Ignores `thermal_time_scale`~~ — FIXED
 **Severity: HIGH** | **Location:** `agforge/strike_controller.py` & `agforge/thermal.py`
 
-- **The Problem:** The engine's native diffusion and convection kernels in `legacy_coupler.py` correctly scale all thermal coefficients by `thermal_time_scale`. However, the Python-side induction heater (`thermal.py`) receives the raw mechanical `dt` without any scaling applied.
-- **Expected Behavior:** If `thermal_time_scale = 10` (making cooling 10x faster visually), induction heating should also inject heat 10x faster to maintain energy balance.
-- **Fix:** Multiply the `dt` passed to `step_heat()` by `thermal_time_scale`, or equivalently scale `surface_power` by the same factor.
+- **The Problem:** The engine's native diffusion and convection kernels in `legacy_coupler.py` correctly scale all thermal coefficients by `thermal_time_scale`. However, the Python-side induction heater (`thermal.py`) received the raw mechanical `dt` without any scaling applied.
+- **The Fix:** `strike_controller.py` now computes `thermal_dt = dt * _thermal_time_scale` and passes it to `step_heat()`, keeping induction heating balanced with engine-side cooling/diffusion.
 
 ### Bug 5: Contact Cooling Uses Binary SDF Threshold (Stair-Stepping)
-**Severity: LOW** | **Location:** `genesis/engine/couplers/legacy_coupler.py` (`mpm_grid_op`, lines 483-489)
+**Severity: LOW** | **Location:** `genesis/engine/solvers/base_mpm_solver.py` (`apply_particle_thermal_contact`, line ~1528)
 
-- **The Problem:** Contact cooling activates when `signed_dist < dx` (one grid cell width). This is a hard binary switch: a cell barely touching the die surface receives the exact same cooling intensity as a cell deeply embedded in the die.
+- **The Problem:** Contact cooling activates when `signed_dist <= margin` (particle radius). This is a hard binary switch: a particle barely touching the die surface receives the exact same cooling intensity as a particle deeply embedded in the die.
 - **Expected Behavior:** Contact heat transfer should interpolate smoothly based on the actual contact proximity.
-- **Fix:** Weight the contact decay coefficient by `(1.0 - signed_dist / dx)` to create a smooth gradient from full contact cooling at the surface to zero at the threshold boundary.
+- **Fix:** Weight the contact decay coefficient by `(1.0 - signed_dist / margin)` to create a smooth gradient from full contact cooling at the surface to zero at the threshold boundary.
 
 ### Bug 6: `mass` vs `mass_thermal` Gate Mismatch in Grid Operations
 **Severity: LOW** | **Location:** `genesis/engine/couplers/legacy_coupler.py` (`mpm_grid_op`, line 410 vs 417)
