@@ -23,6 +23,9 @@ class JohnsonCookPlasticity(gs.materials.MPM.Base):
         n=0.26,       # Hardening Exponent
         C=0.014,      # Strain Rate Sensitivity
         eps0=1.0,     # Reference Strain Rate
+        T_ref=293.15, # Reference Temperature (K)
+        T_melt=1793.0,# Melting Point (K)
+        jc_m=1.03,    # Thermal Softening Exponent
         sampler=None,
     ):
         super().__init__(E, nu, rho, sampler=sampler)
@@ -32,6 +35,9 @@ class JohnsonCookPlasticity(gs.materials.MPM.Base):
         self._n = n
         self._C = C
         self._eps0 = eps0
+        self._T_ref = T_ref
+        self._T_melt = T_melt
+        self._jc_m = jc_m
         
         # Initial Jp (Plastic Strain) = 0.0
         self._default_Jp = 0.0
@@ -58,9 +64,10 @@ class JohnsonCookPlasticity(gs.materials.MPM.Base):
         eps_p = Jp
         sigma_y_static = self._A + self._B * qd.math.pow(eps_p, self._n)
         
-        # We will add thermal softening (Johnson-Cook melting term) later. 
-        # For now, just pass the temperature to avoid signature errors.
-        sigma_y = sigma_y_static
+        # Thermal softening (Johnson-Cook melting term)
+        T_star = qd.math.clamp((temp - self._T_ref) / (self._T_melt - self._T_ref), gs.qd_float(0.0), gs.qd_float(1.0))
+        thermal_softening = gs.qd_float(1.0) - qd.math.pow(qd.math.max(T_star, gs.qd_float(1e-8)), self._jc_m)
+        sigma_y = sigma_y_static * thermal_softening
         
         # 3. Yield Condition (Von Mises)
         yield_dist = epsilon_hat_norm - sigma_y / (2 * self._mu)

@@ -294,6 +294,7 @@ class AgilityForgeEnv:
             ) if not getattr(self.cfg.mat, 'use_johnson_cook', False) else JohnsonCookPlasticity(
                 A=self.cfg.mat.jc_A, B=self.cfg.mat.jc_B, n=self.cfg.mat.jc_n,
                 C=self.cfg.mat.jc_C, eps0=self.cfg.mat.jc_eps0,
+                T_ref=293.15, T_melt=1793.0, jc_m=1.03,
                 **material_kwargs,
             ),
             morph=gs.morphs.Cylinder(
