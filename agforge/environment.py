@@ -284,8 +284,16 @@ class AgilityForgeEnv:
         material_kwargs = dict(
             E=self.cfg.mat.E, nu=self.cfg.mat.nu, rho=self.cfg.mat.rho,
         )
-        if custom_sampler is not None:
-            material_kwargs["sampler"] = custom_sampler
+        # --- True Physical Viscoplastic Scaling ---
+        mu = self.cfg.mat.E / (2.0 * (1.0 + self.cfg.mat.nu))
+        true_eta = 2.0e6  # Typical hot steel dynamic viscosity (Pa.s)
+        
+        # Calculate time dilation factor: simulation runs vastly slower than robot kinematics
+        unity_time_scale = 0.1 * self.cfg.sim.substeps / self.cfg.sim.dt
+        
+        # C = true_eta / (2*mu * dt * time_scale). By mapping time_scale, we artificially
+        # accelerate the viscosity so it flows gracefully for the hyper-speed controller
+        eta_over_dt = true_eta / (2.0 * mu * self.cfg.sim.dt * unity_time_scale)
 
         self.mpm_entity = self.scene.add_entity(
             material=gs.materials.MPM.ElastoPlastic(
@@ -295,6 +303,7 @@ class AgilityForgeEnv:
                 A=self.cfg.mat.jc_A, B=self.cfg.mat.jc_B, n=self.cfg.mat.jc_n,
                 C=self.cfg.mat.jc_C, eps0=self.cfg.mat.jc_eps0,
                 T_ref=293.15, T_melt=1793.0, jc_m=1.03,
+                eta_over_dt=eta_over_dt,
                 **material_kwargs,
             ),
             morph=gs.morphs.Cylinder(
