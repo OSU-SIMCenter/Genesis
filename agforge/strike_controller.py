@@ -976,33 +976,103 @@ class StrikeController:
 
     def _check_stability(self):
         """
-        Checks for numerical instability in the simulation.
-        Uses lightweight per-field queries instead of get_state() to avoid
-        copying the full particle state (deformation gradients, etc.).
-        Raises SimulationStabilityError if detected.
+        Zero-Overhead Tier-1 Stability Intercept.
+        Runs boolean threshold reductions purely on GPU to catch mid-blowups
+        without stalling the simulation pipeline.
         """
         safety = getattr(self.env.cfg, 'safety', None)
         if not safety:
             return
 
         vels = self.env.mpm_entity.get_particles_vel()
+        pos = self.env.mpm_entity.get_particles_pos()
+        
+        # Pull temperatures if available
+        temp = None
+        if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
+            temp = self.env.scene.sim.mpm_solver.particles.temp.to_torch(device=pos.device)
 
-        if safety.check_nan:
-            pos = self.env.mpm_entity.get_particles_pos()
-            has_bad = (
-                torch.isnan(vels).any()
-                | torch.isinf(vels).any()
-                | torch.isnan(pos).any()
-                | torch.isinf(pos).any()
-            )
-            if has_bad.item():
-                raise SimulationStabilityError("NaN/Inf detected in particle state")
+        # 1. NaN checks
+        has_nan = torch.isnan(vels).any() | torch.isnan(pos).any()
+        if temp is not None: 
+            has_nan |= torch.isnan(temp).any()
 
-        if safety.max_particle_velocity > 0:
-            if (torch.abs(vels) > safety.max_particle_velocity).any().item():
-                raise SimulationStabilityError(
-                    f"Particle velocity exceeds safety limit {safety.max_particle_velocity} m/s"
-                )
+        # 2. Mid-Blowup Thresholds
+        has_out_of_bounds = torch.tensor(False, device=pos.device)
+        has_super_velocity = torch.tensor(False, device=pos.device)
+        has_thermal_detonation = torch.tensor(False, device=pos.device)
+
+        if getattr(safety, 'strict_tracing_enabled', False):
+            # Compute physical boundaries (95% of config limits)
+            upper_bounds = torch.tensor(self.env.cfg.mpm.upper_bound, device=pos.device) * 0.95
+            lower_bounds = torch.tensor(self.env.cfg.mpm.lower_bound, device=pos.device) * 0.95
+            
+            # Use strict inequality on specific axes (clamp limits)
+            has_out_of_bounds = (pos > upper_bounds).any() | (pos < lower_bounds).any()
+            has_super_velocity = (vels.abs() > safety.max_particle_velocity).any()
+            
+            if temp is not None:
+                has_thermal_detonation = (temp > safety.max_temperature).any() | (temp < safety.min_temperature).any()
+
+        # 3. BULK REDUCTION -> Single PCIe Bus Sync
+        is_critical = has_nan | has_out_of_bounds | has_super_velocity | has_thermal_detonation
+
+        if is_critical.item():
+            gs.logger.error("🚨 TIER-1 STABILITY INTERCEPT TRIGGERED! Running Forensic Trace... 🚨")
+            
+            # --- Field Isolation Sequence ---
+            cause = []
+            if has_nan.item(): cause.append("NaN Detected")
+            if has_out_of_bounds.item(): cause.append("Grid Bounds Exceeded")
+            if has_super_velocity.item(): cause.append(f"Supersonic Velocity (>{safety.max_particle_velocity}m/s)")
+            if has_thermal_detonation.item(): cause.append("Thermal Detonation")
+            
+            gs.logger.error(f"-> Primary Diagnostic Triggers: {', '.join(cause)}")
+            
+            # --- Ground Zero Profiling ---
+            # We download the fields to CPU to find the exact particle
+            pos_cpu = pos.cpu()
+            vels_cpu = vels.cpu()
+            t_cpu = temp.cpu() if temp is not None else None
+            
+            # Find the indices of the failing particles based on the triggers
+            mask = torch.zeros(pos_cpu.shape[1], dtype=torch.bool, device='cpu')
+            
+            if has_nan.item():
+                mask |= torch.isnan(vels_cpu).any(dim=-1).squeeze(0)
+                mask |= torch.isnan(pos_cpu).any(dim=-1).squeeze(0)
+                if temp is not None: mask |= torch.isnan(temp.cpu()).squeeze(-1).squeeze(0)
+                
+            if has_out_of_bounds.item():
+                ub = upper_bounds.cpu()
+                lb = lower_bounds.cpu()
+                mask |= (pos_cpu > ub).any(dim=-1).squeeze(0) | (pos_cpu < lb).any(dim=-1).squeeze(0)
+                
+            if has_super_velocity.item():
+                mask |= (vels_cpu.abs() > safety.max_particle_velocity).any(dim=-1).squeeze(0)
+                
+            if has_thermal_detonation.item() and t_cpu is not None:
+                mask |= (t_cpu > safety.max_temperature).squeeze(-1).squeeze(0) | (t_cpu < safety.min_temperature).squeeze(-1).squeeze(0)
+                
+            bad_indices = torch.where(mask)[0]
+            
+            if len(bad_indices) > 0:
+                idx = bad_indices[0].item() # Take the first violating particle
+                p_pos = pos_cpu[0, idx].tolist()
+                p_vel = vels_cpu[0, idx].tolist()
+                
+                msg = f"\n[GROUND ZERO PROFILING]\n"
+                msg += f"Particle Index: {idx}\n"
+                msg += f"Position (X,Y,Z): [{p_pos[0]:.4f}, {p_pos[1]:.4f}, {p_pos[2]:.4f}]\n"
+                msg += f"Velocity (X,Y,Z): [{p_vel[0]:.4f}, {p_vel[1]:.4f}, {p_vel[2]:.4f}]\n"
+                
+                if temp is not None:
+                    p_temp = t_cpu[0, idx].item()
+                    msg += f"Temperature: {p_temp:.2f} K\n"
+                    
+                gs.logger.error(msg)
+            
+            raise SimulationStabilityError(f"Diagnostic Triggers: {', '.join(cause)}")
 
     async def reset_simulation(self):
         async with self.lock:
