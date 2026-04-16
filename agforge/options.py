@@ -304,10 +304,16 @@ class StrikeOptions(Options):
 class SafetyOptions(Options):
     """Parameters for simulation stability checks."""
     enabled: bool = True
-    max_particle_velocity: float = 500.0 # m/s - Higher than max stable speed but catches explosions
+    strict_tracing_enabled: bool = True # Gating flag for heavy threshold bounds checking
+    
+    # Thresholds for early detection (Mid-blowup catching)
+    max_particle_velocity: float = 100.0 # m/s (Supersonic catch)
+    max_temperature: float = 4000.0      # Thermal runaway threshold
+    min_temperature: float = 0.0         # Thermal collapse threshold
+    
     check_nan: bool = True
     auto_reset: bool = True
-    check_interval: int = 10 # Only check every N physics steps (avoids per-step GPU sync)
+    check_interval: int = 1 # Decrease to 1 to catch exact frame of failure
 
 class AdaptiveControlConfig(Options):
     """Configuration for adaptive control gains."""
