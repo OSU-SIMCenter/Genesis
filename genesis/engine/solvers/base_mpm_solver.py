@@ -1522,6 +1522,12 @@ class BaseMPMSolver(Solver):
                                     
                                     vel = vel_rigid + rvel_tan + rvel_normal
                                     self.particles[f + 1, i_p, i_b].vel = vel
+                                    
+                                    # SOTA APIC C-Matrix Projection
+                                    P_matrix = qd.Matrix.identity(gs.qd_float, 3) - normal_rigid.outer_product(normal_rigid)
+                                    # Project out the normal gradient to flatten it against the press,
+                                    # and apply a PIC downgrade (damping) to absorb the inelastic shock.
+                                    self.particles[f + 1, i_p, i_b].C = (P_matrix @ self.particles[f + 1, i_p, i_b].C) * gs.qd_float(0.1)
                         
                         # 2. THERMAL CONTACT
                         if qd.static(self._enable_thermal):
