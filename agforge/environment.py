@@ -288,12 +288,11 @@ class AgilityForgeEnv:
         mu = self.cfg.mat.E / (2.0 * (1.0 + self.cfg.mat.nu))
         true_eta = 2.0e6  # Typical hot steel dynamic viscosity (Pa.s)
         
-        # Calculate time dilation factor: simulation runs vastly slower than robot kinematics
-        unity_time_scale = 0.1 * self.cfg.sim.substeps / self.cfg.sim.dt
         
-        # C = true_eta / (2*mu * dt * time_scale). By mapping time_scale, we artificially
-        # accelerate the viscosity so it flows gracefully for the hyper-speed controller
-        eta_over_dt = true_eta / (2.0 * mu * self.cfg.sim.dt * unity_time_scale)
+        
+        # C = true_eta / (2*mu * dt). We calculate the true viscosity factor for the solver.
+        # Time-scaling is no longer used here; the Perzyna kernel handles rigid flow dynamically.
+        eta_over_dt = true_eta / (2.0 * mu * self.cfg.sim.dt)
 
         self.mpm_entity = self.scene.add_entity(
             material=gs.materials.MPM.ElastoPlastic(

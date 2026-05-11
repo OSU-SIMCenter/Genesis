@@ -74,7 +74,13 @@ class JohnsonCookPlasticity(gs.materials.MPM.Base):
         if yield_dist > 0:  # Yields
             delta_gamma = gs.qd_float(0.0)
             two_mu = gs.qd_float(2.0) * self._mu
-            eta_dt = self._eta_over_dt
+            
+            # K controls the exponential growth of viscosity as the metal cools.
+            # A value of K=10.0 means cold steel is ~22,000x more viscous than hot steel.
+            K = gs.qd_float(10.0) 
+            
+            # eta_dt grows exponentially as T_star approaches 0 (cold)
+            eta_dt = self._eta_over_dt * qd.math.exp(K * (gs.qd_float(1.0) - T_star))
             
             # --- 1. Bisection (Robust Bracket Search - 10 iterations) ---
             g_low = gs.qd_float(0.0)

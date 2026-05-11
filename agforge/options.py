@@ -33,10 +33,10 @@ class MaterialOptions(Options):
     rho: float = 8000.
     von_mises_yield_stress: float = 190.e6 * 0.1
 
-    # Johnson-Cook Parameters (Hot Steel ~1200C)
+    # Johnson-Cook Parameters (True Room Temperature 4340 Steel)
     use_johnson_cook: bool = True
-    jc_A: float = 40.e6   # ~40 MPa (Very Hot)
-    jc_B: float = 100.e6  # Reduced hardening
+    jc_A: float = 792.e6  # 792 MPa (Room Temp Yield)
+    jc_B: float = 510.e6  # 510 MPa (Room Temp Hardening)
     jc_n: float = 0.26
     jc_C: float = 0.014
     jc_eps0: float = 1.0
@@ -214,12 +214,12 @@ class AgilityForgeOptions(Options):
     def model_post_init(self, __context: any) -> None:
         # --- Perform all calculations first ---
         self.sim = SimOptions(
-            dt=1.4e-6 * 8,
+            dt=1.0,
             substeps=8,
             gravity=(0, 0, 0),
             check_bounds=not self.performance_mode,
         )
-        self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt)
+        self.robot = RobotOptions(robot_time_to_seconds=1.0 / self.sim.dt)
         self.mpm = MPMOptions(
             grid_density=self.robot.base_grid_density,
             particle_size=0.8 * 0.01 * 64.0 / self.robot.base_grid_density,
@@ -228,7 +228,7 @@ class AgilityForgeOptions(Options):
             enable_CPIC=True,  # Improved rigid-MPM contact accuracy
             enable_thermal=True,
             default_initial_temperature=293.0,
-            thermal_time_scale=20000.0,  # Map thermal time to wall-clock time (balanced heating/cooling)
+            thermal_time_scale=1.0,  # True real-time physical diffusion
         )
         self.env = EnvOptions(
             num_envs=1,
@@ -286,7 +286,7 @@ class StrikeOptions(Options):
     contact_force_threshold: float = 150.0 # Force threshold to detect contact
     
     target_strain: float = 0.5 # 50% reduction
-    pressing_speed: float = 30.0 # m/s
+    pressing_speed: float = 0.000336 # m/s (scaled for dt=1.0)
     
     # Force Balance Control
     # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).
@@ -329,7 +329,7 @@ class TeleopOptions(AgilityForgeOptions):
     print_profiling_on_exit: bool = True  # Print profiler visualizations on shutdown
     
     # Induction Heater physical configurations
-    heating_power: float = 10000.0  # 10 kW (heats billet to 1000°C in ~16s with thermal_time_scale=20000)
+    heating_power: float = 10000.0  # 10 kW (physically heats a 6kg billet to 1000°C in ~4.5 minutes real-time)
     skin_depth: Optional[float] = None # Calculated parametrically based on cylinder radius
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
