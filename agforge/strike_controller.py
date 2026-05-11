@@ -120,7 +120,7 @@ class StrikeController:
         # or just assume standard values if not critical. 
         # Better: Import it to be safe.
         from agforge.agforge_builder import RobotXMLGenerator
-        xml_generator = RobotXMLGenerator(robot_cfg=self.env.cfg.robot)
+        xml_generator = RobotXMLGenerator(cfg=self.env.cfg)
         self.gripper_closed_pos = xml_generator.gripper_slide_range[1]
         self.gripper_open_pos = xml_generator.gripper_slide_range[0]
 

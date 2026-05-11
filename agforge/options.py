@@ -30,7 +30,7 @@ class MaterialOptions(Options):
     """Parameters for the elasto-plastic material."""
     E: float = 200.e9 * 0.25
     nu: float = 0.28
-    rho: float = 8000.
+    rho: float = 8000. * 8e5  # 8000 kg/m³ base × 1e6 mass scaling factor
     von_mises_yield_stress: float = 190.e6 * 0.1
 
     # Johnson-Cook Parameters (True Room Temperature 4340 Steel)
@@ -117,6 +117,7 @@ class RobotOptions(Options):
     _kp: object = None
     _kv: object = None
     clamp_force: float = 196200.0
+    gripper_mass_ratio: float = 1000.0
 
     class Config:
         arbitrary_types_allowed = True
@@ -214,7 +215,7 @@ class AgilityForgeOptions(Options):
     def model_post_init(self, __context: any) -> None:
         # --- Perform all calculations first ---
         self.sim = SimOptions(
-            dt=1.0,
+            dt=0.01,
             substeps=8,
             gravity=(0, 0, 0),
             check_bounds=not self.performance_mode,
@@ -286,7 +287,7 @@ class StrikeOptions(Options):
     contact_force_threshold: float = 150.0 # Force threshold to detect contact
     
     target_strain: float = 0.5 # 50% reduction
-    pressing_speed: float = 0.000336 # m/s (scaled for dt=1.0)
+    pressing_speed: float = 0.0254 # 1 inch per second in m/s
     
     # Force Balance Control
     # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).

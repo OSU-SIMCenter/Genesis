@@ -91,11 +91,13 @@ class AgilityForgeManipulator:
 
     def apply_velocity(self, velocity: torch.Tensor, dofs_idx_local=None):
         """
-        Applies velocity control by setting both the physical velocity state and the PD controller target.
-        This provides 'stiff' velocity tracking suitable for the approaching stage.
+        Applies velocity control by disabling the internal PD controller and explicitly setting the kinematic state.
+        This provides pure velocity tracking without PD interference.
         """
+        # Disable the PD controller by setting the mode to FORCE and the target force to 0.0
+        self.entity.control_dofs_force(torch.zeros_like(velocity), dofs_idx_local=dofs_idx_local)
+        # Explicitly set the velocity state for the current frame
         self.entity.set_dofs_velocity(velocity, dofs_idx_local=dofs_idx_local)
-        self.entity.control_dofs_velocity(velocity, dofs_idx_local=dofs_idx_local)
 
     def get_gripper_net_contact_force(self):
         """

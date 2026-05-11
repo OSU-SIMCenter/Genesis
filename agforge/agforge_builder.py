@@ -14,9 +14,21 @@ class RobotXMLGenerator:
     The robot's dimensions and joint ranges are parametrically derived from 
     the cylinder's properties in the provided configuration.
     """
-    def __init__(self, robot_cfg: RobotOptions):
+    def __init__(self, cfg: AgilityForgeOptions):
+        self.cfg = cfg
+        robot_cfg = cfg.robot
         self.kp = robot_cfg.kp
         self.kv = robot_cfg.kv
+        
+        # Calculate parametric gripper mass
+        # Billet is a cylinder, so V = pi * r^2 * h
+        billet_volume = np.pi * (robot_cfg.cylinder_radius ** 2) * robot_cfg.cylinder_height
+        billet_mass = cfg.mat.rho * billet_volume
+        self.gripper_mass = billet_mass * robot_cfg.gripper_mass_ratio
+        
+        # Scale inertia proportionally. Base was 0.5kg with 0.001 inertia.
+        inertia_val = 0.001 * (self.gripper_mass / 0.5)
+        self.gripper_inertia_str = f"{inertia_val:.4f} {inertia_val:.4f} {inertia_val:.4f}"
         
         # Gripper geometry is sized to handle the cylinder
         self.gripper_size = np.array([
@@ -78,12 +90,12 @@ class RobotXMLGenerator:
         <body name="clamp_bar" pos="0 0 0">
           <inertial pos="0 0 0" mass="1.0" diaginertia="0.01 0.01 0.01"/>
           <body name="left_gripper" pos="0 {-self.gripper_start_pos_y:.4f} 0">
-            <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
+            <inertial pos="0 0 0" mass="{self.gripper_mass:.4f}" diaginertia="{self.gripper_inertia_str}"/>
             <joint name="left_gripper_slide" type="slide" axis="0 1 0" range="{self._to_str(self.gripper_slide_range)}"/>
             <geom type="box" size="{self._to_str(self.gripper_size)}" material="gripper"/>
           </body>
           <body name="right_gripper" pos="0 {self.gripper_start_pos_y:.4f} 0">
-            <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
+            <inertial pos="0 0 0" mass="{self.gripper_mass:.4f}" diaginertia="{self.gripper_inertia_str}"/>
             <joint name="right_gripper_slide" type="slide" axis="0 -1 0" range="{self._to_str(self.gripper_slide_range)}"/>
             <geom type="box" size="{self._to_str(self.gripper_size)}" material="gripper"/>
           </body>
@@ -115,7 +127,7 @@ def build_env(cfg: AgilityForgeOptions) -> AgilityForgeEnv:
     """
     # --- Step 1: Dynamically generate the robot XML ---
     print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
-    generator = RobotXMLGenerator(robot_cfg=cfg.robot)
+    generator = RobotXMLGenerator(cfg=cfg)
     generator.write_to_file()
 
     # --- Step 2: Initialize Genesis and create environment ---
