@@ -108,6 +108,12 @@ class StrikeController:
         self._physics_step_counter = 0
         self._stability_grace_steps = 0  # Suppress checks after undo/reset to let state settle
 
+        # Diagnostic timing state
+        self._diag_start_real_time = time.time()
+        self._diag_last_real_time = self._diag_start_real_time
+        self._diag_last_sim_time = 0.0
+        self._diag_last_step = 0
+
     def _init_gripper_limits(self):
         # We can re-use the XML generator logic or just hardcode if standard.
         # Since agforge_builder is where RobotXMLGenerator lives, we might need to import it
@@ -548,8 +554,7 @@ class StrikeController:
                     # Hardcode Y to 0 and Z to the cylinder's world center
                     coil_center = [dynamic_coil_x, 0.0, self.env.cfg.robot.cylinder_pos[2]]
                     
-                    # Scale dt by thermal_time_scale so induction heating
-                    # is balanced with engine-side cooling/diffusion
+                    # Use real-time physical dt for induction heating calculation
                     thermal_dt = self.env.scene.sim.dt * self.env.scene.sim.mpm_solver._thermal_time_scale
 
                     self.heater.step_heat(
@@ -728,6 +733,39 @@ class StrikeController:
                         gs.logger.info("".join(log_parts))
                 except Exception as e:
                     gs.logger.warning(f"Thermal telemetry failed: {e}")
+
+        # --- Diagnostic Telemetry ---
+        with self._profile("teleop_diagnostics"):
+            # Log diagnostics every 50 frames
+            if self._physics_step_counter > 0 and self._physics_step_counter % 50 == 0:
+                current_time = time.time()
+                
+                # Incremental calculation
+                elapsed_real_time = current_time - self._diag_last_real_time
+                steps_taken = self._physics_step_counter - self._diag_last_step
+                
+                # Cumulative calculation
+                cumulative_real_time = current_time - self._diag_start_real_time
+                
+                if elapsed_real_time > 0 and steps_taken > 0 and cumulative_real_time > 0:
+                    dt = self.env.scene.sim.dt
+                    substeps = getattr(self.env.scene.sim, '_substeps', 1)
+                    
+                    # Incremental metrics
+                    steps_per_sec = steps_taken / elapsed_real_time
+                    substeps_per_sec = steps_per_sec * substeps
+                    sim_time_passed = steps_taken * dt
+                    time_ratio = sim_time_passed / elapsed_real_time
+                    
+                    # Cumulative metrics
+                    cumulative_sim_time = self._physics_step_counter * dt
+                    cumulative_ratio = cumulative_sim_time / cumulative_real_time
+                    
+                    gs.logger.info(f"⏱️ DIAGNOSTICS (Incremental) │ Real: {elapsed_real_time:.2f}s │ Sim: {sim_time_passed:.4f}s │ Ratio: {time_ratio:,.2f}x │ Speed: {steps_per_sec:.1f} step/s ({substeps_per_sec:.1f} sub/s)")
+                    gs.logger.info(f"📈 DIAGNOSTICS (Cumulative)  │ Real: {cumulative_real_time:.2f}s │ Sim: {cumulative_sim_time:.4f}s │ Ratio: {cumulative_ratio:,.2f}x │ dt: {dt}")
+                    
+                self._diag_last_real_time = current_time
+                self._diag_last_step = self._physics_step_counter
 
         # 4b. Stability Check (separate from physics for accurate profiling)
         # - Always fires on physics exceptions (regardless of grace period)
