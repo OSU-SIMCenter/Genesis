@@ -1,0 +1,715 @@
+[Genesis] [18:40:45] [INFO] PRESSING[27]: F=[4991.008,4903.084] dF=87.9243, v=[29.9868,30.0132] corr=0.0132
+[Genesis] [18:40:45] [INFO] ♨️ THERMAL │ Avg: 783.1K Min: 567.0K Max: 988.9K σ: 146.7K │ E: 192.8kJ
+  Convection: -0.18K avg, -3.31K pk (-1.8MW)
+  Radiation: -0.41K avg, -6.79K pk (-4.1MW)
+  Contact: -29.87K avg, -31.29K pk (-10.3MW)
+  Adiabatic: +0.07K avg, +0.53K pk (+679.3kW)
+  HeatSink: -10.25K avg, -18.39K pk (-44.4MW)
+[Genesis] [18:40:45] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 6667.03 | Active CPIC Nodes: 9
+[Genesis] [18:40:45] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 6510.17 | Active CPIC Nodes: 10
+[Genesis] [18:40:46] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 6202.68 | Active CPIC Nodes: 69
+[Genesis] [18:40:46] [INFO] PRESSING[30]: F=[17921.822,17801.338] dF=120.4844, v=[29.9819,30.0181] corr=0.0181
+[Genesis] [18:40:46] [INFO] ♨️ THERMAL │ Avg: 774.3K Min: 562.1K Max: 975.2K σ: 143.4K │ E: 189.9kJ
+  Convection: -0.18K avg, -10.97K pk (-1.9MW)
+  Radiation: -0.39K avg, -12.78K pk (-4.2MW)
+  Contact: -29.47K avg, -30.82K pk (-12.0MW)
+  Adiabatic: +0.11K avg, +0.77K pk (+1.1MW)
+  HeatSink: -10.21K avg, -18.24K pk (-44.1MW)
+[Genesis] [18:40:46] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5797.94 | Active CPIC Nodes: 55
+[Genesis] [18:40:46] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5224.97 | Active CPIC Nodes: 67
+[Genesis] [18:40:46] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4657.24 | Active CPIC Nodes: 63
+[Genesis] [18:40:46] [INFO] PRESSING[33]: F=[15994.406,15654.583] dF=339.8232, v=[29.9490,30.0510] corr=0.0510
+[Genesis] [18:40:46] [INFO] ♨️ THERMAL │ Avg: 765.2K Min: 557.0K Max: 960.9K σ: 139.9K │ E: 186.9kJ
+  Convection: -0.19K avg, -15.63K pk (-2.0MW)
+  Radiation: -0.39K avg, -11.68K pk (-4.2MW)
+  Contact: -29.34K avg, -30.23K pk (-13.5MW)
+  Adiabatic: +0.09K avg, +0.80K pk (+968.2kW)
+  HeatSink: -10.21K avg, -18.16K pk (-44.0MW)
+[Genesis] [18:40:46] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4066.13 | Active CPIC Nodes: 70
+[Genesis] [18:40:47] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3582.16 | Active CPIC Nodes: 70
+[Genesis] [18:40:47] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3712.23 | Active CPIC Nodes: 87
+[Genesis] [18:40:47] [INFO] PRESSING[36]: F=[6867.505,6897.688] dF=-30.1826, v=[30.0045,29.9955] corr=-0.0045
+[Genesis] [18:40:47] [INFO] ♨️ THERMAL │ Avg: 755.9K Min: 551.8K Max: 946.0K σ: 136.3K │ E: 183.8kJ
+  Convection: -0.27K avg, -56.57K pk (-2.7MW)
+  Radiation: -0.42K avg, -22.79K pk (-4.2MW)
+  Contact: -28.52K avg, -29.67K pk (-14.3MW)
+  Adiabatic: +0.08K avg, +0.77K pk (+812.2kW)
+  HeatSink: -10.20K avg, -18.05K pk (-43.8MW)
+[Genesis] [18:40:47] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3806.25 | Active CPIC Nodes: 75
+[Genesis] [18:40:47] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3729.18 | Active CPIC Nodes: 94
+[Genesis] [18:40:47] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5518.03 | Active CPIC Nodes: 86
+[Genesis] [18:40:47] [INFO] PRESSING[39]: F=[8917.291,9035.890] dF=-118.5986, v=[30.0178,29.9822] corr=-0.0178
+[Genesis] [18:40:48] [INFO] ♨️ THERMAL │ Avg: 746.3K Min: 546.4K Max: 930.3K σ: 132.5K │ E: 180.7kJ
+  Convection: -0.25K avg, -57.12K pk (-2.5MW)
+  Radiation: -0.37K avg, -7.58K pk (-3.7MW)
+  Contact: -27.93K avg, -29.11K pk (-17.1MW)
+  Adiabatic: +0.10K avg, +1.42K pk (+1.1MW)
+  HeatSink: -10.18K avg, -17.93K pk (-43.6MW)
+[Genesis] [18:40:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5707.16 | Active CPIC Nodes: 87
+[Genesis] [18:40:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5729.77 | Active CPIC Nodes: 107
+[Genesis] [18:40:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5707.78 | Active CPIC Nodes: 87
+[Genesis] [18:40:48] [INFO] PRESSING[42]: F=[26111.318,26247.127] dF=-135.8086, v=[30.0204,29.9796] corr=-0.0204
+[Genesis] [18:40:48] [INFO] ♨️ THERMAL │ Avg: 736.8K Min: 541.1K Max: 914.9K σ: 129.0K │ E: 177.6kJ
+  Convection: -0.20K avg, -16.62K pk (-1.9MW)
+  Radiation: -0.35K avg, -5.87K pk (-3.5MW)
+  Contact: -27.05K avg, -28.58K pk (-16.8MW)
+  Adiabatic: +0.11K avg, +1.48K pk (+1.2MW)
+  HeatSink: -10.09K avg, -17.76K pk (-43.0MW)
+[Genesis] [18:40:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5623.60 | Active CPIC Nodes: 182
+[Genesis] [18:40:48] [INFO] Strike -> RELEASE (Target Strain, strain=0.5130, steps=43, time=6.81s)
+[Genesis] [18:40:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3188.73 | Active CPIC Nodes: 120
+[Genesis] [18:40:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 2743.11 | Active CPIC Nodes: 44
+[Genesis] [18:40:49] [INFO] RELEASE[45]: F=[-255.000,-235.027] dF=-19.9723
+[Genesis] [18:40:49] [INFO] ♨️ THERMAL │ Avg: 729.7K Min: 537.2K Max: 903.1K σ: 127.6K │ E: 175.3kJ
+  Convection: -0.16K avg, -2.86K pk (-1.6MW)
+  Radiation: -0.32K avg, -5.74K pk (-3.3MW)
+  Contact: -24.46K avg, -27.44K pk (-1.3MW)
+  Adiabatic: +0.03K avg, +0.12K pk (+250.3kW)
+  HeatSink: -9.57K avg, -17.08K pk (-40.7MW)
+[Genesis] [18:40:49] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 2371.51 | Active CPIC Nodes: 8
+[Genesis] [18:40:49] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 2244.97 | Active CPIC Nodes: 3
+[Genesis] [18:40:49] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 13445.40 | Active CPIC Nodes: 4
+[Genesis] [18:40:49] [INFO] RELEASE[48]: F=[-39.983,-42.329] dF=2.3458
+[Genesis] [18:40:49] [INFO] ♨️ THERMAL │ Avg: 722.8K Min: 533.3K Max: 894.9K σ: 126.2K │ E: 173.1kJ
+  Convection: -0.16K avg, -2.73K pk (-1.6MW)
+  Radiation: -0.31K avg, -5.48K pk (-3.2MW)
+  Contact: -10.16K avg, -20.32K pk (-289.6kW)
+  Adiabatic: +0.02K avg, +1.09K pk (+204.7kW)
+  HeatSink: -9.27K avg, -16.58K pk (-39.3MW)
+[Genesis] [18:40:49] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 14534.67 | Active CPIC Nodes: 5
+[Genesis] [18:40:49] [INFO] Strike -> IDLE (Stabilizing for 10 steps)
+[Genesis] [18:40:49] [INFO]   Summary: total_time=8.98s, steps=49, final_width=0.0257
+[Genesis] [18:40:49] [INFO] Checkpoint saved (stack=5, mesh_verts=3560)
+[Genesis] [18:40:50] [INFO] ♨️ THERMAL │ Avg: 720.6K Min: 532.1K Max: 892.4K σ: 125.8K │ E: 172.4kJ
+  Convection: -0.16K avg, -2.61K pk (-1.6MW)
+  Radiation: -0.31K avg, -5.59K pk (-3.2MW)
+  Adiabatic: +0.02K avg, +1.04K pk (+199.0kW)
+  HeatSink: -9.19K avg, -16.44K pk (-39.0MW)
+[Genesis] [18:40:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 15558.66 | Active CPIC Nodes: 0
+[Genesis] [18:40:50] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:50] [WARNING]       ├─ Pos: [-0.0459, -0.0048, 0.0886] | Vel: [1.55, 1.40, 22.65]
+[Genesis] [18:40:50] [WARNING]       ├─ Temp: 876.6K (Softening Liquid? False)
+[Genesis] [18:40:50] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9983137845993042, 0.0, 0.0, 0.0, 0.9855883717536926, 0.0, 0.0, 0.0, 0.9844210743904114]
+[Genesis] [18:40:50] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:50] [WARNING]       ├─ Volume Determinant det(F): 0.968598 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:50] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0218 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 14499.01 | Active CPIC Nodes: 0
+[Genesis] [18:40:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 14345.74 | Active CPIC Nodes: 0
+[Genesis] [18:40:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 14307.56 | Active CPIC Nodes: 0
+[Genesis] [18:40:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 14280.07 | Active CPIC Nodes: 0
+[Genesis] [18:40:50] [INFO] ♨️ THERMAL │ Avg: 709.9K Min: 526.1K Max: 880.3K σ: 123.6K │ E: 169.0kJ
+  Convection: -0.16K avg, -2.35K pk (-1.6MW)
+  Radiation: -0.29K avg, -5.54K pk (-3.0MW)
+  Adiabatic: +0.03K avg, +1.01K pk (+134.7kW)
+  HeatSink: -8.85K avg, -15.84K pk (-37.4MW)
+[Genesis] [18:40:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 14331.78 | Active CPIC Nodes: 0
+[Genesis] [18:40:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 14494.76 | Active CPIC Nodes: 0
+[Genesis] [18:40:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 14761.48 | Active CPIC Nodes: 0
+[Genesis] [18:40:51] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 15050.71 | Active CPIC Nodes: 0
+[Genesis] [18:40:51] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:51] [WARNING]       ├─ Pos: [-0.0459, -0.0046, 0.0887] | Vel: [1.36, -11.28, 16.85]
+[Genesis] [18:40:51] [WARNING]       ├─ Temp: 858.0K (Softening Liquid? False)
+[Genesis] [18:40:51] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9983170032501221, 0.0, 0.0, 0.0, 0.986453652381897, 0.0, 0.0, 0.0, 0.9853292107582092]
+[Genesis] [18:40:51] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:51] [WARNING]       ├─ Volume Determinant det(F): 0.970345 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:51] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0211 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:51] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 15343.58 | Active CPIC Nodes: 0
+[Genesis] [18:40:51] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:51] [WARNING]       ├─ Pos: [-0.0459, -0.0047, 0.0887] | Vel: [1.46, -11.75, 17.01]
+[Genesis] [18:40:51] [WARNING]       ├─ Temp: 855.6K (Softening Liquid? False)
+[Genesis] [18:40:51] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.99833083152771, 0.0, 0.0, 0.0, 0.9861679077148438, 0.0, 0.0, 0.0, 0.9850571155548096]
+[Genesis] [18:40:51] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:51] [WARNING]       ├─ Volume Determinant det(F): 0.969811 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:51] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0215 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:51] [INFO] Stabilization complete
+[Genesis] [18:40:51] [INFO] ♨️ THERMAL │ Avg: 699.5K Min: 520.3K Max: 868.5K σ: 121.3K │ E: 165.7kJ
+  Convection: -0.15K avg, -2.46K pk (-1.5MW)
+  Radiation: -0.28K avg, -5.22K pk (-2.8MW)
+  Adiabatic: +0.05K avg, +1.19K pk (+175.4kW)
+  HeatSink: -8.53K avg, -15.27K pk (-35.9MW)
+[Genesis] [18:40:51] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 15686.40 | Active CPIC Nodes: 0
+[Genesis] [18:40:51] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:51] [WARNING]       ├─ Pos: [-0.0459, -0.0047, 0.0887] | Vel: [1.50, -12.11, 17.27]
+[Genesis] [18:40:51] [WARNING]       ├─ Temp: 853.2K (Softening Liquid? False)
+[Genesis] [18:40:51] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9983615875244141, 0.0, 0.0, 0.0, 0.9858469367027283, 0.0, 0.0, 0.0, 0.9847481846809387]
+[Genesis] [18:40:51] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:51] [WARNING]       ├─ Volume Determinant det(F): 0.969221 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:51] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0220 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:51] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 16053.04 | Active CPIC Nodes: 0
+[Genesis] [18:40:51] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:51] [WARNING]       ├─ Pos: [-0.0459, -0.0048, 0.0886] | Vel: [1.52, -12.27, 17.68]
+[Genesis] [18:40:51] [WARNING]       ├─ Temp: 850.8K (Softening Liquid? False)
+[Genesis] [18:40:51] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9984170198440552, 0.0, 0.0, 0.0, 0.985480785369873, 0.0, 0.0, 0.0, 0.9844076037406921]
+[Genesis] [18:40:51] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:51] [WARNING]       ├─ Volume Determinant det(F): 0.968579 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:51] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0225 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:51] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 16435.31 | Active CPIC Nodes: 0
+[Genesis] [18:40:51] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:51] [WARNING]       ├─ Pos: [-0.0459, -0.0048, 0.0886] | Vel: [1.51, -12.21, 18.14]
+[Genesis] [18:40:51] [WARNING]       ├─ Temp: 848.4K (Softening Liquid? False)
+[Genesis] [18:40:51] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9984583854675293, 0.0, 0.0, 0.0, 0.9851366281509399, 0.0, 0.0, 0.0, 0.9840759634971619]
+[Genesis] [18:40:51] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:51] [WARNING]       ├─ Volume Determinant det(F): 0.967955 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:51] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0230 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:52] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 16784.85 | Active CPIC Nodes: 0
+[Genesis] [18:40:52] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:52] [WARNING]       ├─ Pos: [-0.0459, -0.0049, 0.0886] | Vel: [1.47, -11.92, 18.69]
+[Genesis] [18:40:52] [WARNING]       ├─ Temp: 846.1K (Softening Liquid? False)
+[Genesis] [18:40:52] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9985250234603882, 0.0, 0.0, 0.0, 0.9848019480705261, 0.0, 0.0, 0.0, 0.9837532639503479]
+[Genesis] [18:40:52] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:52] [WARNING]       ├─ Volume Determinant det(F): 0.967372 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:52] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0235 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:52] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17069.97 | Active CPIC Nodes: 0
+[Genesis] [18:40:52] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:52] [WARNING]       ├─ Pos: [-0.0459, -0.0049, 0.0886] | Vel: [1.46, -11.45, 19.26]
+[Genesis] [18:40:52] [WARNING]       ├─ Temp: 843.7K (Softening Liquid? False)
+[Genesis] [18:40:52] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9985756278038025, 0.0, 0.0, 0.0, 0.98454350233078, 0.0, 0.0, 0.0, 0.9835098385810852]
+[Genesis] [18:40:52] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:52] [WARNING]       ├─ Volume Determinant det(F): 0.966928 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:52] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0239 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:52] [INFO] ♨️ THERMAL │ Avg: 689.5K Min: 514.7K Max: 856.7K σ: 119.0K │ E: 162.6kJ
+  Convection: -0.15K avg, -2.60K pk (-1.5MW)
+  Radiation: -0.26K avg, -4.78K pk (-2.7MW)
+  Adiabatic: +0.07K avg, +1.45K pk (+182.7kW)
+  HeatSink: -8.24K avg, -14.74K pk (-34.5MW)
+[Genesis] [18:40:52] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17298.04 | Active CPIC Nodes: 0
+[Genesis] [18:40:52] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:52] [WARNING]       ├─ Pos: [-0.0459, -0.0049, 0.0886] | Vel: [1.49, -10.82, 19.78]
+[Genesis] [18:40:52] [WARNING]       ├─ Temp: 841.3K (Softening Liquid? False)
+[Genesis] [18:40:52] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9986127018928528, 0.0, 0.0, 0.0, 0.9843579530715942, 0.0, 0.0, 0.0, 0.9833233952522278]
+[Genesis] [18:40:52] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:52] [WARNING]       ├─ Volume Determinant det(F): 0.966599 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:52] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0242 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:52] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17479.86 | Active CPIC Nodes: 0
+[Genesis] [18:40:52] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:52] [WARNING]       ├─ Pos: [-0.0459, -0.0050, 0.0886] | Vel: [1.54, -10.21, 20.29]
+[Genesis] [18:40:52] [WARNING]       ├─ Temp: 838.9K (Softening Liquid? False)
+[Genesis] [18:40:52] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9986435770988464, 0.0, 0.0, 0.0, 0.984214186668396, 0.0, 0.0, 0.0, 0.9831788539886475]
+[Genesis] [18:40:52] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:52] [WARNING]       ├─ Volume Determinant det(F): 0.966346 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:52] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0245 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:52] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17621.96 | Active CPIC Nodes: 0
+[Genesis] [18:40:52] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:52] [WARNING]       ├─ Pos: [-0.0459, -0.0050, 0.0886] | Vel: [1.59, -9.64, 20.68]
+[Genesis] [18:40:52] [WARNING]       ├─ Temp: 836.5K (Softening Liquid? False)
+[Genesis] [18:40:52] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9986676573753357, 0.0, 0.0, 0.0, 0.9841076731681824, 0.0, 0.0, 0.0, 0.9830734133720398]
+[Genesis] [18:40:52] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:52] [WARNING]       ├─ Volume Determinant det(F): 0.966161 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:52] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0247 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:52] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17730.23 | Active CPIC Nodes: 0
+[Genesis] [18:40:52] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:52] [WARNING]       ├─ Pos: [-0.0459, -0.0050, 0.0886] | Vel: [1.64, -9.11, 21.04]
+[Genesis] [18:40:52] [WARNING]       ├─ Temp: 834.1K (Softening Liquid? False)
+[Genesis] [18:40:52] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9986881017684937, 0.0, 0.0, 0.0, 0.9840326309204102, 0.0, 0.0, 0.0, 0.9829967021942139]
+[Genesis] [18:40:52] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:52] [WARNING]       ├─ Volume Determinant det(F): 0.966031 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:52] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0248 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:53] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17805.26 | Active CPIC Nodes: 0
+[Genesis] [18:40:53] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:53] [WARNING]       ├─ Pos: [-0.0459, -0.0050, 0.0886] | Vel: [1.65, -8.62, 21.34]
+[Genesis] [18:40:53] [WARNING]       ├─ Temp: 831.8K (Softening Liquid? False)
+[Genesis] [18:40:53] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9987038969993591, 0.0, 0.0, 0.0, 0.9839875102043152, 0.0, 0.0, 0.0, 0.9829433560371399]
+[Genesis] [18:40:53] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:53] [WARNING]       ├─ Volume Determinant det(F): 0.965950 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:53] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0249 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:53] [INFO] ♨️ THERMAL │ Avg: 679.8K Min: 509.3K Max: 844.9K σ: 116.6K │ E: 159.6kJ
+  Convection: -0.15K avg, -2.58K pk (-1.5MW)
+  Radiation: -0.25K avg, -4.53K pk (-2.5MW)
+  Adiabatic: +0.07K avg, +1.58K pk (+199.6kW)
+  HeatSink: -7.97K avg, -14.27K pk (-33.3MW)
+[Genesis] [18:40:53] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17851.57 | Active CPIC Nodes: 0
+[Genesis] [18:40:53] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:53] [WARNING]       ├─ Pos: [-0.0459, -0.0050, 0.0886] | Vel: [1.67, -8.20, 21.58]
+[Genesis] [18:40:53] [WARNING]       ├─ Temp: 829.4K (Softening Liquid? False)
+[Genesis] [18:40:53] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9987301230430603, 0.0, 0.0, 0.0, 0.9839556217193604, 0.0, 0.0, 0.0, 0.9829139709472656]
+[Genesis] [18:40:53] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:53] [WARNING]       ├─ Volume Determinant det(F): 0.965916 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:53] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0250 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:53] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17869.43 | Active CPIC Nodes: 0
+[Genesis] [18:40:53] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 886):
+[Genesis] [18:40:53] [WARNING]       ├─ Pos: [-0.0459, -0.0050, 0.0886] | Vel: [1.64, -7.86, 21.74]
+[Genesis] [18:40:53] [WARNING]       ├─ Temp: 827.0K (Softening Liquid? False)
+[Genesis] [18:40:53] [WARNING]       ├─ Elastic Resistance (S-Tensor): [0.9987428784370422, 0.0, 0.0, 0.0, 0.9839712977409363, 0.0, 0.0, 0.0, 0.9829190969467163]
+[Genesis] [18:40:53] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:40:53] [WARNING]       ├─ Volume Determinant det(F): 0.965949 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:40:53] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0250 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:40:53] [INFO] Thermal FROZEN
+
+...
+
+[Genesis] [18:42:23] [INFO] ♨️ THERMAL │ Avg: 958.7K Min: 665.3K Max: 1244.0K σ: 200.5K │ E: 267.7kJ
+  Convection: -0.21K avg, -3.29K pk (-2.5MW)
+  Radiation: -0.87K avg, -16.69K pk (-10.7MW)
+  Contact: -33.17K avg, -35.41K pk (-6.5MW)
+  Adiabatic: +0.10K avg, +0.67K pk (+853.7kW)
+  HeatSink: -13.82K avg, -24.65K pk (-63.5MW)
+[Genesis] [18:42:23] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 13059.44 | Active CPIC Nodes: 43
+[Genesis] [18:42:23] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 13503.53 | Active CPIC Nodes: 33
+[Genesis] [18:42:23] [INFO] PRESSING[27]: F=[15362.546,15227.469] dF=135.0771, v=[29.9797,30.0203] corr=0.0203
+[Genesis] [18:42:23] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 13965.85 | Active CPIC Nodes: 40
+[Genesis] [18:42:23] [INFO] ♨️ THERMAL │ Avg: 947.5K Min: 659.0K Max: 1229.6K σ: 197.0K │ E: 263.3kJ
+  Convection: -0.21K avg, -3.01K pk (-2.4MW)
+  Radiation: -0.82K avg, -13.99K pk (-10.2MW)
+  Contact: -33.34K avg, -34.78K pk (-9.3MW)
+  Adiabatic: +0.10K avg, +0.74K pk (+927.7kW)
+  HeatSink: -13.72K avg, -24.36K pk (-62.8MW)
+[Genesis] [18:42:23] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 14359.87 | Active CPIC Nodes: 36
+[Genesis] [18:42:24] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 15027.29 | Active CPIC Nodes: 39
+[Genesis] [18:42:24] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:24] [WARNING]       ├─ Pos: [-0.0464, 0.0046, 0.0640] | Vel: [-9.05, -10.19, 18.49]
+[Genesis] [18:42:24] [WARNING]       ├─ Temp: 1194.2K (Softening Liquid? False)
+[Genesis] [18:42:24] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0119588375091553, 0.0, 0.0, 0.0, 1.0104857683181763, 0.0, 0.0, 0.0, 0.9998641610145569]
+[Genesis] [18:42:24] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:24] [WARNING]       ├─ Volume Determinant det(F): 1.022432 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:24] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0210 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:24] [INFO] PRESSING[30]: F=[13969.414,15027.588] dF=-1058.1738, v=[30.1587,29.8413] corr=-0.1587
+[Genesis] [18:42:24] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 15706.27 | Active CPIC Nodes: 31
+[Genesis] [18:42:24] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:24] [WARNING]       ├─ Pos: [-0.0465, 0.0046, 0.0640] | Vel: [-9.87, -10.83, 19.75]
+[Genesis] [18:42:24] [WARNING]       ├─ Temp: 1189.2K (Softening Liquid? False)
+[Genesis] [18:42:24] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0126376152038574, 0.0, 0.0, 0.0, 1.0110728740692139, 0.0, 0.0, 0.0, 0.9996931552886963]
+[Genesis] [18:42:24] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:24] [WARNING]       ├─ Volume Determinant det(F): 1.023536 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:24] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0220 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:24] [INFO] ♨️ THERMAL │ Avg: 936.0K Min: 652.6K Max: 1214.8K σ: 193.3K │ E: 258.6kJ
+  Convection: -0.20K avg, -2.53K pk (-2.4MW)
+  Radiation: -0.77K avg, -11.85K pk (-9.7MW)
+  Contact: -31.13K avg, -34.16K pk (-14.0MW)
+  Adiabatic: +0.10K avg, +0.91K pk (+1.1MW)
+  HeatSink: -13.66K avg, -24.11K pk (-62.3MW)
+[Genesis] [18:42:24] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 16081.12 | Active CPIC Nodes: 58
+[Genesis] [18:42:24] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:24] [WARNING]       ├─ Pos: [-0.0466, 0.0045, 0.0640] | Vel: [-10.39, -11.22, 20.54]
+[Genesis] [18:42:24] [WARNING]       ├─ Temp: 1184.1K (Softening Liquid? False)
+[Genesis] [18:42:24] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0129814147949219, 0.0, 0.0, 0.0, 1.0113825798034668, 0.0, 0.0, 0.0, 0.9995677471160889]
+[Genesis] [18:42:24] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:24] [WARNING]       ├─ Volume Determinant det(F): 1.024069 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:24] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0225 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:24] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 16637.42 | Active CPIC Nodes: 46
+[Genesis] [18:42:24] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:24] [WARNING]       ├─ Pos: [-0.0467, 0.0045, 0.0640] | Vel: [-11.04, -12.03, 21.74]
+[Genesis] [18:42:24] [WARNING]       ├─ Temp: 1178.9K (Softening Liquid? False)
+[Genesis] [18:42:24] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0135457515716553, 0.0, 0.0, 0.0, 1.0118240118026733, 0.0, 0.0, 0.0, 0.9993932247161865]
+[Genesis] [18:42:24] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:24] [WARNING]       ├─ Volume Determinant det(F): 1.024908 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:24] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0233 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:24] [INFO] PRESSING[33]: F=[18603.568,16211.325] dF=2392.2432, v=[29.6412,30.3588] corr=0.3588
+[Genesis] [18:42:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17034.51 | Active CPIC Nodes: 59
+[Genesis] [18:42:25] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:25] [WARNING]       ├─ Pos: [-0.0468, 0.0045, 0.0640] | Vel: [-11.64, -12.62, 22.27]
+[Genesis] [18:42:25] [WARNING]       ├─ Temp: 1173.7K (Softening Liquid? False)
+[Genesis] [18:42:25] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.013869047164917, 0.0, 0.0, 0.0, 1.0121464729309082, 0.0, 0.0, 0.0, 0.9992287755012512]
+[Genesis] [18:42:25] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:25] [WARNING]       ├─ Volume Determinant det(F): 1.025393 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:25] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0238 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:25] [INFO] ♨️ THERMAL │ Avg: 924.1K Min: 646.0K Max: 1199.8K σ: 189.5K │ E: 253.9kJ
+  Convection: -0.20K avg, -2.33K pk (-2.4MW)
+  Radiation: -0.75K avg, -10.43K pk (-9.4MW)
+  Contact: -31.09K avg, -33.47K pk (-17.2MW)
+  Adiabatic: +0.11K avg, +1.09K pk (+1.2MW)
+  HeatSink: -13.59K avg, -23.90K pk (-61.7MW)
+[Genesis] [18:42:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 17701.64 | Active CPIC Nodes: 40
+[Genesis] [18:42:25] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:25] [WARNING]       ├─ Pos: [-0.0469, 0.0044, 0.0640] | Vel: [-12.69, -13.47, 23.19]
+[Genesis] [18:42:25] [WARNING]       ├─ Temp: 1168.5K (Softening Liquid? False)
+[Genesis] [18:42:25] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0145635604858398, 0.0, 0.0, 0.0, 1.012726068496704, 0.0, 0.0, 0.0, 0.9989386200904846]
+[Genesis] [18:42:25] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:25] [WARNING]       ├─ Volume Determinant det(F): 1.026384 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:25] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0248 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 18264.55 | Active CPIC Nodes: 48
+[Genesis] [18:42:25] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:25] [WARNING]       ├─ Pos: [-0.0470, 0.0044, 0.0640] | Vel: [-13.58, -13.98, 23.83]
+[Genesis] [18:42:25] [WARNING]       ├─ Temp: 1163.3K (Softening Liquid? False)
+[Genesis] [18:42:25] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0150879621505737, 0.0, 0.0, 0.0, 1.0131882429122925, 0.0, 0.0, 0.0, 0.9986328482627869]
+[Genesis] [18:42:25] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:25] [WARNING]       ├─ Volume Determinant det(F): 1.027069 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:25] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0256 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:25] [INFO] PRESSING[36]: F=[19193.215,17578.852] dF=1614.3633, v=[29.7578,30.2422] corr=0.2422
+[Genesis] [18:42:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 19017.24 | Active CPIC Nodes: 111
+[Genesis] [18:42:25] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:25] [WARNING]       ├─ Pos: [-0.0472, 0.0044, 0.0640] | Vel: [-14.42, -14.65, 24.83]
+[Genesis] [18:42:25] [WARNING]       ├─ Temp: 1157.9K (Softening Liquid? False)
+[Genesis] [18:42:25] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0158264636993408, 0.0, 0.0, 0.0, 1.0137932300567627, 0.0, 0.0, 0.0, 0.9982199668884277]
+[Genesis] [18:42:25] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:25] [WARNING]       ├─ Volume Determinant det(F): 1.028005 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:25] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0266 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:25] [INFO] ♨️ THERMAL │ Avg: 911.9K Min: 639.1K Max: 1184.5K σ: 185.5K │ E: 248.9kJ
+  Convection: -0.20K avg, -7.16K pk (-2.5MW)
+  Radiation: -0.75K avg, -28.73K pk (-9.8MW)
+  Contact: -30.08K avg, -32.74K pk (-20.4MW)
+  Adiabatic: +0.11K avg, +1.36K pk (+1.2MW)
+  HeatSink: -13.55K avg, -23.70K pk (-61.3MW)
+[Genesis] [18:42:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 19707.16 | Active CPIC Nodes: 132
+[Genesis] [18:42:25] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:25] [WARNING]       ├─ Pos: [-0.0473, 0.0043, 0.0640] | Vel: [-14.88, -15.21, 25.95]
+[Genesis] [18:42:25] [WARNING]       ├─ Temp: 1152.7K (Softening Liquid? False)
+[Genesis] [18:42:25] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0164098739624023, 0.0, 0.0, 0.0, 1.014254093170166, 0.0, 0.0, 0.0, 0.9978535771369934]
+[Genesis] [18:42:25] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:25] [WARNING]       ├─ Volume Determinant det(F): 1.028686 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:25] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0276 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:26] [INFO] Strike -> RELEASE (Target Strain, strain=0.4617, steps=38, time=6.28s)
+[Genesis] [18:42:26] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 20112.86 | Active CPIC Nodes: 115
+[Genesis] [18:42:26] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:26] [WARNING]       ├─ Pos: [-0.0474, 0.0043, 0.0640] | Vel: [-15.30, -15.88, 27.66]
+[Genesis] [18:42:26] [WARNING]       ├─ Temp: 1148.0K (Softening Liquid? False)
+[Genesis] [18:42:26] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.017241358757019, 0.0, 0.0, 0.0, 1.0146766901016235, 0.0, 0.0, 0.0, 0.9971268773078918]
+[Genesis] [18:42:26] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:26] [WARNING]       ├─ Volume Determinant det(F): 1.029205 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:26] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0282 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:26] [INFO] RELEASE[39]: F=[1740.128,1315.149] dF=424.9796
+[Genesis] [18:42:26] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 21038.91 | Active CPIC Nodes: 80
+[Genesis] [18:42:26] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:26] [WARNING]       ├─ Pos: [-0.0476, 0.0043, 0.0640] | Vel: [-13.75, -16.27, 27.73]
+[Genesis] [18:42:26] [WARNING]       ├─ Temp: 1144.3K (Softening Liquid? False)
+[Genesis] [18:42:26] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0179039239883423, 0.0, 0.0, 0.0, 1.0158404111862183, 0.0, 0.0, 0.0, 0.9963052868843079]
+[Genesis] [18:42:26] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:26] [WARNING]       ├─ Volume Determinant det(F): 1.030208 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:26] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0295 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:26] [INFO] ♨️ THERMAL │ Avg: 902.1K Min: 633.7K Max: 1169.2K σ: 183.4K │ E: 245.2kJ
+  Convection: -0.20K avg, -8.46K pk (-2.4MW)
+  Radiation: -0.71K avg, -23.03K pk (-9.1MW)
+  Contact: -16.79K avg, -22.37K pk (-116.1kW)
+  Adiabatic: +0.02K avg, +1.69K pk (+354.1kW)
+  HeatSink: -12.91K avg, -22.85K pk (-58.2MW)
+[Genesis] [18:42:26] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 21582.81 | Active CPIC Nodes: 20
+[Genesis] [18:42:26] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:26] [WARNING]       ├─ Pos: [-0.0477, 0.0042, 0.0640] | Vel: [-11.12, -17.23, 28.12]
+[Genesis] [18:42:26] [WARNING]       ├─ Temp: 1140.8K (Softening Liquid? False)
+[Genesis] [18:42:26] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.01845121383667, 0.0, 0.0, 0.0, 1.016457438468933, 0.0, 0.0, 0.0, 0.9956938624382019]
+[Genesis] [18:42:26] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:26] [WARNING]       ├─ Volume Determinant det(F): 1.030754 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:26] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0302 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:26] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 21960.92 | Active CPIC Nodes: 7
+[Genesis] [18:42:26] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:26] [WARNING]       ├─ Pos: [-0.0477, 0.0042, 0.0640] | Vel: [-8.47, -16.58, 28.59]
+[Genesis] [18:42:26] [WARNING]       ├─ Temp: 1137.3K (Softening Liquid? False)
+[Genesis] [18:42:26] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0187814235687256, 0.0, 0.0, 0.0, 1.0165830850601196, 0.0, 0.0, 0.0, 0.995567798614502]
+[Genesis] [18:42:26] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:26] [WARNING]       ├─ Volume Determinant det(F): 1.031085 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:26] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0307 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:26] [INFO] RELEASE[42]: F=[-32.749,-32.799] dF=0.0494
+[Genesis] [18:42:27] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 22331.41 | Active CPIC Nodes: 5
+[Genesis] [18:42:27] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:27] [WARNING]       ├─ Pos: [-0.0478, 0.0042, 0.0640] | Vel: [-5.74, -15.66, 29.77]
+[Genesis] [18:42:27] [WARNING]       ├─ Temp: 1133.8K (Softening Liquid? False)
+[Genesis] [18:42:27] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0191959142684937, 0.0, 0.0, 0.0, 1.0168904066085815, 0.0, 0.0, 0.0, 0.9952804446220398]
+[Genesis] [18:42:27] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:27] [WARNING]       ├─ Volume Determinant det(F): 1.031519 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:27] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0313 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:27] [INFO] ♨️ THERMAL │ Avg: 892.7K Min: 628.4K Max: 1155.2K σ: 181.2K │ E: 241.4kJ
+  Convection: -0.19K avg, -2.72K pk (-2.3MW)
+  Radiation: -0.68K avg, -11.92K pk (-8.5MW)
+  Adiabatic: +0.02K avg, +1.88K pk (+278.0kW)
+  HeatSink: -12.46K avg, -22.18K pk (-56.0MW)
+[Genesis] [18:42:27] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 22884.63 | Active CPIC Nodes: 2
+[Genesis] [18:42:27] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:27] [WARNING]       ├─ Pos: [-0.0478, 0.0042, 0.0639] | Vel: [-3.49, -15.37, 30.76]
+[Genesis] [18:42:27] [WARNING]       ├─ Temp: 1130.3K (Softening Liquid? False)
+[Genesis] [18:42:27] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0196356773376465, 0.0, 0.0, 0.0, 1.0172621011734009, 0.0, 0.0, 0.0, 0.9952077269554138]
+[Genesis] [18:42:27] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:27] [WARNING]       ├─ Volume Determinant det(F): 1.032266 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:27] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0320 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:27] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 23470.58 | Active CPIC Nodes: 2
+[Genesis] [18:42:27] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:27] [WARNING]       ├─ Pos: [-0.0478, 0.0041, 0.0639] | Vel: [-1.77, -15.35, 31.74]
+[Genesis] [18:42:27] [WARNING]       ├─ Temp: 1126.7K (Softening Liquid? False)
+[Genesis] [18:42:27] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0202192068099976, 0.0, 0.0, 0.0, 1.0177334547042847, 0.0, 0.0, 0.0, 0.9950349926948547]
+[Genesis] [18:42:27] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:27] [WARNING]       ├─ Volume Determinant det(F): 1.033156 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:27] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0329 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:27] [INFO] RELEASE[45]: F=[-26.619,-8.980] dF=-17.6399
+[Genesis] [18:42:27] [INFO] Strike -> IDLE (Stabilizing for 10 steps)
+[Genesis] [18:42:27] [INFO]   Summary: total_time=9.48s, steps=45, final_width=0.0259
+[Genesis] [18:42:27] [INFO] Checkpoint saved (stack=6, mesh_verts=3432)
+[Genesis] [18:42:27] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 25161.16 | Active CPIC Nodes: 0
+[Genesis] [18:42:27] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:27] [WARNING]       ├─ Pos: [-0.0478, 0.0041, 0.0639] | Vel: [-0.05, -15.90, 34.90]
+[Genesis] [18:42:27] [WARNING]       ├─ Temp: 1123.2K (Softening Liquid? False)
+[Genesis] [18:42:27] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0218323469161987, 0.0, 0.0, 0.0, 1.0191261768341064, 0.0, 0.0, 0.0, 0.994737446308136]
+[Genesis] [18:42:27] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:27] [WARNING]       ├─ Volume Determinant det(F): 1.035895 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:27] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0352 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:28] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 25389.56 | Active CPIC Nodes: 0
+[Genesis] [18:42:28] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:28] [WARNING]       ├─ Pos: [-0.0478, 0.0041, 0.0639] | Vel: [0.39, -15.57, 35.79]
+[Genesis] [18:42:28] [WARNING]       ├─ Temp: 1119.5K (Softening Liquid? False)
+[Genesis] [18:42:28] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0220448970794678, 0.0, 0.0, 0.0, 1.019278883934021, 0.0, 0.0, 0.0, 0.994917631149292]
+[Genesis] [18:42:28] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:28] [WARNING]       ├─ Volume Determinant det(F): 1.036454 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:28] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0355 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:28] [INFO] ♨️ THERMAL │ Avg: 880.6K Min: 621.6K Max: 1138.4K σ: 178.3K │ E: 236.8kJ
+  Convection: -0.19K avg, -2.61K pk (-2.3MW)
+  Radiation: -0.65K avg, -11.05K pk (-8.0MW)
+  Adiabatic: +0.06K avg, +2.28K pk (+276.0kW)
+  HeatSink: -12.04K avg, -21.53K pk (-53.9MW)
+[Genesis] [18:42:28] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 25986.99 | Active CPIC Nodes: 0
+[Genesis] [18:42:28] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:28] [WARNING]       ├─ Pos: [-0.0477, 0.0042, 0.0639] | Vel: [0.18, -15.67, 37.04]
+[Genesis] [18:42:28] [WARNING]       ├─ Temp: 1115.9K (Softening Liquid? False)
+[Genesis] [18:42:28] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.022667407989502, 0.0, 0.0, 0.0, 1.0198040008544922, 0.0, 0.0, 0.0, 0.9949621558189392]
+[Genesis] [18:42:28] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:28] [WARNING]       ├─ Volume Determinant det(F): 1.037666 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:28] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0364 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:28] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 26467.17 | Active CPIC Nodes: 0
+[Genesis] [18:42:28] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:28] [WARNING]       ├─ Pos: [-0.0477, 0.0042, 0.0639] | Vel: [-0.22, -15.55, 38.03]
+[Genesis] [18:42:28] [WARNING]       ├─ Temp: 1112.2K (Softening Liquid? False)
+[Genesis] [18:42:28] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0231448411941528, 0.0, 0.0, 0.0, 1.0202438831329346, 0.0, 0.0, 0.0, 0.9949975609779358]
+[Genesis] [18:42:28] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:28] [WARNING]       ├─ Volume Determinant det(F): 1.038635 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:28] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0371 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:28] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 26961.10 | Active CPIC Nodes: 0
+[Genesis] [18:42:28] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:28] [WARNING]       ├─ Pos: [-0.0477, 0.0042, 0.0639] | Vel: [-0.66, -15.44, 38.95]
+[Genesis] [18:42:28] [WARNING]       ├─ Temp: 1108.6K (Softening Liquid? False)
+[Genesis] [18:42:28] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0236310958862305, 0.0, 0.0, 0.0, 1.0206979513168335, 0.0, 0.0, 0.0, 0.9949832558631897]
+[Genesis] [18:42:28] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:28] [WARNING]       ├─ Volume Determinant det(F): 1.039576 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:28] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0377 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:28] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 27540.76 | Active CPIC Nodes: 0
+[Genesis] [18:42:28] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:28] [WARNING]       ├─ Pos: [-0.0477, 0.0042, 0.0639] | Vel: [-1.15, -15.66, 39.95]
+[Genesis] [18:42:28] [WARNING]       ├─ Temp: 1104.9K (Softening Liquid? False)
+[Genesis] [18:42:28] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0241907835006714, 0.0, 0.0, 0.0, 1.0212081670761108, 0.0, 0.0, 0.0, 0.9949459433555603]
+[Genesis] [18:42:28] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:28] [WARNING]       ├─ Volume Determinant det(F): 1.040626 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:28] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0386 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:29] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28164.33 | Active CPIC Nodes: 0
+[Genesis] [18:42:29] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:29] [WARNING]       ├─ Pos: [-0.0477, 0.0042, 0.0639] | Vel: [-1.47, -16.00, 40.88]
+[Genesis] [18:42:29] [WARNING]       ├─ Temp: 1101.3K (Softening Liquid? False)
+[Genesis] [18:42:29] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.024763584136963, 0.0, 0.0, 0.0, 1.0217450857162476, 0.0, 0.0, 0.0, 0.9948607683181763]
+[Genesis] [18:42:29] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:29] [WARNING]       ├─ Volume Determinant det(F): 1.041666 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:29] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0394 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:29] [INFO] ♨️ THERMAL │ Avg: 865.9K Min: 613.4K Max: 1119.0K σ: 174.6K │ E: 231.2kJ
+  Convection: -0.19K avg, -2.55K pk (-2.2MW)
+  Radiation: -0.61K avg, -10.48K pk (-7.5MW)
+  Adiabatic: +0.09K avg, +2.67K pk (+325.0kW)
+  HeatSink: -11.70K avg, -20.90K pk (-52.1MW)
+[Genesis] [18:42:29] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28803.45 | Active CPIC Nodes: 0
+[Genesis] [18:42:29] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:29] [WARNING]       ├─ Pos: [-0.0477, 0.0042, 0.0639] | Vel: [-1.62, -16.37, 41.64]
+[Genesis] [18:42:29] [WARNING]       ├─ Temp: 1097.7K (Softening Liquid? False)
+[Genesis] [18:42:29] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0253019332885742, 0.0, 0.0, 0.0, 1.0222787857055664, 0.0, 0.0, 0.0, 0.9947548508644104]
+[Genesis] [18:42:29] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:29] [WARNING]       ├─ Volume Determinant det(F): 1.042646 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:29] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0403 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:29] [INFO] Thermal FROZEN
+[Genesis] [18:42:29] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29505.53 | Active CPIC Nodes: 0
+[Genesis] [18:42:29] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:29] [WARNING]       ├─ Pos: [-0.0477, 0.0043, 0.0639] | Vel: [-1.57, -16.92, 42.53]
+[Genesis] [18:42:29] [WARNING]       ├─ Temp: 1097.7K (Softening Liquid? False)
+[Genesis] [18:42:29] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0259079933166504, 0.0, 0.0, 0.0, 1.022837519645691, 0.0, 0.0, 0.0, 0.9946272969245911]
+[Genesis] [18:42:29] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:29] [WARNING]       ├─ Volume Determinant det(F): 1.043700 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:29] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0413 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:29] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30044.34 | Active CPIC Nodes: 0
+[Genesis] [18:42:29] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:29] [WARNING]       ├─ Pos: [-0.0477, 0.0043, 0.0639] | Vel: [-1.43, -17.39, 43.18]
+[Genesis] [18:42:29] [WARNING]       ├─ Temp: 1097.7K (Softening Liquid? False)
+[Genesis] [18:42:29] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0263670682907104, 0.0, 0.0, 0.0, 1.0232902765274048, 0.0, 0.0, 0.0, 0.9945361614227295]
+[Genesis] [18:42:29] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:29] [WARNING]       ├─ Volume Determinant det(F): 1.044533 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:29] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0421 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:29] [INFO] Stabilization complete
+
+...
+
+[Genesis] [18:42:58] [INFO] ♨️ THERMAL │ Avg: 967.6K Min: 671.2K Max: 1309.5K σ: 230.1K │ E: 270.1kJ
+  Induction: +28.14K avg, +191.51K pk (+200.0MW)
+  Convection: -0.22K avg, -3.35K pk (-2.6MW)
+  Radiation: -0.99K avg, -21.26K pk (-12.6MW)
+  Adiabatic: +0.04K avg, +3.11K pk (+331.2kW)
+  HeatSink: -3.70K avg, -10.14K pk (-17.0MW)
+[Genesis] [18:42:58] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 37506.83 | Active CPIC Nodes: 0
+[Genesis] [18:42:58] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:58] [WARNING]       ├─ Pos: [-0.0475, 0.0045, 0.0637] | Vel: [3.74, -23.83, 53.96]
+[Genesis] [18:42:58] [WARNING]       ├─ Temp: 1248.7K (Softening Liquid? False)
+[Genesis] [18:42:58] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.033820629119873, 0.0, 0.0, 0.0, 1.0300732851028442, 0.0, 0.0, 0.0, 0.994621992111206]
+[Genesis] [18:42:58] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:58] [WARNING]       ├─ Volume Determinant det(F): 1.059184 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:58] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0525 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:58] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 38671.76 | Active CPIC Nodes: 0
+[Genesis] [18:42:58] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:58] [WARNING]       ├─ Pos: [-0.0475, 0.0045, 0.0637] | Vel: [4.21, -24.62, 55.58]
+[Genesis] [18:42:58] [WARNING]       ├─ Temp: 1250.3K (Softening Liquid? False)
+[Genesis] [18:42:58] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.034897804260254, 0.0, 0.0, 0.0, 1.0309995412826538, 0.0, 0.0, 0.0, 0.9944549798965454]
+[Genesis] [18:42:58] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:58] [WARNING]       ├─ Volume Determinant det(F): 1.061063 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:58] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0541 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:58] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 39681.42 | Active CPIC Nodes: 0
+[Genesis] [18:42:58] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:58] [WARNING]       ├─ Pos: [-0.0475, 0.0045, 0.0637] | Vel: [4.69, -25.29, 56.93]
+[Genesis] [18:42:58] [WARNING]       ├─ Temp: 1251.8K (Softening Liquid? False)
+[Genesis] [18:42:58] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0358151197433472, 0.0, 0.0, 0.0, 1.0317860841751099, 0.0, 0.0, 0.0, 0.9943282008171082]
+[Genesis] [18:42:58] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:58] [WARNING]       ├─ Volume Determinant det(F): 1.062679 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:58] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0556 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:58] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 40858.20 | Active CPIC Nodes: 0
+[Genesis] [18:42:58] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:58] [WARNING]       ├─ Pos: [-0.0475, 0.0045, 0.0637] | Vel: [5.22, -26.07, 58.50]
+[Genesis] [18:42:58] [WARNING]       ├─ Temp: 1253.5K (Softening Liquid? False)
+[Genesis] [18:42:58] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.036872148513794, 0.0, 0.0, 0.0, 1.032691478729248, 0.0, 0.0, 0.0, 0.9941728711128235]
+[Genesis] [18:42:58] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:58] [WARNING]       ├─ Volume Determinant det(F): 1.064530 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:58] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0572 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:59] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 42163.18 | Active CPIC Nodes: 0
+[Genesis] [18:42:59] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:59] [WARNING]       ├─ Pos: [-0.0475, 0.0045, 0.0637] | Vel: [5.83, -26.96, 60.25]
+[Genesis] [18:42:59] [WARNING]       ├─ Temp: 1255.3K (Softening Liquid? False)
+[Genesis] [18:42:59] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0380390882492065, 0.0, 0.0, 0.0, 1.0336835384368896, 0.0, 0.0, 0.0, 0.9940009713172913]
+[Genesis] [18:42:59] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:59] [WARNING]       ├─ Volume Determinant det(F): 1.066566 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:59] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0590 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:59] [INFO] ♨️ THERMAL │ Avg: 997.2K Min: 687.7K Max: 1312.7K σ: 230.4K │ E: 281.9kJ
+  Induction: +25.68K avg, +146.84K pk (+200.0MW)
+  Convection: -0.22K avg, -3.45K pk (-2.7MW)
+  Radiation: -1.07K avg, -20.17K pk (-13.7MW)
+  Adiabatic: +0.05K avg, +3.63K pk (+373.3kW)
+  HeatSink: -4.51K avg, -11.56K pk (-20.9MW)
+[Genesis] [18:42:59] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 43617.36 | Active CPIC Nodes: 0
+[Genesis] [18:42:59] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:59] [WARNING]       ├─ Pos: [-0.0475, 0.0046, 0.0637] | Vel: [6.49, -27.98, 62.16]
+[Genesis] [18:42:59] [WARNING]       ├─ Temp: 1257.2K (Softening Liquid? False)
+[Genesis] [18:42:59] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0393251180648804, 0.0, 0.0, 0.0, 1.034776210784912, 0.0, 0.0, 0.0, 0.9938094615936279]
+[Genesis] [18:42:59] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:59] [WARNING]       ├─ Volume Determinant det(F): 1.068811 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:59] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0611 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:59] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 45223.78 | Active CPIC Nodes: 0
+[Genesis] [18:42:59] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:59] [WARNING]       ├─ Pos: [-0.0474, 0.0046, 0.0637] | Vel: [7.23, -29.13, 64.25]
+[Genesis] [18:42:59] [WARNING]       ├─ Temp: 1259.4K (Softening Liquid? False)
+[Genesis] [18:42:59] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.04072904586792, 0.0, 0.0, 0.0, 1.0359727144241333, 0.0, 0.0, 0.0, 0.993597149848938]
+[Genesis] [18:42:59] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:59] [WARNING]       ├─ Volume Determinant det(F): 1.071264 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:59] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0633 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:59] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 47011.50 | Active CPIC Nodes: 0
+[Genesis] [18:42:59] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1012):
+[Genesis] [18:42:59] [WARNING]       ├─ Pos: [-0.0474, 0.0046, 0.0637] | Vel: [8.06, -30.42, 66.59]
+[Genesis] [18:42:59] [WARNING]       ├─ Temp: 1261.7K (Softening Liquid? False)
+[Genesis] [18:42:59] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0422757863998413, 0.0, 0.0, 0.0, 1.037290334701538, 0.0, 0.0, 0.0, 0.9933655261993408]
+[Genesis] [18:42:59] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:59] [WARNING]       ├─ Volume Determinant det(F): 1.073970 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:59] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0658 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:42:59] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 49238.01 | Active CPIC Nodes: 0
+[Genesis] [18:42:59] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1171):
+[Genesis] [18:42:59] [WARNING]       ├─ Pos: [-0.0455, 0.0045, 0.0648] | Vel: [-26.10, -29.87, 45.08]
+[Genesis] [18:42:59] [WARNING]       ├─ Temp: 1269.0K (Softening Liquid? False)
+[Genesis] [18:42:59] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0367194414138794, 0.0, 0.0, 0.0, 1.0304535627365112, 0.0, 0.0, 0.0, 0.9954312443733215]
+[Genesis] [18:42:59] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:42:59] [WARNING]       ├─ Volume Determinant det(F): 1.063411 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:42:59] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0689 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:43:00] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 51782.83 | Active CPIC Nodes: 0
+[Genesis] [18:43:00] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1171):
+[Genesis] [18:43:00] [WARNING]       ├─ Pos: [-0.0455, 0.0045, 0.0647] | Vel: [-27.46, -31.36, 47.50]
+[Genesis] [18:43:00] [WARNING]       ├─ Temp: 1271.8K (Softening Liquid? False)
+[Genesis] [18:43:00] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0384970903396606, 0.0, 0.0, 0.0, 1.0318671464920044, 0.0, 0.0, 0.0, 0.9950236678123474]
+[Genesis] [18:43:00] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:43:00] [WARNING]       ├─ Volume Determinant det(F): 1.066258 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:43:00] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0725 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:43:00] [INFO] ♨️ THERMAL │ Avg: 1025.3K Min: 703.3K Max: 1332.8K σ: 231.5K │ E: 291.9kJ
+  Induction: +25.68K avg, +146.84K pk (+200.0MW)
+  Convection: -0.23K avg, -3.56K pk (-2.8MW)
+  Radiation: -1.16K avg, -21.34K pk (-14.8MW)
+  Adiabatic: +0.05K avg, +4.43K pk (+438.8kW)
+  HeatSink: -5.75K avg, -13.74K pk (-26.9MW)
+[Genesis] [18:43:00] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 54671.58 | Active CPIC Nodes: 0
+[Genesis] [18:43:00] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1171):
+[Genesis] [18:43:00] [WARNING]       ├─ Pos: [-0.0454, 0.0045, 0.0647] | Vel: [-28.99, -33.03, 50.22]
+[Genesis] [18:43:00] [WARNING]       ├─ Temp: 1274.9K (Softening Liquid? False)
+[Genesis] [18:43:00] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0405166149139404, 0.0, 0.0, 0.0, 1.033469319343567, 0.0, 0.0, 0.0, 0.9945475459098816]
+[Genesis] [18:43:00] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:43:00] [WARNING]       ├─ Volume Determinant det(F): 1.069479 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:43:00] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0765 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:43:00] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 57990.01 | Active CPIC Nodes: 0
+[Genesis] [18:43:00] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1171):
+[Genesis] [18:43:00] [WARNING]       ├─ Pos: [-0.0454, 0.0046, 0.0647] | Vel: [-30.75, -34.94, 53.37]
+[Genesis] [18:43:00] [WARNING]       ├─ Temp: 1278.3K (Softening Liquid? False)
+[Genesis] [18:43:00] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0428235530853271, 0.0, 0.0, 0.0, 1.0352897644042969, 0.0, 0.0, 0.0, 0.9939837455749512]
+[Genesis] [18:43:00] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:43:00] [WARNING]       ├─ Volume Determinant det(F): 1.073129 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:43:00] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0812 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:43:00] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 61889.66 | Active CPIC Nodes: 0
+[Genesis] [18:43:00] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1164):
+[Genesis] [18:43:00] [WARNING]       ├─ Pos: [-0.0446, 0.0046, 0.0648] | Vel: [-56.85, -35.59, 56.56]
+[Genesis] [18:43:00] [WARNING]       ├─ Temp: 1283.1K (Softening Liquid? False)
+[Genesis] [18:43:00] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0514495372772217, 0.0, 0.0, 0.0, 1.0417989492416382, 0.0, 0.0, 0.0, 0.9921233654022217]
+[Genesis] [18:43:00] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:43:00] [WARNING]       ├─ Volume Determinant det(F): 1.086771 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:43:00] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0866 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:43:00] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 65988.34 | Active CPIC Nodes: 0
+[Genesis] [18:43:00] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1164):
+[Genesis] [18:43:00] [WARNING]       ├─ Pos: [-0.0446, 0.0046, 0.0648] | Vel: [-60.60, -37.87, 60.10]
+[Genesis] [18:43:00] [WARNING]       ├─ Temp: 1296.2K (Softening Liquid? False)
+[Genesis] [18:43:00] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0542747974395752, 0.0, 0.0, 0.0, 1.0438525676727295, 0.0, 0.0, 0.0, 0.9911161065101624]
+[Genesis] [18:43:00] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:43:00] [WARNING]       ├─ Volume Determinant det(F): 1.090731 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:43:00] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0924 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:43:00] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 71069.62 | Active CPIC Nodes: 0
+[Genesis] [18:43:00] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1164):
+[Genesis] [18:43:00] [WARNING]       ├─ Pos: [-0.0445, 0.0046, 0.0647] | Vel: [-65.21, -40.64, 64.48]
+[Genesis] [18:43:00] [WARNING]       ├─ Temp: 1308.3K (Softening Liquid? False)
+[Genesis] [18:43:00] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0577658414840698, 0.0, 0.0, 0.0, 1.0463274717330933, 0.0, 0.0, 0.0, 0.9898068904876709]
+[Genesis] [18:43:00] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:43:00] [WARNING]       ├─ Volume Determinant det(F): 1.095488 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:43:00] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.0995 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:43:01] [INFO] ♨️ THERMAL │ Avg: 1051.6K Min: 718.0K Max: 1394.4K σ: 239.3K │ E: 300.9kJ
+  Induction: +28.07K avg, +189.74K pk (+200.0MW)
+  Convection: -0.24K avg, -3.77K pk (-2.9MW)
+  Radiation: -1.28K avg, -25.11K pk (-16.4MW)
+  Adiabatic: +0.06K avg, +5.47K pk (+515.7kW)
+  HeatSink: -7.02K avg, -15.95K pk (-33.0MW)
+[Genesis] [18:43:01] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 77086.08 | Active CPIC Nodes: 0
+[Genesis] [18:43:01] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1164):
+[Genesis] [18:43:01] [WARNING]       ├─ Pos: [-0.0445, 0.0046, 0.0647] | Vel: [-70.62, -43.86, 69.63]
+[Genesis] [18:43:01] [WARNING]       ├─ Temp: 1319.6K (Softening Liquid? False)
+[Genesis] [18:43:01] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0617128610610962, 0.0, 0.0, 0.0, 1.0490670204162598, 0.0, 0.0, 0.0, 0.9882601499557495]
+[Genesis] [18:43:01] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:43:01] [WARNING]       ├─ Volume Determinant det(F): 1.100733 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:43:01] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.1079 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:43:01] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 84198.67 | Active CPIC Nodes: 0
+[Genesis] [18:43:01] [WARNING]   └── 🔎 ROOT CAUSE FORENSICS (Particle 1164):
+[Genesis] [18:43:01] [WARNING]       ├─ Pos: [-0.0444, 0.0046, 0.0646] | Vel: [-76.93, -47.53, 75.63]
+[Genesis] [18:43:01] [WARNING]       ├─ Temp: 1330.4K (Softening Liquid? False)
+[Genesis] [18:43:01] [WARNING]       ├─ Elastic Resistance (S-Tensor): [1.0661567449569702, 0.0, 0.0, 0.0, 1.0520657300949097, 0.0, 0.0, 0.0, 0.9864279627799988]
+[Genesis] [18:43:01] [WARNING]       ├─ Yield Assert: Fully Yielded/Fluid (No Shear Resitivity)
+[Genesis] [18:43:01] [WARNING]       ├─ Volume Determinant det(F): 1.106444 (INVERTED INSIDE-OUT? False)
+[Genesis] [18:43:01] [WARNING]       └─ Affine CFL Violation: |dt * C| = 0.1179 (CRASH EXPECTED IF > 1.0)
+[Genesis] [18:43:01] [ERROR] 🚨 TIER-1 STABILITY INTERCEPT TRIGGERED! Running Forensic Trace... 🚨
+[Genesis] [18:43:01] [ERROR] -> Primary Diagnostic Triggers: Supersonic Velocity (>100.0m/s)
+[Genesis] [18:43:01] [ERROR] 
+[GROUND ZERO PROFILING]
+Particle Index: 1012
+Position (X,Y,Z): [-0.0472, 0.0047, 0.0636]
+Velocity (X,Y,Z): [25.1275, -50.7328, 105.6811]
+Temperature: 1320.45 K
+S Tensor [Frame 0]: [1.0661280155181885, 0.0, 0.0, 0.0, 1.0570491552352905, 0.0, 0.0, 0.0, 0.99016273021698]
+S Tensor [Frame 1]: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+C Tensor [Frame 0]: [-22961.681640625, 4926.388671875, 3500.578857421875, -3426.300537109375, -77491.15625, -1593.923095703125, 19430.224609375, -1553.501953125, -68041.28125]
+CPIC Interference Stencil [3x3x3]: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+
+[Genesis] [18:43:01] [ERROR] CRITICAL STABILITY FAILURE: Diagnostic Triggers: Supersonic Velocity (>100.0m/s)
+[Genesis] [18:43:01] [WARNING] >>> Auto-Undo Triggered by System Protection (Reverting to Checkpoint) <<<
+[Recorder] Undid strike. Reverted buffer from frame 192 to 192.
+[Genesis] [18:43:01] [INFO] Undo complete (stack=5, mesh_verts=3560, grace=3)
+[Genesis] [18:43:02] [INFO] ♨️ THERMAL │ Avg: 1076.8K Min: 732.0K Max: 1407.2K σ: 245.1K │ E: 309.9kJ
+  Induction: +25.17K avg, +127.54K pk (+200.0MW)
+  Convection: -0.24K avg, -3.94K pk (-3.0MW)
+  Radiation: -1.36K avg, -25.41K pk (-17.1MW)
+  Adiabatic: +0.01K avg, +0.17K pk (+84.7kW)
+  HeatSink: -7.65K avg, -17.09K pk (-36.2MW)
+[Genesis] [18:43:02] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 6265.11 | Active CPIC Nodes: 0
+[Genesis] [18:43:02] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5971.35 | Active CPIC Nodes: 0
+[Genesis] [18:43:02] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5737.94 | Active CPIC Nodes: 0
+[Genesis] [18:43:02] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5546.81 | Active CPIC Nodes: 0
+[Genesis] [18:43:02] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5403.62 | Active CPIC Nodes: 0
+[Genesis] [18:43:03] [INFO] ♨️ THERMAL │ Avg: 1100.9K Min: 745.5K Max: 1430.9K σ: 249.9K │ E: 318.3kJ
+  Induction: +25.17K avg, +127.54K pk (+200.0MW)
+  Convection: -0.25K avg, -3.83K pk (-3.1MW)
+  Radiation: -1.47K avg, -24.91K pk (-18.8MW)
+  Adiabatic: +0.00K avg, +0.12K pk (+49.7kW)
+  HeatSink: -8.33K avg, -18.27K pk (-39.6MW)
+[Genesis] [18:43:03] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5284.89 | Active CPIC Nodes: 0
+[Genesis] [18:43:03] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5187.45 | Active CPIC Nodes: 0
+[Genesis] [18:43:03] [INFO] Thermal FROZEN

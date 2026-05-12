@@ -30,7 +30,7 @@ class MaterialOptions(Options):
     """Parameters for the elasto-plastic material."""
     E: float = 200.e9 * 0.25
     nu: float = 0.28
-    rho: float = 8000. * 8e5  # 8000 kg/m³ base × 1e6 mass scaling factor
+    rho: float = 8000. * 1e6  # 8000 kg/m³ base × 1e6 mass scaling factor
     von_mises_yield_stress: float = 190.e6 * 0.1
 
     # Johnson-Cook Parameters (True Room Temperature 4340 Steel)
@@ -215,7 +215,7 @@ class AgilityForgeOptions(Options):
     def model_post_init(self, __context: any) -> None:
         # --- Perform all calculations first ---
         self.sim = SimOptions(
-            dt=0.01,
+            dt=0.004,
             substeps=8,
             gravity=(0, 0, 0),
             check_bounds=not self.performance_mode,
@@ -292,7 +292,7 @@ class StrikeOptions(Options):
     # Force Balance Control
     # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).
     # User selected 1.5e-4 for maximum benchmark results.
-    force_balance_gain: float = 1.5e-4 
+    force_balance_gain: float = 0.0 
     
     # Safety Limits
     max_force_imbalance: float = 20000.0 # 20 kN% compression

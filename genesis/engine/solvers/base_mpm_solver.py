@@ -696,17 +696,18 @@ class BaseMPMSolver(Solver):
                 with profiler.time("mpm_apply_constraints") if True else contextlib.suppress():
                     self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
-            if qd.static(self.sim.coupler.rigid_solver.is_active):
-                with profiler.time("mpm_particle_contact") if True else contextlib.suppress():
-                    self.apply_particle_contact(
-                        f,
-                        self.sim.coupler.rigid_solver.geoms_state,
-                        self.sim.coupler.rigid_solver.geoms_info,
-                        self.sim.coupler.rigid_solver.links_state,
-                        self.sim.coupler.rigid_solver._rigid_global_info,
-                        self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
-                        self.sim.coupler.rigid_solver.collider._collider_static_config,
-                    )
+            # [DEBUG] Particle contact disabled — uncomment to re-enable
+            # if qd.static(self.sim.coupler.rigid_solver.is_active):
+            #     with profiler.time("mpm_particle_contact") if True else contextlib.suppress():
+            #         self.apply_particle_contact(
+            #             f,
+            #             self.sim.coupler.rigid_solver.geoms_state,
+            #             self.sim.coupler.rigid_solver.geoms_info,
+            #             self.sim.coupler.rigid_solver.links_state,
+            #             self.sim.coupler.rigid_solver._rigid_global_info,
+            #             self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
+            #             self.sim.coupler.rigid_solver.collider._collider_static_config,
+            #         )
 
             # FIXME: Use existing errno mechanism for this.
             if self.sim.options.check_bounds:

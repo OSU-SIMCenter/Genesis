@@ -343,7 +343,7 @@ class StrikeController:
                     
                     # Single Sync: Check if any stop condition is met
                     # We pull as int to see WHICH flag triggered if we wanted, or just any().item()
-                    stop_any = stop_flags.any().item() or is_timeout
+                    stop_any = cond_strain.item() or is_timeout
                     
                     if stop_any:
                         # Determine reason (Now we can sync values for logging since we are stopping)
@@ -369,7 +369,7 @@ class StrikeController:
                     adaptive_speed = pressing_speed
                     
                     imbalance_abs = torch.abs(imbalance)
-                    if imbalance_abs > SAFETY_THRESHOLD:
+                    if False and imbalance_abs > SAFETY_THRESHOLD:  # TODO: restore to `if imbalance_abs > SAFETY_THRESHOLD:`
                         # Linear decay: at 40kN imbalance, speed is 0.
                         # decay = 1.0 - (imbalance - Threshold) / Range
                         # Simple logic: If > 20kN, scale down.
@@ -1027,8 +1027,8 @@ class StrikeController:
         
         # Pull temperatures if available
         temp = None
-        if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
-            temp = self.env.scene.sim.mpm_solver.particles.temp.to_torch(device=pos.device)
+        if hasattr(self.env, 'mpm_entity') and hasattr(self.env.mpm_entity, 'get_particles_temp'):
+            temp = self.env.mpm_entity.get_particles_temp()
 
         # 1. NaN checks
         has_nan = torch.isnan(vels).any() | torch.isnan(pos).any()

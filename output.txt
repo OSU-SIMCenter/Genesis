@@ -1,0 +1,782 @@
+[Genesis] [16:47:34] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4384.61 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:34] [INFO] ♨️ THERMAL │ Avg: 1259.0K Min: 830.4K Max: 1570.8K σ: 267.0K │ E: 374.0kJ
+  Convection: -0.34K avg, -3.05K pk (-3.5MW)
+  Radiation: -2.75K avg, -28.70K pk (-29.3MW)
+  Contact: -44.75K avg, -48.81K pk (-6.8MW)
+  Adiabatic: +0.06K avg, +0.33K pk (+702.5kW)
+  HeatSink: -22.54K avg, -40.51K pk (-106.4MW)
+[Genesis] [16:47:34] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5075.67 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:34] [INFO] PRESSING[21]: F=[30332.211,30960.209] dF=-627.9980, v=[30.0942,29.9058] corr=-0.0942
+[Genesis] [16:47:35] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4568.95 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:35] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3650.63 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:35] [INFO] ♨️ THERMAL │ Avg: 1240.5K Min: 820.1K Max: 1547.8K σ: 261.8K │ E: 367.8kJ
+  Convection: -0.31K avg, -2.98K pk (-3.4MW)
+  Radiation: -2.44K avg, -27.92K pk (-27.6MW)
+  Contact: -42.76K avg, -47.94K pk (-11.5MW)
+  Adiabatic: +0.05K avg, +0.25K pk (+858.0kW)
+  HeatSink: -22.39K avg, -40.06K pk (-105.3MW)
+[Genesis] [16:47:35] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3604.71 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:35] [INFO] PRESSING[24]: F=[15040.071,15237.765] dF=-197.6934, v=[30.0297,29.9703] corr=-0.0297
+[Genesis] [16:47:36] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3568.55 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:36] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3225.13 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:36] [INFO] ♨️ THERMAL │ Avg: 1221.6K Min: 809.6K Max: 1524.9K σ: 256.5K │ E: 361.6kJ
+  Convection: -0.30K avg, -2.95K pk (-3.3MW)
+  Radiation: -2.20K avg, -26.64K pk (-25.1MW)
+  Contact: -41.49K avg, -47.00K pk (-18.5MW)
+  Adiabatic: +0.05K avg, +0.25K pk (+818.6kW)
+  HeatSink: -22.24K avg, -39.57K pk (-104.1MW)
+[Genesis] [16:47:36] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3304.31 | Active CPIC Grid Interference Nodes: 3
+[Genesis] [16:47:36] [INFO] PRESSING[27]: F=[6797.242,6963.858] dF=-166.6162, v=[30.0250,29.9750] corr=-0.0250
+[Genesis] [16:47:36] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3322.88 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:37] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3263.00 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:37] [INFO] ♨️ THERMAL │ Avg: 1202.4K Min: 798.9K Max: 1502.1K σ: 251.1K │ E: 355.2kJ
+  Convection: -0.30K avg, -2.93K pk (-3.2MW)
+  Radiation: -2.11K avg, -26.17K pk (-23.4MW)
+  Contact: -42.20K avg, -45.99K pk (-25.7MW)
+  Adiabatic: +0.06K avg, +0.27K pk (+923.7kW)
+  HeatSink: -22.07K avg, -39.05K pk (-102.9MW)
+[Genesis] [16:47:37] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3268.13 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:37] [INFO] PRESSING[30]: F=[3409.447,3605.654] dF=-196.2073, v=[30.0294,29.9706] corr=-0.0294
+[Genesis] [16:47:37] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5258.31 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:38] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4960.43 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:38] [INFO] ♨️ THERMAL │ Avg: 1183.0K Min: 788.3K Max: 1479.2K σ: 245.7K │ E: 348.9kJ
+  Convection: -0.29K avg, -2.87K pk (-3.1MW)
+  Radiation: -1.98K avg, -24.77K pk (-22.0MW)
+  Contact: -42.10K avg, -44.85K pk (-28.1MW)
+  Adiabatic: +0.09K avg, +0.43K pk (+1.5MW)
+  HeatSink: -21.72K avg, -38.44K pk (-101.1MW)
+[Genesis] [16:47:38] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4755.96 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:38] [INFO] PRESSING[33]: F=[18577.756,18601.414] dF=-23.6582, v=[30.0035,29.9965] corr=-0.0035
+[Genesis] [16:47:38] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4793.54 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:38] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4769.86 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:39] [INFO] ♨️ THERMAL │ Avg: 1163.9K Min: 779.2K Max: 1456.9K σ: 239.9K │ E: 342.5kJ
+  Convection: -0.27K avg, -2.75K pk (-3.1MW)
+  Radiation: -1.76K avg, -22.79K pk (-21.3MW)
+  Contact: -39.89K avg, -43.92K pk (-33.0MW)
+  Adiabatic: +0.10K avg, +0.46K pk (+1.5MW)
+  HeatSink: -20.20K avg, -37.23K pk (-97.1MW)
+[Genesis] [16:47:39] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4631.50 | Active CPIC Grid Interference Nodes: 18
+[Genesis] [16:47:39] [INFO] PRESSING[36]: F=[7523.595,7799.238] dF=-275.6431, v=[30.0413,29.9587] corr=-0.0413
+[Genesis] [16:47:39] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4655.52 | Active CPIC Grid Interference Nodes: 12
+[Genesis] [16:47:39] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4460.14 | Active CPIC Grid Interference Nodes: 3
+[Genesis] [16:47:40] [INFO] ♨️ THERMAL │ Avg: 1144.3K Min: 768.4K Max: 1434.8K σ: 234.5K │ E: 335.7kJ
+  Convection: -0.26K avg, -2.56K pk (-3.0MW)
+  Radiation: -1.62K avg, -19.83K pk (-19.5MW)
+  Contact: -40.44K avg, -42.73K pk (-38.2MW)
+  Adiabatic: +0.10K avg, +0.46K pk (+1.5MW)
+  HeatSink: -20.39K avg, -37.08K pk (-98.0MW)
+[Genesis] [16:47:40] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4408.27 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:40] [INFO] PRESSING[39]: F=[5135.328,5283.279] dF=-147.9512, v=[30.0222,29.9778] corr=-0.0222
+[Genesis] [16:47:40] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4638.70 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:40] [INFO] Strike -> RELEASE (Target Strain, strain=0.5102, steps=40, time=11.17s)
+[Genesis] [16:47:40] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 2442.42 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:41] [INFO] ♨️ THERMAL │ Avg: 1127.7K Min: 759.3K Max: 1413.8K σ: 231.3K │ E: 330.1kJ
+  Convection: -0.28K avg, -2.26K pk (-3.0MW)
+  Radiation: -1.58K avg, -14.24K pk (-17.8MW)
+  Contact: -11.24K avg, -19.25K pk (-233.1kW)
+  Adiabatic: +0.04K avg, +0.22K pk (+561.9kW)
+  HeatSink: -19.32K avg, -35.65K pk (-92.7MW)
+[Genesis] [16:47:41] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 1428.41 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:41] [INFO] RELEASE[42]: F=[-124.965,-130.355] dF=5.3901
+[Genesis] [16:47:41] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 1084.94 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:41] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 969.05 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:41] [INFO] ♨️ THERMAL │ Avg: 1113.0K Min: 751.1K Max: 1394.7K σ: 228.8K │ E: 325.1kJ
+  Convection: -0.27K avg, -2.64K pk (-3.0MW)
+  Radiation: -1.55K avg, -17.21K pk (-17.4MW)
+  Contact: -35.43K avg, -38.07K pk (-1.8MW)
+  Adiabatic: +0.01K avg, +0.10K pk (+204.7kW)
+  HeatSink: -18.59K avg, -34.32K pk (-88.8MW)
+[Genesis] [16:47:41] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 657.12 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:42] [INFO] RELEASE[45]: F=[-196.207,-195.268] dF=-0.9391
+[Genesis] [16:47:42] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 530.47 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:42] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 529.13 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:42] [INFO] ♨️ THERMAL │ Avg: 1098.5K Min: 741.3K Max: 1378.1K σ: 226.6K │ E: 319.8kJ
+  Convection: -0.26K avg, -2.68K pk (-3.0MW)
+  Radiation: -1.47K avg, -17.02K pk (-17.0MW)
+  Contact: -37.24K avg, -37.35K pk (-1.8MW)
+  Adiabatic: +0.01K avg, +0.06K pk (+69.9kW)
+  HeatSink: -19.56K avg, -34.11K pk (-89.3MW)
+[Genesis] [16:47:42] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 526.21 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:42] [INFO] RELEASE[48]: F=[-142.280,-144.172] dF=1.8919
+[Genesis] [16:47:42] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 526.35 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:43] [INFO] ♨️ THERMAL │ Avg: 1084.7K Min: 733.5K Max: 1362.3K σ: 223.8K │ E: 315.2kJ
+  Convection: -0.26K avg, -2.65K pk (-2.9MW)
+  Radiation: -1.40K avg, -16.28K pk (-16.3MW)
+  Contact: -22.89K avg, -22.89K pk (-316.5kW)
+  Adiabatic: +0.02K avg, +0.05K pk (+35.5kW)
+  HeatSink: -18.19K avg, -32.54K pk (-82.6MW)
+[Genesis] [16:47:43] [INFO] RELEASE[51]: F=[-1.775,-2.068] dF=0.2923
+[Genesis] [16:47:43] [INFO] Strike -> IDLE (Stabilizing for 10 steps)
+[Genesis] [16:47:43] [INFO]   Summary: total_time=16.15s, steps=51, final_width=0.0254
+[Genesis] [16:47:43] [INFO] Checkpoint saved (stack=2, mesh_verts=4198)
+[Genesis] [16:47:44] [INFO] ♨️ THERMAL │ Avg: 1062.9K Min: 721.4K Max: 1336.7K σ: 219.0K │ E: 307.2kJ
+  Convection: -0.25K avg, -2.59K pk (-2.8MW)
+  Radiation: -1.30K avg, -15.12K pk (-15.1MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+13W)
+  HeatSink: -17.46K avg, -31.24K pk (-78.9MW)
+[Genesis] [16:47:45] [INFO] ♨️ THERMAL │ Avg: 1042.0K Min: 709.8K Max: 1311.7K σ: 214.1K │ E: 299.9kJ
+  Convection: -0.25K avg, -2.52K pk (-2.8MW)
+  Radiation: -1.21K avg, -14.13K pk (-14.1MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+4W)
+  HeatSink: -16.80K avg, -30.06K pk (-75.5MW)
+[Genesis] [16:47:45] [INFO] Stabilization complete
+[Genesis] [16:47:46] [INFO] ♨️ THERMAL │ Avg: 1021.9K Min: 698.6K Max: 1287.1K σ: 209.2K │ E: 292.4kJ
+  Convection: -0.24K avg, -2.42K pk (-2.7MW)
+  Radiation: -1.13K avg, -13.23K pk (-13.0MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+1W)
+  HeatSink: -16.21K avg, -29.01K pk (-72.5MW)
+[Genesis] [16:47:47] [INFO] ♨️ THERMAL │ Avg: 1002.6K Min: 687.9K Max: 1262.9K σ: 204.3K │ E: 285.6kJ
+  Convection: -0.24K avg, -2.32K pk (-2.6MW)
+  Radiation: -1.05K avg, -12.37K pk (-12.0MW)
+  HeatSink: -15.69K avg, -28.07K pk (-69.8MW)
+[Genesis] [16:47:48] [INFO] ♨️ THERMAL │ Avg: 1016.8K Min: 696.2K Max: 1354.2K σ: 228.7K │ E: 288.6kJ
+  Induction: +23.25K avg, +85.33K pk (+200.0MW)
+  Convection: -0.24K avg, -2.52K pk (-2.7MW)
+  Radiation: -1.21K avg, -16.46K pk (-14.0MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+35W)
+  HeatSink: -9.89K avg, -21.14K pk (-44.2MW)
+[Genesis] [16:47:49] [INFO] ♨️ THERMAL │ Avg: 1041.3K Min: 710.1K Max: 1336.9K σ: 237.2K │ E: 297.3kJ
+  Induction: +23.06K avg, +89.31K pk (+200.0MW)
+  Convection: -0.25K avg, -2.44K pk (-2.8MW)
+  Radiation: -1.30K avg, -15.36K pk (-15.0MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+187W)
+  HeatSink: -8.01K avg, -17.90K pk (-36.0MW)
+[Genesis] [16:47:50] [INFO] ♨️ THERMAL │ Avg: 1066.7K Min: 724.3K Max: 1367.0K σ: 243.5K │ E: 306.0kJ
+  Induction: +23.06K avg, +89.31K pk (+200.0MW)
+  Convection: -0.26K avg, -2.45K pk (-2.9MW)
+  Radiation: -1.40K avg, -17.76K pk (-16.3MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+267W)
+  HeatSink: -7.57K avg, -17.15K pk (-34.2MW)
+[Genesis] [16:47:51] [INFO] ♨️ THERMAL │ Avg: 1091.7K Min: 738.2K Max: 1397.8K σ: 248.6K │ E: 315.0kJ
+  Induction: +23.06K avg, +89.31K pk (+200.0MW)
+  Convection: -0.26K avg, -2.49K pk (-3.0MW)
+  Radiation: -1.52K avg, -19.62K pk (-17.7MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+344W)
+  HeatSink: -7.97K avg, -17.87K pk (-36.2MW)
+[Genesis] [16:47:52] [INFO] ♨️ THERMAL │ Avg: 1115.6K Min: 751.5K Max: 1530.0K σ: 265.2K │ E: 322.8kJ
+  Induction: +370.82K avg, +920.33K pk (+200.0MW)
+  Convection: -0.27K avg, -2.97K pk (-3.1MW)
+  Radiation: -1.83K avg, -32.36K pk (-21.4MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+478W)
+  HeatSink: -8.66K avg, -19.02K pk (-39.5MW)
+[Genesis] [16:47:53] [INFO] ♨️ THERMAL │ Avg: 1097.4K Min: 741.0K Max: 1448.1K σ: 250.5K │ E: 317.3kJ
+  Convection: -0.27K avg, -2.74K pk (-3.0MW)
+  Radiation: -1.58K avg, -21.00K pk (-18.5MW)
+  HeatSink: -14.38K avg, -25.71K pk (-65.4MW)
+[Genesis] [16:47:54] [INFO] ♨️ THERMAL │ Avg: 1078.1K Min: 730.2K Max: 1408.1K σ: 239.7K │ E: 311.0kJ
+  Convection: -0.26K avg, -2.65K pk (-2.9MW)
+  Radiation: -1.46K avg, -18.95K pk (-17.0MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+2W)
+  HeatSink: -15.18K avg, -27.15K pk (-68.7MW)
+[Genesis] [16:47:55] [INFO] Strike request: raw=0.05000000074505806, scaled_strain=0.50
+[Genesis] [16:47:55] [INFO] Checkpoint saved (stack=3, mesh_verts=4198)
+[Genesis] [16:47:55] [INFO] Strike -> APPROACHING (target_strain=0.5000)
+[Genesis] [16:47:55] [INFO]   Initial: width=0.0636, pos_L=[-0.02434643730521202, -0.006463339552283287, 0.04506376385688782], pos_R=[-0.02434643730521202, 0.006463339552283287, 0.10733623802661896]
+[Genesis] [16:47:55] [INFO]   Config: approach_spd=113.63636363636364, press_spd=30.0, max_force=200000.0
+[Genesis] [16:47:55] [INFO]   Control mode -> VELOCITY_CONTROL
+[Genesis] [16:47:55] [INFO] APPROACHING[0]: F=[-0.000,-0.000], contact=[False, False]
+[Genesis] [16:47:55] [INFO] ♨️ THERMAL │ Avg: 1070.4K Min: 725.8K Max: 1393.5K σ: 235.9K │ E: 308.6kJ
+  Convection: -0.26K avg, -2.61K pk (-2.9MW)
+  Radiation: -1.41K avg, -18.24K pk (-16.4MW)
+  Adiabatic: +0.00K avg, +0.00K pk (+10W)
+  HeatSink: -15.30K avg, -27.37K pk (-69.2MW)
+[Genesis] [16:47:55] [INFO] APPROACHING[3]: F=[0.150,0.332], contact=[False, False]
+[Genesis] [16:47:56] [INFO] ♨️ THERMAL │ Avg: 1058.7K Min: 719.3K Max: 1372.5K σ: 230.7K │ E: 304.6kJ
+  Convection: -0.25K avg, -2.57K pk (-2.8MW)
+  Radiation: -1.35K avg, -17.23K pk (-15.6MW)
+  Adiabatic: +0.02K avg, +0.16K pk (+5.7kW)
+  HeatSink: -15.37K avg, -27.50K pk (-69.3MW)
+[Genesis] [16:47:56] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5311.84 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:56] [INFO]   Left gripper CONTACT (force=444.1776)
+[Genesis] [16:47:56] [INFO]   Right gripper CONTACT (force=505.3369)
+[Genesis] [16:47:56] [INFO] Strike -> PRESSING (width=0.0534, steps=4)
+[Genesis] [16:47:56] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 2558.79 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:56] [INFO] PRESSING[6]: F=[793.908,1476.301] dF=-682.3939, v=[30.1024,29.8976] corr=-0.1024
+[Genesis] [16:47:56] [INFO] ♨️ THERMAL │ Avg: 1047.1K Min: 712.8K Max: 1352.4K σ: 225.9K │ E: 300.6kJ
+  Convection: -0.25K avg, -2.52K pk (-2.8MW)
+  Radiation: -1.28K avg, -16.31K pk (-14.9MW)
+  Adiabatic: +0.04K avg, +0.35K pk (+37.2kW)
+  HeatSink: -15.36K avg, -27.48K pk (-69.1MW)
+[Genesis] [16:47:56] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3144.49 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:57] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 2967.94 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:57] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3392.54 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:57] [INFO] PRESSING[9]: F=[2790.219,2147.210] dF=643.0083, v=[29.9035,30.0965] corr=0.0965
+[Genesis] [16:47:57] [INFO] ♨️ THERMAL │ Avg: 1035.7K Min: 706.4K Max: 1333.2K σ: 221.4K │ E: 296.6kJ
+  Convection: -0.25K avg, -2.47K pk (-2.7MW)
+  Radiation: -1.22K avg, -15.45K pk (-14.1MW)
+  Adiabatic: +0.04K avg, +0.45K pk (+48.6kW)
+  HeatSink: -15.29K avg, -27.36K pk (-68.6MW)
+[Genesis] [16:47:57] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3400.24 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:57] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3306.13 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:58] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3325.88 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:58] [INFO] PRESSING[12]: F=[2489.450,2103.097] dF=386.3528, v=[29.9420,30.0580] corr=0.0580
+[Genesis] [16:47:58] [INFO] ♨️ THERMAL │ Avg: 1024.4K Min: 700.1K Max: 1314.8K σ: 217.2K │ E: 292.7kJ
+  Convection: -0.24K avg, -2.43K pk (-2.7MW)
+  Radiation: -1.17K avg, -14.65K pk (-13.5MW)
+  Adiabatic: +0.03K avg, +0.41K pk (+42.4kW)
+  HeatSink: -15.19K avg, -27.17K pk (-68.0MW)
+[Genesis] [16:47:58] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3070.62 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:58] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5746.45 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:59] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 6129.76 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:59] [INFO] PRESSING[15]: F=[7931.817,7561.794] dF=370.0229, v=[29.9445,30.0555] corr=0.0555
+[Genesis] [16:47:59] [INFO] ♨️ THERMAL │ Avg: 1013.2K Min: 693.9K Max: 1297.1K σ: 213.2K │ E: 288.8kJ
+  Convection: -0.24K avg, -2.38K pk (-2.7MW)
+  Radiation: -1.12K avg, -13.92K pk (-12.9MW)
+  Contact: -19.85K avg, -35.74K pk (-617.5kW)
+  Adiabatic: +0.09K avg, +0.83K pk (+253.2kW)
+  HeatSink: -15.07K avg, -26.95K pk (-67.2MW)
+[Genesis] [16:47:59] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 6031.48 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:47:59] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5677.28 | Active CPIC Grid Interference Nodes: 4
+[Genesis] [16:47:59] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5639.61 | Active CPIC Grid Interference Nodes: 3
+[Genesis] [16:48:00] [INFO] PRESSING[18]: F=[11677.419,11696.629] dF=-19.2100, v=[30.0029,29.9971] corr=-0.0029
+[Genesis] [16:48:00] [INFO] ♨️ THERMAL │ Avg: 1002.0K Min: 687.6K Max: 1279.9K σ: 209.2K │ E: 284.5kJ
+  Convection: -0.23K avg, -3.13K pk (-2.6MW)
+  Radiation: -1.04K avg, -13.31K pk (-12.0MW)
+  Contact: -34.03K avg, -35.99K pk (-2.9MW)
+  Adiabatic: +0.11K avg, +0.68K pk (+545.8kW)
+  HeatSink: -14.97K avg, -26.75K pk (-66.6MW)
+[Genesis] [16:48:00] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5435.82 | Active CPIC Grid Interference Nodes: 1
+[Genesis] [16:48:00] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5016.67 | Active CPIC Grid Interference Nodes: 2
+[Genesis] [16:48:01] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4022.78 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:01] [INFO] PRESSING[21]: F=[9526.027,7587.893] dF=1938.1348, v=[29.7093,30.2907] corr=0.2907
+[Genesis] [16:48:01] [INFO] ♨️ THERMAL │ Avg: 990.6K Min: 681.3K Max: 1263.3K σ: 205.3K │ E: 280.5kJ
+  Convection: -0.23K avg, -2.36K pk (-2.6MW)
+  Radiation: -1.02K avg, -12.81K pk (-11.9MW)
+  Contact: -33.01K avg, -35.61K pk (-5.6MW)
+  Adiabatic: +0.09K avg, +0.58K pk (+558.3kW)
+  HeatSink: -14.91K avg, -26.56K pk (-66.1MW)
+[Genesis] [16:48:01] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3622.76 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:01] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3411.53 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:01] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3690.40 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:02] [INFO] PRESSING[24]: F=[6270.992,6705.042] dF=-434.0503, v=[30.0651,29.9349] corr=-0.0651
+[Genesis] [16:48:02] [INFO] ♨️ THERMAL │ Avg: 979.1K Min: 675.0K Max: 1246.7K σ: 201.3K │ E: 276.2kJ
+  Convection: -0.23K avg, -3.54K pk (-2.5MW)
+  Radiation: -0.98K avg, -12.33K pk (-11.3MW)
+  Contact: -31.36K avg, -35.04K pk (-7.5MW)
+  Adiabatic: +0.09K avg, +0.61K pk (+638.3kW)
+  HeatSink: -14.77K avg, -26.33K pk (-65.4MW)
+[Genesis] [16:48:02] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5272.48 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:02] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5527.29 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:02] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5444.86 | Active CPIC Grid Interference Nodes: 14
+[Genesis] [16:48:02] [INFO] PRESSING[27]: F=[10202.436,13758.810] dF=-3556.3740, v=[30.5335,29.4665] corr=-0.5335
+[Genesis] [16:48:02] [INFO] ♨️ THERMAL │ Avg: 967.5K Min: 668.7K Max: 1230.2K σ: 197.4K │ E: 272.1kJ
+  Convection: -0.22K avg, -5.99K pk (-2.5MW)
+  Radiation: -0.92K avg, -21.13K pk (-10.7MW)
+  Contact: -31.24K avg, -34.44K pk (-10.6MW)
+  Adiabatic: +0.11K avg, +0.59K pk (+908.8kW)
+  HeatSink: -14.45K avg, -26.00K pk (-64.2MW)
+[Genesis] [16:48:03] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5454.50 | Active CPIC Grid Interference Nodes: 12
+[Genesis] [16:48:03] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5034.14 | Active CPIC Grid Interference Nodes: 25
+[Genesis] [16:48:03] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4509.40 | Active CPIC Grid Interference Nodes: 26
+[Genesis] [16:48:03] [INFO] PRESSING[30]: F=[13828.058,12662.539] dF=1165.5186, v=[29.8252,30.1748] corr=0.1748
+[Genesis] [16:48:03] [INFO] ♨️ THERMAL │ Avg: 955.9K Min: 663.1K Max: 1213.8K σ: 193.3K │ E: 267.7kJ
+  Convection: -0.22K avg, -5.47K pk (-2.5MW)
+  Radiation: -0.87K avg, -14.20K pk (-10.1MW)
+  Contact: -31.30K avg, -33.75K pk (-12.1MW)
+  Adiabatic: +0.11K avg, +0.53K pk (+988.9kW)
+  HeatSink: -13.94K avg, -25.59K pk (-63.2MW)
+[Genesis] [16:48:03] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4343.55 | Active CPIC Grid Interference Nodes: 13
+[Genesis] [16:48:04] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4277.55 | Active CPIC Grid Interference Nodes: 21
+[Genesis] [16:48:04] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4108.92 | Active CPIC Grid Interference Nodes: 18
+[Genesis] [16:48:04] [INFO] PRESSING[33]: F=[9968.825,9251.690] dF=717.1348, v=[29.8924,30.1076] corr=0.1076
+[Genesis] [16:48:06] [INFO] ♨️ THERMAL │ Avg: 944.1K Min: 656.9K Max: 1197.6K σ: 189.4K │ E: 263.1kJ
+  Convection: -0.21K avg, -3.15K pk (-2.4MW)
+  Radiation: -0.81K avg, -12.71K pk (-9.5MW)
+  Contact: -30.75K avg, -33.19K pk (-14.6MW)
+  Adiabatic: +0.10K avg, +0.46K pk (+999.3kW)
+  HeatSink: -13.86K avg, -25.45K pk (-63.4MW)
+[Genesis] [16:48:06] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3248.38 | Active CPIC Grid Interference Nodes: 5
+[Genesis] [16:48:07] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5040.25 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:07] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5222.38 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:07] [INFO] PRESSING[36]: F=[11536.896,11511.854] dF=25.0420, v=[29.9962,30.0038] corr=0.0038
+[Genesis] [16:48:07] [INFO] ♨️ THERMAL │ Avg: 932.3K Min: 650.3K Max: 1181.7K σ: 185.8K │ E: 258.2kJ
+  Convection: -0.21K avg, -3.31K pk (-2.3MW)
+  Radiation: -0.77K avg, -11.72K pk (-9.0MW)
+  Contact: -30.21K avg, -32.59K pk (-15.3MW)
+  Adiabatic: +0.11K avg, +0.62K pk (+1.2MW)
+  HeatSink: -13.82K avg, -25.23K pk (-62.9MW)
+[Genesis] [16:48:07] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5472.08 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:08] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5566.36 | Active CPIC Grid Interference Nodes: 15
+[Genesis] [16:48:08] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 5477.99 | Active CPIC Grid Interference Nodes: 59
+[Genesis] [16:48:08] [INFO] PRESSING[39]: F=[14907.730,13599.781] dF=1307.9492, v=[29.8038,30.1962] corr=0.1962
+[Genesis] [16:48:08] [INFO] ♨️ THERMAL │ Avg: 920.4K Min: 643.7K Max: 1166.1K σ: 182.3K │ E: 253.2kJ
+  Convection: -0.25K avg, -35.70K pk (-2.8MW)
+  Radiation: -0.78K avg, -33.14K pk (-9.1MW)
+  Contact: -28.66K avg, -31.92K pk (-16.2MW)
+  Adiabatic: +0.10K avg, +0.64K pk (+1.3MW)
+  HeatSink: -13.73K avg, -24.95K pk (-62.3MW)
+[Genesis] [16:48:08] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4418.10 | Active CPIC Grid Interference Nodes: 63
+[Genesis] [16:48:09] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 4282.06 | Active CPIC Grid Interference Nodes: 85
+[Genesis] [16:48:09] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3613.03 | Active CPIC Grid Interference Nodes: 121
+[Genesis] [16:48:09] [INFO] PRESSING[42]: F=[14213.089,13969.632] dF=243.4570, v=[29.9635,30.0365] corr=0.0365
+[Genesis] [16:48:09] [INFO] ♨️ THERMAL │ Avg: 908.4K Min: 637.0K Max: 1150.9K σ: 179.0K │ E: 247.8kJ
+  Convection: -0.26K avg, -37.05K pk (-2.9MW)
+  Radiation: -0.72K avg, -16.87K pk (-8.4MW)
+  Contact: -28.71K avg, -31.05K pk (-17.3MW)
+  Adiabatic: +0.09K avg, +0.61K pk (+1.3MW)
+  HeatSink: -13.63K avg, -24.63K pk (-61.6MW)
+[Genesis] [16:48:09] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3249.69 | Active CPIC Grid Interference Nodes: 111
+[Genesis] [16:48:10] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3260.06 | Active CPIC Grid Interference Nodes: 69
+[Genesis] [16:48:10] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 3321.69 | Active CPIC Grid Interference Nodes: 52
+[Genesis] [16:48:10] [INFO] Strike -> RELEASE (Target Strain, strain=0.5026, steps=45, time=14.28s)
+[Genesis] [16:48:10] [INFO] ♨️ THERMAL │ Avg: 897.2K Min: 630.7K Max: 1136.1K σ: 176.2K │ E: 242.8kJ
+  Convection: -0.20K avg, -4.52K pk (-2.2MW)
+  Radiation: -0.67K avg, -10.44K pk (-7.7MW)
+  Contact: -21.45K avg, -31.90K pk (-1.1MW)
+  Adiabatic: +0.05K avg, +0.33K pk (+709.1kW)
+  HeatSink: -13.18K avg, -23.99K pk (-59.4MW)
+[Genesis] [16:48:10] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 9843.79 | Active CPIC Grid Interference Nodes: 31
+[Genesis] [16:48:10] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30274.48 | Active CPIC Grid Interference Nodes: 9
+[Genesis] [16:48:11] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30147.00 | Active CPIC Grid Interference Nodes: 3
+[Genesis] [16:48:11] [INFO] RELEASE[48]: F=[1617.993,949.171] dF=668.8225
+[Genesis] [16:48:11] [INFO] ♨️ THERMAL │ Avg: 887.7K Min: 625.4K Max: 1122.0K σ: 174.3K │ E: 239.4kJ
+  Convection: -0.19K avg, -4.57K pk (-2.1MW)
+  Radiation: -0.61K avg, -14.17K pk (-7.0MW)
+  Contact: -31.01K avg, -31.56K pk (-738.8kW)
+  Adiabatic: +0.05K avg, +2.07K pk (+506.1kW)
+  HeatSink: -12.71K avg, -23.15K pk (-57.1MW)
+[Genesis] [16:48:11] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34523.29 | Active CPIC Grid Interference Nodes: 2
+[Genesis] [16:48:11] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 46989.60 | Active CPIC Grid Interference Nodes: 7
+[Genesis] [16:48:11] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 40802.25 | Active CPIC Grid Interference Nodes: 4
+[Genesis] [16:48:12] [INFO] RELEASE[51]: F=[-386.256,-307.489] dF=-78.7670
+[Genesis] [16:48:12] [INFO] ♨️ THERMAL │ Avg: 878.6K Min: 620.4K Max: 1109.6K σ: 172.3K │ E: 235.9kJ
+  Convection: -0.19K avg, -4.00K pk (-2.1MW)
+  Radiation: -0.58K avg, -14.23K pk (-6.6MW)
+  Contact: -17.13K avg, -31.11K pk (-254.1kW)
+  Adiabatic: +0.10K avg, +2.95K pk (+582.1kW)
+  HeatSink: -12.30K avg, -22.49K pk (-55.1MW)
+[Genesis] [16:48:12] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 40127.30 | Active CPIC Grid Interference Nodes: 3
+[Genesis] [16:48:12] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 38634.66 | Active CPIC Grid Interference Nodes: 3
+[Genesis] [16:48:12] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 37724.86 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:12] [INFO] RELEASE[54]: F=[-140.004,-165.526] dF=25.5219
+[Genesis] [16:48:13] [INFO] ♨️ THERMAL │ Avg: 869.8K Min: 615.4K Max: 1097.9K σ: 170.2K │ E: 232.6kJ
+  Convection: -0.19K avg, -3.53K pk (-2.1MW)
+  Radiation: -0.57K avg, -12.96K pk (-6.5MW)
+  Contact: -3.84K avg, -3.84K pk (-11.4kW)
+  Adiabatic: +0.09K avg, +2.80K pk (+495.8kW)
+  HeatSink: -12.01K avg, -21.96K pk (-53.6MW)
+[Genesis] [16:48:13] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 36849.46 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:13] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 36075.81 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:13] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 35398.25 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:13] [INFO] RELEASE[57]: F=[-32.707,-32.827] dF=0.1206
+[Genesis] [16:48:13] [INFO] ♨️ THERMAL │ Avg: 861.1K Min: 610.6K Max: 1086.5K σ: 168.1K │ E: 229.4kJ
+  Convection: -0.19K avg, -3.23K pk (-2.0MW)
+  Radiation: -0.55K avg, -11.70K pk (-6.2MW)
+  Adiabatic: +0.09K avg, +2.82K pk (+438.4kW)
+  HeatSink: -11.77K avg, -21.50K pk (-52.4MW)
+[Genesis] [16:48:13] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34900.48 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:13] [INFO] Strike -> IDLE (Stabilizing for 10 steps)
+[Genesis] [16:48:13] [INFO]   Summary: total_time=18.68s, steps=58, final_width=0.0346
+[Genesis] [16:48:14] [INFO] Checkpoint saved (stack=3, mesh_verts=4006)
+[Genesis] [16:48:14] [INFO] ♨️ THERMAL │ Avg: 858.3K Min: 609.0K Max: 1082.7K σ: 167.3K │ E: 228.3kJ
+  Convection: -0.19K avg, -3.14K pk (-2.0MW)
+  Radiation: -0.54K avg, -11.45K pk (-6.2MW)
+  Adiabatic: +0.09K avg, +2.80K pk (+422.1kW)
+  HeatSink: -11.69K avg, -21.35K pk (-52.0MW)
+[Genesis] [16:48:14] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34499.36 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:14] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34248.28 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:14] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33978.33 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:15] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33807.74 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:15] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33713.86 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:15] [INFO] ♨️ THERMAL │ Avg: 844.4K Min: 601.3K Max: 1064.4K σ: 163.7K │ E: 223.0kJ
+  Convection: -0.18K avg, -3.27K pk (-1.9MW)
+  Radiation: -0.51K avg, -11.52K pk (-5.8MW)
+  Adiabatic: +0.12K avg, +2.90K pk (+380.3kW)
+  HeatSink: -11.32K avg, -20.65K pk (-50.1MW)
+[Genesis] [16:48:15] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33667.09 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:15] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33692.42 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:15] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33775.34 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:16] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33935.78 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:16] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34185.23 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:16] [INFO] Stabilization complete
+[Genesis] [16:48:16] [INFO] ♨️ THERMAL │ Avg: 830.9K Min: 593.8K Max: 1046.7K σ: 160.1K │ E: 217.9kJ
+  Convection: -0.18K avg, -3.22K pk (-1.9MW)
+  Radiation: -0.48K avg, -10.88K pk (-5.4MW)
+  Adiabatic: +0.17K avg, +3.10K pk (+392.9kW)
+  HeatSink: -10.98K avg, -20.04K pk (-48.4MW)
+[Genesis] [16:48:16] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34528.37 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:16] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34932.22 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:17] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 35398.64 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:17] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 35880.75 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:17] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 36363.82 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:17] [INFO] ♨️ THERMAL │ Avg: 834.3K Min: 595.9K Max: 1121.7K σ: 174.1K │ E: 218.8kJ
+  Induction: +30.80K avg, +146.30K pk (+201.8MW)
+  Convection: -0.18K avg, -3.29K pk (-1.9MW)
+  Radiation: -0.53K avg, -10.71K pk (-6.1MW)
+  Adiabatic: +0.40K avg, +3.48K pk (+419.4kW)
+  HeatSink: -6.34K avg, -15.07K pk (-28.0MW)
+[Genesis] [16:48:17] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 36588.74 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:18] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 35353.32 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:18] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34776.53 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:18] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34278.36 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:18] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33747.27 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:18] [INFO] ♨️ THERMAL │ Avg: 868.9K Min: 615.6K Max: 1106.6K σ: 186.4K │ E: 234.8kJ
+  Induction: +26.81K avg, +153.93K pk (+204.0MW)
+  Convection: -0.19K avg, -3.44K pk (-2.0MW)
+  Radiation: -0.59K avg, -15.65K pk (-6.8MW)
+  Adiabatic: +0.14K avg, +2.34K pk (+335.3kW)
+  HeatSink: -3.74K avg, -10.76K pk (-16.7MW)
+[Genesis] [16:48:18] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33159.10 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:19] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 32626.26 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:19] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 32080.29 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:19] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 31542.73 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:19] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 31009.84 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:19] [INFO] ♨️ THERMAL │ Avg: 900.6K Min: 633.5K Max: 1176.7K σ: 203.1K │ E: 246.3kJ
+  Induction: +24.98K avg, +150.33K pk (+200.6MW)
+  Convection: -0.19K avg, -3.61K pk (-2.2MW)
+  Radiation: -0.68K avg, -19.25K pk (-8.0MW)
+  Adiabatic: +0.11K avg, +1.98K pk (+279.0kW)
+  HeatSink: -3.59K avg, -10.24K pk (-16.2MW)
+[Genesis] [16:48:19] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30488.38 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:20] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29975.11 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:20] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29482.04 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:20] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29000.57 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:20] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28549.13 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:20] [INFO] ♨️ THERMAL │ Avg: 931.5K Min: 650.9K Max: 1231.7K σ: 217.6K │ E: 257.1kJ
+  Induction: +24.80K avg, +150.33K pk (+200.0MW)
+  Convection: -0.20K avg, -3.67K pk (-2.3MW)
+  Radiation: -0.79K avg, -22.03K pk (-9.4MW)
+  Adiabatic: +0.09K avg, +1.69K pk (+232.4kW)
+  HeatSink: -3.58K avg, -10.20K pk (-16.3MW)
+[Genesis] [16:48:20] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28111.74 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:21] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 27700.93 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:21] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 27317.66 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:21] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 26955.29 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:21] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 26617.23 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:22] [INFO] ♨️ THERMAL │ Avg: 962.1K Min: 668.0K Max: 1281.7K σ: 230.6K │ E: 267.9kJ
+  Induction: +24.80K avg, +150.33K pk (+200.0MW)
+  Convection: -0.21K avg, -3.75K pk (-2.4MW)
+  Radiation: -0.91K avg, -24.89K pk (-10.8MW)
+  Adiabatic: +0.06K avg, +1.48K pk (+200.3kW)
+  HeatSink: -3.71K avg, -10.42K pk (-17.0MW)
+[Genesis] [16:48:22] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 26302.95 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:22] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 25998.85 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:22] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 25718.27 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:22] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 26142.09 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:23] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 27111.62 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:23] [INFO] ♨️ THERMAL │ Avg: 992.0K Min: 684.8K Max: 1414.0K σ: 251.7K │ E: 277.6kJ
+  Induction: +117.10K avg, +396.03K pk (+200.0MW)
+  Convection: -0.22K avg, -3.57K pk (-2.5MW)
+  Radiation: -1.14K avg, -22.12K pk (-13.8MW)
+  Adiabatic: +0.08K avg, +1.66K pk (+216.8kW)
+  HeatSink: -3.99K avg, -10.89K pk (-18.5MW)
+[Genesis] [16:48:23] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 27567.14 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:23] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 27978.81 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:23] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28311.31 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:23] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28593.17 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:24] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28863.18 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:24] [INFO] ♨️ THERMAL │ Avg: 979.8K Min: 677.6K Max: 1342.2K σ: 235.3K │ E: 273.5kJ
+  Convection: -0.22K avg, -3.44K pk (-2.5MW)
+  Radiation: -1.00K avg, -20.08K pk (-12.0MW)
+  Adiabatic: +0.18K avg, +1.88K pk (+239.7kW)
+  HeatSink: -9.69K avg, -17.69K pk (-44.7MW)
+[Genesis] [16:48:24] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29115.37 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:24] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29356.63 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:24] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29588.51 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29808.31 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30017.53 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:25] [INFO] ♨️ THERMAL │ Avg: 966.0K Min: 669.7K Max: 1302.3K σ: 223.1K │ E: 268.5kJ
+  Convection: -0.21K avg, -3.31K pk (-2.4MW)
+  Radiation: -0.92K avg, -18.55K pk (-11.0MW)
+  Adiabatic: +0.20K avg, +2.05K pk (+256.5kW)
+  HeatSink: -10.77K avg, -19.66K pk (-49.5MW)
+[Genesis] [16:48:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30215.47 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30404.48 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:25] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30581.14 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:25] [INFO] Strike request: raw=0.05000000074505806, scaled_strain=0.50
+[Genesis] [16:48:25] [INFO] Checkpoint saved (stack=4, mesh_verts=4006)
+[Genesis] [16:48:25] [INFO] Strike -> APPROACHING (target_strain=0.5000)
+[Genesis] [16:48:25] [INFO]   Initial: width=0.0636, pos_L=[-0.043692197650671005, -0.006463339552283287, 0.04506376385688782], pos_R=[-0.043692197650671005, 0.006463339552283287, 0.10733623802661896]
+[Genesis] [16:48:25] [INFO]   Config: approach_spd=113.63636363636364, press_spd=30.0, max_force=200000.0
+[Genesis] [16:48:25] [INFO]   Control mode -> VELOCITY_CONTROL
+[Genesis] [16:48:26] [INFO] APPROACHING[0]: F=[-0.000,-0.000], contact=[False, False]
+[Genesis] [16:48:26] [INFO] ♨️ THERMAL │ Avg: 957.4K Min: 664.8K Max: 1280.8K σ: 216.9K │ E: 265.6kJ
+  Convection: -0.21K avg, -3.23K pk (-2.4MW)
+  Radiation: -0.88K avg, -17.68K pk (-10.5MW)
+  Adiabatic: +0.20K avg, +2.14K pk (+264.9kW)
+  HeatSink: -11.11K avg, -20.29K pk (-50.9MW)
+[Genesis] [16:48:26] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30765.26 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:26] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30939.42 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:26] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 31119.29 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:26] [INFO] APPROACHING[3]: F=[-0.000,-0.000], contact=[False, False]
+[Genesis] [16:48:27] [INFO] ♨️ THERMAL │ Avg: 948.7K Min: 659.9K Max: 1260.6K σ: 211.4K │ E: 262.4kJ
+  Convection: -0.21K avg, -3.15K pk (-2.3MW)
+  Radiation: -0.85K avg, -16.86K pk (-10.0MW)
+  Adiabatic: +0.20K avg, +2.24K pk (+272.9kW)
+  HeatSink: -11.33K avg, -20.68K pk (-51.8MW)
+[Genesis] [16:48:27] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 31303.48 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:27] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 31481.07 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:27] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 31670.22 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:27] [INFO] APPROACHING[6]: F=[-0.000,-0.000], contact=[False, False]
+[Genesis] [16:48:27] [INFO] ♨️ THERMAL │ Avg: 940.0K Min: 654.9K Max: 1241.6K σ: 206.3K │ E: 259.2kJ
+  Convection: -0.21K avg, -3.10K pk (-2.3MW)
+  Radiation: -0.81K avg, -16.10K pk (-9.5MW)
+  Adiabatic: +0.20K avg, +2.33K pk (+281.0kW)
+  HeatSink: -11.46K avg, -20.93K pk (-52.3MW)
+[Genesis] [16:48:27] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 31862.49 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:28] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 32063.21 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:28] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 32263.85 | Active CPIC Grid Interference Nodes: 1
+[Genesis] [16:48:28] [INFO]   Left gripper CONTACT (force=979.2124)
+[Genesis] [16:48:28] [INFO]   Right gripper CONTACT (force=1017.5480)
+[Genesis] [16:48:28] [INFO] APPROACHING[9]: F=[979.212,1017.548], contact=[True, True]
+[Genesis] [16:48:28] [INFO] Strike -> PRESSING (width=0.0407, steps=9)
+[Genesis] [16:48:28] [INFO] ♨️ THERMAL │ Avg: 931.2K Min: 650.0K Max: 1223.5K σ: 201.7K │ E: 255.9kJ
+  Convection: -0.20K avg, -3.05K pk (-2.3MW)
+  Radiation: -0.78K avg, -15.40K pk (-9.1MW)
+  Adiabatic: +0.13K avg, +2.44K pk (+306.9kW)
+  HeatSink: -11.54K avg, -21.07K pk (-52.5MW)
+[Genesis] [16:48:28] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 32465.68 | Active CPIC Grid Interference Nodes: 1
+[Genesis] [16:48:28] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 32658.02 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:29] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 32935.14 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:29] [INFO] PRESSING[12]: F=[7514.342,6324.680] dF=1189.6626, v=[29.8216,30.1784] corr=0.1784
+[Genesis] [16:48:29] [INFO] ♨️ THERMAL │ Avg: 922.5K Min: 645.1K Max: 1206.3K σ: 197.4K │ E: 252.6kJ
+  Convection: -0.20K avg, -3.01K pk (-2.2MW)
+  Radiation: -0.75K avg, -14.73K pk (-8.7MW)
+  Adiabatic: +0.14K avg, +2.55K pk (+541.0kW)
+  HeatSink: -11.56K avg, -21.12K pk (-52.5MW)
+[Genesis] [16:48:29] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33116.08 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:29] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33251.42 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:30] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33392.68 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:30] [INFO] PRESSING[15]: F=[15258.273,16981.762] dF=-1723.4883, v=[30.2585,29.7415] corr=-0.2585
+[Genesis] [16:48:30] [INFO] ♨️ THERMAL │ Avg: 913.8K Min: 640.3K Max: 1190.3K σ: 193.5K │ E: 249.2kJ
+  Convection: -0.20K avg, -2.98K pk (-2.2MW)
+  Radiation: -0.70K avg, -13.98K pk (-8.1MW)
+  Adiabatic: +0.13K avg, +2.63K pk (+897.1kW)
+  HeatSink: -11.55K avg, -21.10K pk (-52.3MW)
+[Genesis] [16:48:30] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33418.08 | Active CPIC Grid Interference Nodes: 1
+[Genesis] [16:48:30] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33428.77 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:31] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33431.26 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:31] [INFO] PRESSING[18]: F=[20999.566,17323.725] dF=3675.8418, v=[29.4486,30.5514] corr=0.5514
+[Genesis] [16:48:31] [INFO] ♨️ THERMAL │ Avg: 905.2K Min: 635.4K Max: 1175.3K σ: 189.8K │ E: 245.8kJ
+  Convection: -0.20K avg, -2.85K pk (-2.2MW)
+  Radiation: -0.67K avg, -13.15K pk (-7.7MW)
+  Contact: -24.36K avg, -33.42K pk (-926.5kW)
+  Adiabatic: +0.13K avg, +2.70K pk (+918.7kW)
+  HeatSink: -11.55K avg, -21.06K pk (-52.1MW)
+[Genesis] [16:48:31] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33393.97 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:31] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33431.96 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:32] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33164.05 | Active CPIC Grid Interference Nodes: 1
+[Genesis] [16:48:32] [INFO] PRESSING[21]: F=[19443.283,19195.215] dF=248.0684, v=[29.9628,30.0372] corr=0.0372
+[Genesis] [16:48:32] [INFO] ♨️ THERMAL │ Avg: 896.1K Min: 630.3K Max: 1159.6K σ: 185.8K │ E: 242.3kJ
+  Convection: -0.20K avg, -3.49K pk (-2.2MW)
+  Radiation: -0.68K avg, -12.20K pk (-7.7MW)
+  Contact: -31.28K avg, -33.79K pk (-6.7MW)
+  Adiabatic: +0.13K avg, +2.77K pk (+1.2MW)
+  HeatSink: -11.63K avg, -21.10K pk (-52.3MW)
+[Genesis] [16:48:32] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33266.41 | Active CPIC Grid Interference Nodes: 1
+[Genesis] [16:48:32] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33135.96 | Active CPIC Grid Interference Nodes: 3
+[Genesis] [16:48:33] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33219.27 | Active CPIC Grid Interference Nodes: 8
+[Genesis] [16:48:33] [INFO] PRESSING[24]: F=[17289.125,21219.125] dF=-3930.0000, v=[30.5895,29.4105] corr=-0.5895
+[Genesis] [16:48:33] [INFO] ♨️ THERMAL │ Avg: 886.5K Min: 624.9K Max: 1142.3K σ: 181.5K │ E: 239.0kJ
+  Convection: -0.21K avg, -4.33K pk (-2.3MW)
+  Radiation: -0.69K avg, -11.27K pk (-7.8MW)
+  Contact: -30.81K avg, -33.12K pk (-10.1MW)
+  Adiabatic: +0.14K avg, +2.88K pk (+1.5MW)
+  HeatSink: -11.72K avg, -21.16K pk (-52.6MW)
+[Genesis] [16:48:33] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33192.38 | Active CPIC Grid Interference Nodes: 47
+[Genesis] [16:48:33] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33235.10 | Active CPIC Grid Interference Nodes: 42
+[Genesis] [16:48:34] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33221.83 | Active CPIC Grid Interference Nodes: 98
+[Genesis] [16:48:34] [INFO] PRESSING[27]: F=[20782.445,18298.148] dF=2484.2969, v=[29.6274,30.3726] corr=0.3726
+[Genesis] [16:48:34] [INFO] ♨️ THERMAL │ Avg: 876.4K Min: 619.3K Max: 1124.3K σ: 176.9K │ E: 235.2kJ
+  Convection: -0.21K avg, -6.92K pk (-2.4MW)
+  Radiation: -0.69K avg, -14.87K pk (-7.9MW)
+  Contact: -30.84K avg, -32.40K pk (-14.6MW)
+  Adiabatic: +0.16K avg, +2.98K pk (+1.7MW)
+  HeatSink: -11.83K avg, -21.22K pk (-52.9MW)
+[Genesis] [16:48:34] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33296.54 | Active CPIC Grid Interference Nodes: 105
+[Genesis] [16:48:34] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33367.16 | Active CPIC Grid Interference Nodes: 82
+[Genesis] [16:48:35] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33648.14 | Active CPIC Grid Interference Nodes: 73
+[Genesis] [16:48:35] [INFO] PRESSING[30]: F=[18878.496,25079.928] dF=-6201.4316, v=[30.9302,29.0698] corr=-0.9302
+[Genesis] [16:48:35] [INFO] ♨️ THERMAL │ Avg: 866.0K Min: 613.4K Max: 1105.8K σ: 172.3K │ E: 231.3kJ
+  Convection: -0.19K avg, -3.18K pk (-2.1MW)
+  Radiation: -0.60K avg, -10.53K pk (-6.9MW)
+  Contact: -29.66K avg, -31.67K pk (-17.8MW)
+  Adiabatic: +0.19K avg, +3.17K pk (+2.0MW)
+  HeatSink: -11.88K avg, -21.22K pk (-52.9MW)
+[Genesis] [16:48:35] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 33789.31 | Active CPIC Grid Interference Nodes: 56
+[Genesis] [16:48:35] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34050.35 | Active CPIC Grid Interference Nodes: 17
+[Genesis] [16:48:36] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34204.73 | Active CPIC Grid Interference Nodes: 56
+[Genesis] [16:48:36] [INFO] PRESSING[33]: F=[22943.500,19703.660] dF=3239.8398, v=[29.5140,30.4860] corr=0.4860
+[Genesis] [16:48:36] [INFO] ♨️ THERMAL │ Avg: 855.2K Min: 607.4K Max: 1087.6K σ: 167.6K │ E: 227.3kJ
+  Convection: -0.20K avg, -9.80K pk (-2.3MW)
+  Radiation: -0.62K avg, -28.28K pk (-7.2MW)
+  Contact: -29.11K avg, -30.92K pk (-20.3MW)
+  Adiabatic: +0.20K avg, +3.88K pk (+2.1MW)
+  HeatSink: -11.93K avg, -21.22K pk (-53.0MW)
+[Genesis] [16:48:36] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34417.17 | Active CPIC Grid Interference Nodes: 132
+[Genesis] [16:48:36] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34593.55 | Active CPIC Grid Interference Nodes: 201
+[Genesis] [16:48:36] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34733.80 | Active CPIC Grid Interference Nodes: 207
+[Genesis] [16:48:37] [INFO] PRESSING[36]: F=[19458.771,21365.678] dF=-1906.9062, v=[30.2860,29.7140] corr=-0.2860
+[Genesis] [16:48:37] [INFO] ♨️ THERMAL │ Avg: 843.9K Min: 601.0K Max: 1068.7K σ: 162.7K │ E: 222.9kJ
+  Convection: -0.22K avg, -14.04K pk (-2.6MW)
+  Radiation: -0.61K avg, -23.54K pk (-7.3MW)
+  Contact: -28.09K avg, -30.11K pk (-24.4MW)
+  Adiabatic: +0.22K avg, +4.14K pk (+2.3MW)
+  HeatSink: -12.04K avg, -21.26K pk (-53.3MW)
+[Genesis] [16:48:37] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 34992.07 | Active CPIC Grid Interference Nodes: 189
+[Genesis] [16:48:37] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 35309.00 | Active CPIC Grid Interference Nodes: 240
+[Genesis] [16:48:37] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 35631.34 | Active CPIC Grid Interference Nodes: 291
+[Genesis] [16:48:38] [INFO] PRESSING[39]: F=[26419.764,28314.590] dF=-1894.8262, v=[30.2842,29.7158] corr=-0.2842
+[Genesis] [16:48:38] [INFO] ♨️ THERMAL │ Avg: 832.3K Min: 594.5K Max: 1049.5K σ: 157.8K │ E: 217.7kJ
+  Convection: -0.21K avg, -15.23K pk (-2.4MW)
+  Radiation: -0.56K avg, -17.58K pk (-6.6MW)
+  Contact: -27.64K avg, -29.28K pk (-26.6MW)
+  Adiabatic: +0.26K avg, +4.46K pk (+2.7MW)
+  HeatSink: -12.06K avg, -21.22K pk (-53.2MW)
+[Genesis] [16:48:38] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 36027.01 | Active CPIC Grid Interference Nodes: 308
+[Genesis] [16:48:38] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 36677.39 | Active CPIC Grid Interference Nodes: 268
+[Genesis] [16:48:38] [INFO] Strike -> RELEASE (Target Strain, strain=0.5107, steps=41, time=10.32s)
+[Genesis] [16:48:41] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 37913.27 | Active CPIC Grid Interference Nodes: 221
+[Genesis] [16:48:41] [INFO] RELEASE[42]: F=[243.537,188.580] dF=54.9573
+[Genesis] [16:48:41] [INFO] ♨️ THERMAL │ Avg: 822.7K Min: 589.2K Max: 1033.3K σ: 155.0K │ E: 213.3kJ
+  Convection: -0.19K avg, -3.51K pk (-2.0MW)
+  Radiation: -0.50K avg, -10.03K pk (-5.6MW)
+  Contact: -28.10K avg, -31.80K pk (-2.2MW)
+  Adiabatic: +0.07K avg, +4.98K pk (+673.8kW)
+  HeatSink: -11.53K avg, -20.58K pk (-50.7MW)
+[Genesis] [16:48:41] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 38291.37 | Active CPIC Grid Interference Nodes: 244
+[Genesis] [16:48:41] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 38415.42 | Active CPIC Grid Interference Nodes: 209
+[Genesis] [16:48:41] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 38146.53 | Active CPIC Grid Interference Nodes: 151
+[Genesis] [16:48:42] [INFO] RELEASE[45]: F=[-73.658,-70.835] dF=-2.8232
+[Genesis] [16:48:42] [INFO] ♨️ THERMAL │ Avg: 814.2K Min: 584.5K Max: 1022.4K σ: 153.1K │ E: 209.5kJ
+  Convection: -0.18K avg, -2.67K pk (-2.0MW)
+  Radiation: -0.48K avg, -8.44K pk (-5.3MW)
+  Contact: -26.74K avg, -31.33K pk (-1.6MW)
+  Adiabatic: +0.09K avg, +5.06K pk (+403.1kW)
+  HeatSink: -11.17K avg, -19.99K pk (-48.9MW)
+[Genesis] [16:48:42] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 38266.03 | Active CPIC Grid Interference Nodes: 144
+[Genesis] [16:48:42] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 38705.75 | Active CPIC Grid Interference Nodes: 131
+[Genesis] [16:48:42] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 38833.48 | Active CPIC Grid Interference Nodes: 90
+[Genesis] [16:48:43] [INFO] RELEASE[48]: F=[-35.910,-38.708] dF=2.7982
+[Genesis] [16:48:43] [INFO] ♨️ THERMAL │ Avg: 806.3K Min: 580.0K Max: 1012.8K σ: 151.2K │ E: 205.6kJ
+  Convection: -0.18K avg, -2.66K pk (-1.9MW)
+  Radiation: -0.46K avg, -8.13K pk (-5.0MW)
+  Adiabatic: +0.17K avg, +5.31K pk (+396.7kW)
+  HeatSink: -10.84K avg, -19.52K pk (-47.4MW)
+[Genesis] [16:48:43] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 39790.27 | Active CPIC Grid Interference Nodes: 7
+[Genesis] [16:48:43] [INFO] Strike -> IDLE (Stabilizing for 10 steps)
+[Genesis] [16:48:43] [INFO]   Summary: total_time=17.45s, steps=49, final_width=0.0246
+[Genesis] [16:48:43] [INFO] Checkpoint saved (stack=4, mesh_verts=3910)
+[Genesis] [16:48:43] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 40061.60 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:44] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 40982.54 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:44] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 41344.59 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:44] [INFO] ♨️ THERMAL │ Avg: 795.9K Min: 574.2K Max: 1000.5K σ: 148.9K │ E: 197.8kJ
+  Convection: -0.18K avg, -2.62K pk (-1.8MW)
+  Radiation: -0.44K avg, -7.84K pk (-4.6MW)
+  Adiabatic: +0.39K avg, +5.83K pk (+404.2kW)
+  HeatSink: -10.61K avg, -19.07K pk (-46.2MW)
+[Genesis] [16:48:44] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 42091.05 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:44] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 42414.02 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:45] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 42994.48 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:45] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 43373.97 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:46] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 44055.84 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:46] [INFO] ♨️ THERMAL │ Avg: 783.4K Min: 567.2K Max: 985.2K σ: 145.9K │ E: 192.9kJ
+  Convection: -0.18K avg, -2.57K pk (-1.8MW)
+  Radiation: -0.43K avg, -7.88K pk (-4.4MW)
+  Adiabatic: +0.40K avg, +6.46K pk (+430.7kW)
+  HeatSink: -10.26K avg, -18.44K pk (-44.4MW)
+[Genesis] [16:48:46] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 44609.57 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:46] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 45373.79 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:46] [INFO] Stabilization complete
+[Genesis] [16:48:46] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 45948.10 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:47] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 46636.12 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:47] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 47261.67 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:47] [INFO] ♨️ THERMAL │ Avg: 771.2K Min: 560.4K Max: 970.0K σ: 142.8K │ E: 188.9kJ
+  Convection: -0.18K avg, -2.53K pk (-1.8MW)
+  Radiation: -0.40K avg, -7.46K pk (-4.1MW)
+  Adiabatic: +0.32K avg, +7.24K pk (+460.7kW)
+  HeatSink: -9.93K avg, -17.86K pk (-42.9MW)
+[Genesis] [16:48:47] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 47994.80 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:47] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 48710.30 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 49491.89 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 50253.53 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 51088.33 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:48] [INFO] ♨️ THERMAL │ Avg: 759.5K Min: 553.9K Max: 955.1K σ: 139.8K │ E: 185.0kJ
+  Convection: -0.17K avg, -2.49K pk (-1.7MW)
+  Radiation: -0.38K avg, -7.08K pk (-3.9MW)
+  Adiabatic: +0.36K avg, +8.16K pk (+489.0kW)
+  HeatSink: -9.63K avg, -17.32K pk (-41.4MW)
+[Genesis] [16:48:48] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 51966.38 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:49] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 52935.20 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:49] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 53969.83 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:49] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 55061.20 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:49] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 55509.41 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:49] [INFO] ♨️ THERMAL │ Avg: 784.7K Min: 568.4K Max: 1101.4K σ: 175.7K │ E: 201.1kJ
+  Induction: +28.21K avg, +163.05K pk (+203.4MW)
+  Convection: -0.17K avg, -2.67K pk (-1.9MW)
+  Radiation: -0.47K avg, -11.65K pk (-5.4MW)
+  Adiabatic: +0.32K avg, +8.76K pk (+492.1kW)
+  HeatSink: -3.63K avg, -10.27K pk (-15.7MW)
+[Genesis] [16:48:49] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 56133.16 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 56044.55 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 56227.90 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 56712.64 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:50] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 57354.10 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:51] [INFO] ♨️ THERMAL │ Avg: 820.7K Min: 588.9K Max: 1134.7K σ: 197.8K │ E: 216.1kJ
+  Induction: +30.03K avg, +256.06K pk (+201.7MW)
+  Convection: -0.18K avg, -2.82K pk (-2.0MW)
+  Radiation: -0.56K avg, -12.40K pk (-6.5MW)
+  Adiabatic: +0.18K avg, +6.35K pk (+406.9kW)
+  HeatSink: -1.67K avg, -6.90K pk (-7.3MW)
+[Genesis] [16:48:51] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 58178.78 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:51] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 59245.73 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:51] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 60523.36 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:51] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 62030.67 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:52] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 63793.85 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:52] [INFO] ♨️ THERMAL │ Avg: 856.4K Min: 609.1K Max: 1194.0K σ: 214.4K │ E: 229.1kJ
+  Induction: +29.21K avg, +220.43K pk (+200.4MW)
+  Convection: -0.19K avg, -3.06K pk (-2.1MW)
+  Radiation: -0.66K avg, -15.72K pk (-7.8MW)
+  Adiabatic: +0.13K avg, +6.59K pk (+402.4kW)
+  HeatSink: -0.84K avg, -5.43K pk (-3.7MW)
+[Genesis] [16:48:52] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 65870.86 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:52] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 68315.70 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:52] [ERROR] 🚨 TIER-1 STABILITY INTERCEPT TRIGGERED! Running Forensic Trace... 🚨
+[Genesis] [16:48:52] [ERROR] -> Primary Diagnostic Triggers: Supersonic Velocity (>100.0m/s)
+[Genesis] [16:48:52] [ERROR] 
+[GROUND ZERO PROFILING]
+Particle Index: 2200
+Position (X,Y,Z): [-0.0223, 0.0117, 0.0678]
+Velocity (X,Y,Z): [-19.9726, -100.4938, 29.4401]
+Temperature: 1076.63 K
+S Tensor [Frame 0]: [1.05379319190979, 0.0, 0.0, 0.0, 1.0495870113372803, 0.0, 0.0, 0.0, 0.9924619197845459]
+S Tensor [Frame 1]: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+C Tensor [Frame 0]: [-30587.900390625, -10938.6357421875, -7414.775390625, -7171.99658203125, -66393.6953125, -3205.528564453125, -7319.697265625, -4480.41259765625, -68315.6953125]
+CPIC Interference Stencil [3x3x3]: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+
+[Genesis] [16:48:52] [ERROR] CRITICAL STABILITY FAILURE: Diagnostic Triggers: Supersonic Velocity (>100.0m/s)
+[Genesis] [16:48:52] [WARNING] >>> Auto-Undo Triggered by System Protection (Reverting to Checkpoint) <<<
+[Recorder] Undid strike. Reverted buffer from frame 109 to 109.
+[Genesis] [16:48:52] [INFO] Undo complete (stack=3, mesh_verts=4006, grace=3)
+[Genesis] [16:48:53] [INFO] ♨️ THERMAL │ Avg: 893.0K Min: 629.6K Max: 1204.0K σ: 220.5K │ E: 243.1kJ
+  Induction: +26.10K avg, +152.85K pk (+201.8MW)
+  Convection: -0.19K avg, -3.65K pk (-2.1MW)
+  Radiation: -0.70K avg, -19.59K pk (-8.3MW)
+  Adiabatic: +0.05K avg, +1.65K pk (+280.4kW)
+  HeatSink: -0.60K avg, -5.22K pk (-2.7MW)
+[Genesis] [16:48:53] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28408.55 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:53] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28123.17 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:54] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 27893.67 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:54] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 28785.82 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:54] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29059.19 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:54] [INFO] ♨️ THERMAL │ Avg: 918.3K Min: 643.6K Max: 1302.3K σ: 235.6K │ E: 249.7kJ
+  Convection: -0.20K avg, -3.32K pk (-2.2MW)
+  Radiation: -0.83K avg, -16.16K pk (-9.8MW)
+  Adiabatic: +0.09K avg, +1.83K pk (+278.9kW)
+  HeatSink: -5.08K avg, -9.34K pk (-22.9MW)
+[Genesis] [16:48:54] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29321.45 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:54] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29562.81 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:55] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 29826.77 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:55] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30137.26 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:55] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30505.77 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:55] [INFO] ♨️ THERMAL │ Avg: 908.7K Min: 637.9K Max: 1254.0K σ: 219.1K │ E: 246.1kJ
+  Convection: -0.20K avg, -3.27K pk (-2.2MW)
+  Radiation: -0.76K avg, -14.92K pk (-8.9MW)
+  Adiabatic: +0.11K avg, +2.04K pk (+299.7kW)
+  HeatSink: -7.84K avg, -14.33K pk (-35.4MW)
+[Genesis] [16:48:55] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 30913.30 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:56] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 31323.17 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:56] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 31769.40 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:56] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 32190.77 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:56] [WARNING] [TELEMETRY] C-Matrix Oscillation Escalating! Max slope: 32601.73 | Active CPIC Grid Interference Nodes: 0
+[Genesis] [16:48:56] [INFO] Thermal FROZEN

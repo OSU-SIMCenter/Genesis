@@ -272,7 +272,7 @@ async def main():
     
     print("Building simulation environment...")
     cfg = TeleopOptions()
-    cfg.general.show_viewer = False
+    cfg.general.show_viewer = True
     
     # Enable MPM grid/boundary visualization
     cfg.vis.visualize_mpm_boundary = True
