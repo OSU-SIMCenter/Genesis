@@ -21,7 +21,6 @@ class JohnsonCookPlasticity(gs.materials.MPM.Base):
     T_ref: ValidFloat = 293.15
     T_melt: ValidFloat = 1793.0
     jc_m: ValidFloat = 1.03
-    eta_over_dt: ValidFloat = 0.0
 
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
@@ -36,66 +35,35 @@ class JohnsonCookPlasticity(gs.materials.MPM.Base):
         """
         F_new = qd.Matrix.zero(gs.qd_float, 3, 3)
         S_new = qd.Matrix.zero(gs.qd_float, 3, 3)
-        delta_gamma = 0.0
+        delta_gamma = gs.qd_float(0.0)
         
         # 1. Trial Deviatoric Strain (Elastic Predictor)
-        S_clamped = qd.max(S, 0.05)  # Limit to avoid log(0) and extreme artificial stress
+        S_clamped = qd.max(S, 1e-6)  # Limit to avoid log(0)
         epsilon = qd.Vector([qd.math.log(S_clamped[0, 0]), qd.math.log(S_clamped[1, 1]), qd.math.log(S_clamped[2, 2])])
         
         trace_eps = epsilon.sum()
         epsilon_hat = epsilon - (trace_eps / 3.0)
         epsilon_hat_norm = epsilon_hat.norm(gs.EPS)
         
-        # 2. Thermal softening (Johnson-Cook melting term)
+        # 2. Determine Flow Stress (Sigma_y)
+        eps_p = Jp
+        sigma_y_static = self.A + self.B * qd.math.pow(eps_p, self.n)
+        
+        # Thermal softening (Johnson-Cook melting term)
         T_star = qd.math.clamp((temp - self.T_ref) / (self.T_melt - self.T_ref), gs.qd_float(0.0), gs.qd_float(1.0))
         thermal_softening = gs.qd_float(1.0) - qd.math.pow(qd.math.max(T_star, gs.qd_float(1e-8)), self.jc_m)
-        # 3. Yield Condition
-        eps_p = qd.math.max(Jp, gs.qd_float(1e-6))  # Guard for pow() edge case
-        sigma_y = (self.A + self.B * qd.math.pow(eps_p, self.n)) * thermal_softening
+        sigma_y = sigma_y_static * thermal_softening
+        
+        # 3. Yield Condition (Von Mises)
         yield_dist = epsilon_hat_norm - sigma_y / (2.0 * self.mu)
-        Jp_new = Jp
+        Jp_new = Jp 
         
         if yield_dist > 0:  # Yields
-            delta_gamma = gs.qd_float(0.0)
-            two_mu = gs.qd_float(2.0) * self.mu
+            delta_gamma = yield_dist 
+            Jp_new = eps_p + delta_gamma
             
-            # K controls the exponential growth of viscosity as the metal cools.
-            # A value of K=10.0 means cold steel is ~22,000x more viscous than hot steel.
-            K = gs.qd_float(10.0) 
-            
-            # eta_dt grows exponentially as T_star approaches 0 (cold)
-            eta_dt = self.eta_over_dt * qd.math.exp(K * (gs.qd_float(1.0) - T_star))
-            
-            # --- 1. Bisection (Robust Bracket Search - 10 iterations) ---
-            g_low = gs.qd_float(0.0)
-            g_high = epsilon_hat_norm
-            for _ in qd.static(range(10)):
-                g_mid = gs.qd_float(0.5) * (g_low + g_high)
-                eps_p_mid = qd.math.max(Jp + g_mid, gs.qd_float(1e-6))
-                sy_mid = (self.A + self.B * qd.math.pow(eps_p_mid, self.n)) * thermal_softening
-                R_mid = epsilon_hat_norm - g_mid - sy_mid / two_mu - eta_dt * g_mid
-                
-                # Branchless bracket update
-                if R_mid > 0.0:
-                    g_low = g_mid
-                else:
-                    g_high = g_mid
-
-            delta_gamma = gs.qd_float(0.5) * (g_low + g_high)
-            
-            # --- 2. Newton-Raphson Polish (Quadratic Convergence - 3 iterations) ---
-            for _ in qd.static(range(3)):
-                eps_p_trial = qd.math.max(Jp + delta_gamma, gs.qd_float(1e-6))
-                sy = (self.A + self.B * qd.math.pow(eps_p_trial, self.n)) * thermal_softening
-                R = epsilon_hat_norm - delta_gamma - sy / two_mu - eta_dt * delta_gamma
-                R_prime = gs.qd_float(-1.0) - (self.n * self.B * qd.math.pow(eps_p_trial, self.n - gs.qd_float(1.0))) * thermal_softening / two_mu - eta_dt
-                step = R / qd.math.min(R_prime, gs.qd_float(-1e-10))  # Prevent division by zero
-                delta_gamma = qd.math.clamp(delta_gamma - step, gs.qd_float(0.0), epsilon_hat_norm)
-            Jp_new = Jp + delta_gamma
-
-            # Apply return mapping to strain
             epsilon -= (delta_gamma / epsilon_hat_norm) * epsilon_hat
-
+            
             # Reconstruct S
             S_new = qd.Matrix.zero(gs.qd_float, 3, 3)
             for d in qd.static(range(3)):
