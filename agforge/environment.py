@@ -129,13 +129,7 @@ class AgilityForgeManipulator:
                      mpm_forces[:, self.right_gripper_idx, :]
                  ], dim=1)
             
-            # Normalize accumulated forces by substeps
-            if hasattr(self.scene.sim, '_substeps'):
-                substeps = self.scene.sim._substeps
-            else:
-                substeps = 1 # Fallback
-                
-            return rigid_forces + (mpm_stack / substeps)
+            return rigid_forces + mpm_stack
         except AttributeError:
             pass
              
