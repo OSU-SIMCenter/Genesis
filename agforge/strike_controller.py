@@ -642,8 +642,8 @@ class StrikeController:
             # ---------------------------
 
         # --- Thermal Telemetry ---
-        # Log every 3rd frame during strikes, and every 5th frame during idle/heating
-        _telemetry_interval = 3 if _is_striking else 5
+        # Log every 5th frame during strikes, and every 10th frame during idle/heating
+        _telemetry_interval = 5 if _is_striking else 10
         with self._profile("teleop_thermal_telemetry"):
             if self.thermal_enabled and self._physics_step_counter % _telemetry_interval == 0:
                 try:
@@ -781,9 +781,6 @@ class StrikeController:
             elif self._stability_grace_steps > 0:
                 self._stability_grace_steps -= 1
                 needs_check = False
-            elif safety and safety.enabled:
-                is_in_strike = self.strike_state not in (StrikeState.IDLE, StrikeState.HOLDING)
-                needs_check = is_in_strike or (self._physics_step_counter % safety.check_interval == 0)
             else:
                 needs_check = False
 
@@ -1052,53 +1049,6 @@ class StrikeController:
             if temp is not None:
                 has_thermal_detonation = (temp > safety.max_temperature).any() | (temp < safety.min_temperature).any()
 
-        # [TELEMETRY] Dynamically track the maximum C-matrix slope
-        c_tensor = self.env.scene.sim.mpm_solver.particles.C.to_torch()
-        max_c_norm = torch.max(torch.abs(c_tensor)).item()
-        
-        try:
-            cpic_flags = self.env.scene.sim.coupler.cpic_flag.to_torch()
-            active_cpic = torch.sum(cpic_flags != -1).item()
-        except:
-            active_cpic = 0
-            
-        if max_c_norm > 500.0:
-            # [FORENSICS] Prove the APIC Severing Hypothesis by analyzing the culprit particle
-            try:
-                # Find the exact particle driving the explosion
-                c_flat = c_tensor.reshape(-1, 9)
-                max_idx = torch.argmax(torch.max(torch.abs(c_flat), dim=1)[0])
-                
-                bad_pos = pos.reshape(-1, 3)[max_idx]
-                bad_vel = vels.reshape(-1, 3)[max_idx]
-                bad_temp = temp.reshape(-1)[max_idx] if temp is not None else -1.0
-                
-                s_tensor = self.env.scene.sim.mpm_solver.particles.S.to_torch()
-                bad_s = s_tensor.reshape(-1, 9)[max_idx]
-                
-                f_tensor = self.env.scene.sim.mpm_solver.particles.F.to_torch()
-                bad_f = f_tensor.reshape(-1, 3, 3)[max_idx]
-                det_f = torch.det(bad_f).item()
-                
-                has_yielded = bool(torch.max(torch.abs(bad_s - torch.eye(3, device=bad_s.device).reshape(9))) < 0.1)
-
-                c_diag = torch.diag(bad_c_matrix) if 'bad_c_matrix' in locals() else c_flat[max_idx, [0,4,8]]
-                dt = self.env.scene.sim.mpm_solver.substep_dt
-                cfl_violation = torch.max(torch.abs(c_diag * dt)).item()
-
-                gs.logger.warning(f"[TELEMETRY] C-Matrix Oscillation Escalating! Max slope: {max_c_norm:.2f} | Active CPIC Nodes: {active_cpic}")
-                if max_c_norm > 15000.0:  # Only spam the deep dive when it gets organically dangerous
-                    gs.logger.warning(f"  └── 🔎 ROOT CAUSE FORENSICS (Particle {max_idx.item()}):")
-                    gs.logger.warning(f"      ├─ Pos: [{bad_pos[0]:.4f}, {bad_pos[1]:.4f}, {bad_pos[2]:.4f}] | Vel: [{bad_vel[0]:.2f}, {bad_vel[1]:.2f}, {bad_vel[2]:.2f}]")
-                    gs.logger.warning(f"      ├─ Temp: {bad_temp:.1f}K (Softening Liquid? {bad_temp > 1400.0})")
-                    gs.logger.warning(f"      ├─ Elastic Resistance (S-Tensor): {bad_s.tolist()}")
-                    gs.logger.warning(f"      ├─ Yield Assert: {'Fully Yielded/Fluid (No Shear Resitivity)' if has_yielded else 'Resisting'}")
-                    gs.logger.warning(f"      ├─ Volume Determinant det(F): {det_f:.6f} (INVERTED INSIDE-OUT? {det_f < 0.0})")
-                    gs.logger.warning(f"      └─ Affine CFL Violation: |dt * C| = {cfl_violation:.4f} (CRASH EXPECTED IF > 1.0)")
-                    
-            except Exception as e:
-                gs.logger.warning(f"[TELEMETRY] C-Matrix Oscillation Escalating! Error tracing forensics: {e}")
-                pass
 
         # 3. BULK REDUCTION -> Single PCIe Bus Sync
         is_critical = has_nan | has_out_of_bounds | has_super_velocity | has_thermal_detonation
