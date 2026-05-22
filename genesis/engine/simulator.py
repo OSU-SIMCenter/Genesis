@@ -281,6 +281,10 @@ class Simulator(RBC):
             with profiler.time("sim_check_errno") if config.check_errno else contextlib.suppress():
                 self.rigid_solver.check_errno()
 
+        if self.rigid_solver.is_active:
+            with profiler.time("sim_clear_mpm_force") if getattr(config, "clear_mpm_force", True) else contextlib.suppress():
+                self.rigid_solver.clear_mpm_force()
+
         if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
             for _ in range(self._substeps):
                 with profiler.time("rigid_solver_substep") if config.rigid_solver_substep else contextlib.suppress():

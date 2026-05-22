@@ -1486,6 +1486,7 @@ class LinksState:
     cfrc_applied_vel: qd.Tensor
     cfrc_coupling_ang: qd.Tensor
     cfrc_coupling_vel: qd.Tensor
+    cfrc_mpm: qd.Tensor
     contact_force: qd.Tensor
     hibernated: qd.Tensor
 
@@ -1537,6 +1538,7 @@ def get_links_state(solver):
         cfrc_applied_vel=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cfrc_coupling_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cfrc_coupling_vel=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
+        cfrc_mpm=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         contact_force=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         hibernated=V(dtype=gs.qd_int, shape=shape),
     )

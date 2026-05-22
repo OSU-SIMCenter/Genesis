@@ -4012,6 +4012,22 @@ class RigidEntity(KinematicEntity):
         tensor = qd_to_torch(self._solver.links_state.contact_force, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
+    def get_links_mpm_force(self, envs_idx=None):
+        """
+        Returns average force applied on each link due to MPM particle collisions over the last step.
+
+        Returns
+        -------
+        entity_links_force : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The net MPM force applied on each link.
+        """
+        links_idx = slice(self.link_start, self.link_end)
+        tensor = qd_to_torch(self._solver.links_state.cfrc_mpm, envs_idx, links_idx, transpose=True, copy=True)
+        # Average over the number of substeps to get step-wise force, and negate it to match physical convention
+        # (ABD solver accumulates the negative of the external force).
+        tensor = -tensor / self._solver._sim.substeps
+        return tensor[0] if self._solver.n_envs == 0 else tensor
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- friction ---------------------------------------
     # ------------------------------------------------------------------------------------

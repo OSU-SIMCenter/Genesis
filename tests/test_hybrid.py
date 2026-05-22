@@ -380,3 +380,64 @@ def test_rigid_mpm_legacy_coupling(substeps, show_viewer):
     # Check that the sand moved the box along the negative Y direction
     pos = tensor_to_array(obj_rigid.get_pos())
     assert pos[1] + 0.25 < 0.0
+
+
+@pytest.mark.required
+def test_mpm_rigid_force_extraction(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=4e-3,
+            substeps=10,
+            gravity=(0, 0, -9.8),
+        ),
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(-0.4, -0.4, -0.1),
+            upper_bound=(0.4, 0.4, 0.6),
+            grid_density=32,
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(morph=gs.morphs.Plane())
+
+    dx = 1.0 / 32.0
+    padding = 2.1 * dx
+    mpm_z = 0.1 + padding
+
+    scene.add_entity(
+        material=gs.materials.MPM.Elastic(
+            E=1e6,
+            nu=0.3,
+            rho=1000.0,
+        ),
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, mpm_z),
+            size=(0.4, 0.4, 0.2),
+        ),
+        surface=gs.surfaces.Default(vis_mode="particle"),
+    )
+
+    rigid_z = (mpm_z + 0.1) + padding + 0.1
+    rigid_box = scene.add_entity(
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, rigid_z),
+            size=(0.1, 0.1, 0.1),
+        ),
+    )
+
+    scene.build()
+
+    for i in range(500):
+        scene.step()
+        vel = rigid_box.get_dofs_velocity()
+        rigid_box.set_dofs_velocity(vel * 0.90)
+
+    force_z = rigid_box.get_links_mpm_force()[0, 2].item()
+    expected_force = (0.1 * 0.1 * 0.1) * 1000.0 * 9.8
+    assert_allclose(force_z, expected_force, rtol=0.01)

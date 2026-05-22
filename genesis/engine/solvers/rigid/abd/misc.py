@@ -687,6 +687,7 @@ def func_apply_coupling_force(pos, force, link_idx, env_idx, links_state: array_
     torque = (pos - links_state.root_COM[link_idx, env_idx]).cross(force)
     links_state.cfrc_coupling_ang[link_idx, env_idx] -= torque
     links_state.cfrc_coupling_vel[link_idx, env_idx] -= force
+    links_state.cfrc_mpm[link_idx, env_idx] -= force
 
 
 @qd.func
@@ -755,6 +756,28 @@ def func_clear_external_force(
             i_l = rigid_global_info.awake_links[i_1, i_b] if qd.static(static_rigid_sim_config.use_hibernation) else i_0
             links_state.cfrc_applied_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
             links_state.cfrc_applied_vel[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+
+
+@qd.func
+def func_clear_mpm_force(
+    links_state: array_class.LinksState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    n_links = links_state.pos.shape[0]
+    _B = links_state.pos.shape[1]
+
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_0, i_b in (
+        qd.ndrange(1, _B) if qd.static(static_rigid_sim_config.use_hibernation) else qd.ndrange(n_links, _B)
+    ):
+        for i_1 in (
+            range(rigid_global_info.n_awake_links[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else qd.static(range(1))
+        ):
+            i_l = rigid_global_info.awake_links[i_1, i_b] if qd.static(static_rigid_sim_config.use_hibernation) else i_0
+            links_state.cfrc_mpm[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
 
 # --------------------------------------------------------------------------------------
@@ -875,6 +898,19 @@ def kernel_clear_external_force(
     static_rigid_sim_config: qd.template(),
 ):
     func_clear_external_force(
+        links_state=links_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+
+
+@qd.kernel(fastcache=True)
+def kernel_clear_mpm_force(
+    links_state: array_class.LinksState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    func_clear_mpm_force(
         links_state=links_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,

@@ -2648,6 +2648,18 @@ class RigidSolver(KinematicSolver):
 
         kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
 
+    def clear_mpm_force(self):
+        if gs.use_zerocopy:
+            out = qd_to_torch(self.links_state.cfrc_mpm, copy=False)
+            out.zero_()
+            if gs.backend == gs.metal:
+                import torch
+                torch.mps.synchronize()
+            return
+
+        from .abd.misc import kernel_clear_mpm_force
+        kernel_clear_mpm_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
+
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
         super().set_gravity(gravity, envs_idx)
