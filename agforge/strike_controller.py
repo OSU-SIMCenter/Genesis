@@ -815,17 +815,30 @@ class StrikeController:
                 particles_pos = self.env.mpm_entity.get_particles_pos()
                 particles_vel = self.env.mpm_entity.get_particles_vel()
                 
-                # Check for thermal state
-                if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
-                    particles_temp = self.env.scene.sim.mpm_solver.particles.temp.to_numpy()[0, :, 0]
+                # Check for thermal state - use entity API to read from correct substep
+                if hasattr(self.env.mpm_entity, 'get_particles_temp'):
+                    particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
+                    particles_F = self.env.mpm_entity.get_particles_F().cpu().numpy()
+                    if particles_F.ndim == 4:  # [B, N, 3, 3]
+                        particles_F = particles_F[0]
+                    particles_detF = np.linalg.det(particles_F).astype(np.float32)
                 else:
-                    particles_temp = np.zeros(particles_pos.shape[1], dtype=np.float32)
+                    particles_temp = np.zeros(particles_pos.shape[-2], dtype=np.float32)
+                    particles_detF = np.ones(particles_pos.shape[-2], dtype=np.float32)
                     
                 force_L, force_R = self.robot.get_resistance_forces()
+                
+                # Get base particle volume for absolute volume calculations
+                p_vol = 0.0
+                if hasattr(self.env.scene.sim, 'mpm_solver') and hasattr(self.env.scene.sim.mpm_solver, 'particle_volume_real'):
+                    p_vol = self.env.scene.sim.mpm_solver.particle_volume_real
+                    
                 self.recorder.record_frame(
                     particles_pos=particles_pos,
                     particles_vel=particles_vel,
                     particles_temp=particles_temp,
+                    particles_detF=particles_detF,
+                    particle_vol=p_vol,
                     qpos=self.qpos,
                     force_L=force_L,
                     force_R=force_R,

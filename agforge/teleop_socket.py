@@ -329,6 +329,12 @@ async def main():
                  await idle_task
              except asyncio.CancelledError:
                  pass
+             
+             # Safety flush: ensure any accumulated recording data is saved if we Ctrl+C
+             if getattr(shared_state, 'recorder', None) and shared_state.recorder.is_recording:
+                 gs.logger.info("Flushing final episode data before shutdown...")
+                 shared_state.recorder.flush_episode(success_flag=True, language_instruction="Episode finished cleanly before exit.")
+                 
              gs.logger.info("Shutdown complete")
              
              # Print all profiler visualizations if enabled

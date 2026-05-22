@@ -50,7 +50,9 @@ class AgForgeRecorder:
             "particles_pos": [], # list of (N, 3) arrays to be concatenated later
             "particles_vel": [], # list of (N, 3) arrays
             "particles_temp": [], # list of (N,) arrays
+            "particles_detF": [], # list of (N,) arrays
             "particles_offsets": [0], # Starts at 0, length will be T+1
+            "particle_vol": 0.0,
             "qpos": [],
             "force_torque": [],
             "dof_cmd": [],
@@ -93,27 +95,32 @@ class AgForgeRecorder:
         self.buffer["particles_pos"] = self.buffer["particles_pos"][:f_idx]
         self.buffer["particles_vel"] = self.buffer["particles_vel"][:f_idx]
         self.buffer["particles_temp"] = self.buffer["particles_temp"][:f_idx]
+        self.buffer["particles_detF"] = self.buffer["particles_detF"][:f_idx]
         
         print(f"[Recorder] Undid strike. Reverted buffer from frame {len(self.buffer['qpos'])} to {f_idx}.")
 
-    def record_frame(self, particles_pos, particles_vel, particles_temp, qpos, force_L, force_R, dof_cmd):
-        """Record a single frame during an active strike."""
+    def record_frame(self, particles_pos, particles_vel, particles_temp, particles_detF, particle_vol, qpos, force_L, force_R, dof_cmd):
+        """Buffer a single timestep of data from the simulation."""
         if not self.is_recording:
             return
             
-        # Particles
         p_pos = to_cpu(particles_pos)
-        if p_pos.ndim == 3: p_pos = p_pos[0] # (1, N, 3) -> (N, 3)
+        if p_pos.ndim == 3: p_pos = p_pos[0]
         
         p_vel = to_cpu(particles_vel)
         if p_vel.ndim == 3: p_vel = p_vel[0]
         
         p_temp = to_cpu(particles_temp)
-        p_temp = p_temp.flatten() # Force (N,) safely
-
+        if p_temp.ndim == 3: p_temp = p_temp[0]
+        
+        p_detF = to_cpu(particles_detF)
+        if p_detF.ndim == 3: p_detF = p_detF[0]
+        
         self.buffer["particles_pos"].append(p_pos.astype(np.float32))
         self.buffer["particles_vel"].append(p_vel.astype(np.float32))
         self.buffer["particles_temp"].append(p_temp.astype(np.float32))
+        self.buffer["particles_detF"].append(p_detF.astype(np.float32))
+        self.buffer["particle_vol"] = float(particle_vol)
         
         # Update offsets math
         n_particles = p_pos.shape[0]
@@ -148,10 +155,12 @@ class AgForgeRecorder:
             flattened_pos = np.concatenate(self.buffer["particles_pos"], axis=0)
             flattened_vel = np.concatenate(self.buffer["particles_vel"], axis=0)
             flattened_temp = np.concatenate(self.buffer["particles_temp"], axis=0)
+            flattened_detF = np.concatenate(self.buffer["particles_detF"], axis=0)
         else:
             flattened_pos = np.array([], dtype=np.float32)
             flattened_vel = np.array([], dtype=np.float32)
             flattened_temp = np.array([], dtype=np.float32)
+            flattened_detF = np.array([], dtype=np.float32)
             
         offsets_arr = np.array(self.buffer["particles_offsets"], dtype=np.int64)
         
@@ -188,7 +197,10 @@ class AgForgeRecorder:
                 part_grp.create_dataset("pos_values", data=flattened_pos, compression="lzf")
                 part_grp.create_dataset("vel_values", data=flattened_vel, compression="lzf")
                 part_grp.create_dataset("temp_values", data=flattened_temp, compression="lzf")
+                part_grp.create_dataset("detF_values", data=flattened_detF, compression="lzf")
                 part_grp.create_dataset("offsets", data=offsets_arr)
+                if "particle_vol" not in part_grp.attrs:
+                    part_grp.attrs["particle_vol"] = self.buffer["particle_vol"]
                 
                 # Scene & Robot
                 scene_grp = state_grp.create_group("scene")
