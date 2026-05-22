@@ -3,20 +3,32 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-def visualize_all_data(shard_path, episode_idx=0, output_img="all_data_plot.png"):
+def visualize_all_data(shard_path, episode_idx=-1, output_img=None):
     if not os.path.exists(shard_path):
         print(f"File not found: {shard_path}")
         return
 
     with h5py.File(shard_path, 'r') as f:
-        ep_keys = list(f.keys())
+        ep_keys = sorted(list(f.keys()))
         if not ep_keys:
             print("No episodes found in shard.")
             return
             
-        # We only want to plot the most recent episode
-        ep_name = sorted(ep_keys)[-1]
-        print(f"Visualizing only the most recent episode: {ep_name}")
+        if isinstance(episode_idx, int):
+            if episode_idx >= len(ep_keys) or episode_idx < -len(ep_keys):
+                print(f"Episode index {episode_idx} out of bounds (0 to {len(ep_keys)-1}).")
+                return
+            ep_name = ep_keys[episode_idx]
+        else:
+            ep_name = episode_idx
+            if ep_name not in ep_keys:
+                print(f"Episode {ep_name} not found in shard.")
+                return
+
+        print(f"Visualizing episode: {ep_name}")
+        
+        if output_img is None:
+            output_img = f"plot_{ep_name}.png"
         
         ep_grp = f[ep_name]
         obs_grp = ep_grp["observations"]["state"]["scene"]
@@ -157,6 +169,23 @@ def visualize_all_data(shard_path, episode_idx=0, output_img="all_data_plot.png"
         plt.savefig(output_img, dpi=150)
         print(f"Plot saved to {output_img}")
 
+import argparse
+
 if __name__ == "__main__":
-    data_path = os.path.join(os.path.dirname(__file__), "data", "train", "shard_0000.h5")
-    visualize_all_data(data_path)
+    parser = argparse.ArgumentParser(description="Plot recorded data from an HDF5 shard.")
+    parser.add_argument("--data", type=str, default="data/train/shard_0000.h5", help="Path to the HDF5 shard file.")
+    parser.add_argument("-e", "--episode", type=str, default="-1", help="Episode index (e.g. 0, -1) or name (e.g. ep_000000). Defaults to -1 (most recent).")
+    parser.add_argument("-o", "--output", type=str, default=None, help="Output image filename (defaults to plot_{ep_name}.png).")
+    args = parser.parse_args()
+
+    data_path = args.data
+    if not os.path.isabs(data_path):
+        data_path = os.path.join(os.path.dirname(__file__), data_path)
+    
+    # Try parsing episode as int first, if it fails, treat it as string name
+    try:
+        ep_arg = int(args.episode)
+    except ValueError:
+        ep_arg = args.episode
+
+    visualize_all_data(data_path, episode_idx=ep_arg, output_img=args.output)
