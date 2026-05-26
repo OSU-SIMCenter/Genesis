@@ -100,6 +100,7 @@ class RobotOptions(Options):
     coil_offset_x: float = -0.129891413331031800
     coil_length: float = 0.037
     coil_radius: float = 0.04
+    coup_softness: float = 1e-4
 
     # Declare fields for pydantic — Optional because they are computed in model_post_init
     cylinder_diameter: Optional[float] = None

@@ -15,6 +15,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run automated forging benchmarks from a recipe.")
     parser.add_argument("recipe", type=str, help="Path to the YAML recipe file")
     parser.add_argument("--viewer", action="store_true", help="Show the Genesis viewer")
+    parser.add_argument("--softness", type=float, default=None, help="Override the gripper coup_softness (e.g. 1e-4)")
     return parser.parse_args()
 
 def _find_next_strike(all_steps: list, current_idx: int) -> dict | None:
@@ -153,6 +154,10 @@ async def main():
     cfg = TeleopOptions()
     cfg.general.show_viewer = args.viewer
     
+    if args.softness is not None:
+        cfg.robot.coup_softness = args.softness
+        print(f"Overriding coup_softness to {args.softness:.2e}")
+    
     # Enable MPM grid/boundary visualization
     cfg.vis.visualize_mpm_boundary = True
     cfg.vis.visualize_mpm_grid = True
@@ -191,9 +196,10 @@ async def main():
     gs.logger.info(f"Wall time: {time.time() - start_time:.2f}s")
     
     if getattr(shared_state, 'recorder', None) and shared_state.recorder.is_recording:
+        soft_tag = f" (softness: {args.softness:.2e})" if args.softness is not None else ""
         shared_state.recorder.flush_episode(
             success_flag=True, 
-            language_instruction=f"Automated benchmark: {recipe.get('name')}"
+            language_instruction=f"Automated benchmark: {recipe.get('name')}{soft_tag}"
         )
         
     # Print profiling stats
