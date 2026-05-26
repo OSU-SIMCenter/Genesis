@@ -52,6 +52,7 @@ class EnvOptions(Options):
     action_upper_bounds: torch.Tensor
     fixed_region_bounds: torch.Tensor
     target_shape_bounds: torch.Tensor
+    show_target_bounds: bool = False
     particle_sampler: str = "default"
     class Config:
         arbitrary_types_allowed = True
@@ -100,7 +101,7 @@ class RobotOptions(Options):
     coil_offset_x: float = -0.129891413331031800
     coil_length: float = 0.037
     coil_radius: float = 0.04
-    coup_softness: float = 1e-4
+    coup_softness: float = 5e-4
 
     # Declare fields for pydantic — Optional because they are computed in model_post_init
     cylinder_diameter: Optional[float] = None
@@ -270,7 +271,6 @@ class AgilityForgeOptions(Options):
 
         if not self.performance_mode:
             self.vis.show_world_frame = True
-            self.vis.visualize_mpm_boundary = True
             self.vis.visualize_mpm_grid = True
             self.vis.shadow = True
             self.vis.plane_reflection = True

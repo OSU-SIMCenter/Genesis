@@ -839,7 +839,7 @@ class StrikeController:
                     particles_temp=particles_temp,
                     particles_detF=particles_detF,
                     particle_vol=p_vol,
-                    qpos=self.qpos,
+                    qpos=self.env.robot.entity.get_qpos(),
                     force_L=force_L,
                     force_R=force_R,
                     dof_cmd=self._vel_cmd

@@ -158,8 +158,6 @@ async def main():
         cfg.robot.coup_softness = args.softness
         print(f"Overriding coup_softness to {args.softness:.2e}")
     
-    # Enable MPM grid/boundary visualization
-    cfg.vis.visualize_mpm_boundary = True
     cfg.vis.visualize_mpm_grid = True
     
     print("Building simulation environment...")

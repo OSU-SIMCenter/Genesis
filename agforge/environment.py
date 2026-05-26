@@ -280,10 +280,11 @@ class AgilityForgeEnv:
             ),
             surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
         )
-        self.scene.add_entity(
-            morph=gs.morphs.Box(size=(self.cfg.robot.target_shape_bounds[1] - self.cfg.robot.target_shape_bounds[0]).cpu(), pos=((self.cfg.robot.target_shape_bounds[0] + self.cfg.robot.target_shape_bounds[1]) / 2).cpu(), fixed=True, collision=False),
-            surface=gs.surfaces.Default(color=(1.0, 0.0, 0.0, 0.4)),
-        )
+        if self.cfg.env.show_target_bounds:
+            self.scene.add_entity(
+                morph=gs.morphs.Box(size=(self.cfg.robot.target_shape_bounds[1] - self.cfg.robot.target_shape_bounds[0]).cpu(), pos=((self.cfg.robot.target_shape_bounds[0] + self.cfg.robot.target_shape_bounds[1]) / 2).cpu(), fixed=True, collision=False),
+                surface=gs.surfaces.Default(color=(1.0, 0.0, 0.0, 0.4)),
+            )
 
     def _add_visual_guides(self):
         """Adds a non-physical box to visualize the fixed particle region."""
