@@ -1,0 +1,20 @@
+name: "3-Hit Cold Offset Benchmark"
+description: "Three consecutive cold hits of 0.5 strain, evenly spaced along the billet length (cogging)."
+steps:
+  # Hit 1: Near base (with generous margin from fixed region)
+  - type: strike
+    target_strain: 0.50
+    slider_position: 0.015
+    hinge_rotation: 0.0
+
+  # Hit 2: Center of billet
+  - type: strike
+    target_strain: 0.50
+    slider_position: -0.012
+    hinge_rotation: 0.0
+
+  # Hit 3: Near free end
+  - type: strike
+    target_strain: 0.50
+    slider_position: -0.039
+    hinge_rotation: 0.0

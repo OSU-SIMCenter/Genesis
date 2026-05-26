@@ -1,0 +1,7 @@
+name: "Single Cold Strike"
+description: "A single unheated hit to 0.15 strain."
+steps:
+  - type: strike
+    target_strain: 0.50
+    slider_position: 0.0
+    hinge_rotation: 0.0
