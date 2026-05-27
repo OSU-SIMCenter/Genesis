@@ -29,8 +29,8 @@ FORCE_SCALE = 10.0  # Scale factor for client force/strain values (client sends 
 
 class InputMapper:
     """Translates billet-local offsets (in physics meters) to Genesis robot qpos."""
-    def __init__(self):
-        self.billet_base_x = None  # Populated dynamically by the first mesh generation
+    def __init__(self, billet_base_x: float = None):
+        self.billet_base_x = billet_base_x
     
     def map_client_to_qpos(self, physics_offset: float, rotation: float):
         if self.billet_base_x is None:
@@ -105,23 +105,22 @@ async def simulation_loop(websocket, state: StrikeController):
                     
                     v_flat, v_count = _prepare_array(vertices, np.float32)
                     
-                    # 3. ONCE-AT-START: Dynamically lock the base coordinate once the mesh is built
-                    # We grab exactly maximum-X from the true Marching Cubes vertices array,
-                    # because maxX is the real physical fixed end in Genesis!
+                    # Safety net: If billet_base_x wasn't set from config (shouldn't happen),
+                    # fall back to deriving it from the first mesh vertices.
                     if getattr(state, "input_mapper", None) and state.input_mapper.billet_base_x is None:
                         if v_count > 0:
                             state.input_mapper.billet_base_x = float(np.max(v_flat[0::3]))
-                            gs.logger.info(f"Locked dynamic physics mesh bounds (maxX): {state.input_mapper.billet_base_x}")
+                            gs.logger.warning(f"billet_base_x fallback from mesh (maxX): {state.input_mapper.billet_base_x}")
                             
                     t_flat, t_count = _prepare_array(triangles, np.int32)
                     p_flat, p_count = _prepare_array(particles, np.float32)
                     temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
                     
                     header = {
-                        "steps": [0],
-                        "Pressure": 0,
-                        "StressField": -1,
+                        "stage": state.strike_state.name,
                         "is_pressing": state.strike_state != StrikeState.IDLE,
+                        "thermal_enabled": getattr(state, 'thermal_enabled', False),
+                        "checkpoint_count": len(state.checkpoints),
                         "counts": {
                             "vertices": v_count,
                             "faces": t_count,
@@ -194,8 +193,13 @@ async def handle_client(websocket, state: StrikeController, path=None):
     gs.logger.info("Client connected")
     state.is_client_connected = True
     
-    # Input mapper is specific to this socket interface
-    state.input_mapper = InputMapper()
+    # Initialize InputMapper with billet_base_x from known cylinder geometry.
+    # This eliminates the race condition where a strike could arrive before the
+    # first mesh reconstruction has finished.
+    robot_cfg = state.env.cfg.robot
+    billet_base_x = float(robot_cfg.cylinder_pos[0] + robot_cfg.cylinder_height / 2.0)
+    state.input_mapper = InputMapper(billet_base_x=billet_base_x)
+    gs.logger.info(f"InputMapper initialized from config (billet_base_x={billet_base_x:.6f})")
 
     producer_task = asyncio.create_task(simulation_loop(websocket, state))
 
@@ -206,10 +210,16 @@ async def handle_client(websocket, state: StrikeController, path=None):
                 qpos = await state.get_qpos()
 
                 if packet.get("request") == "reset":
-                    await state.reset_simulation()
+                    if state.strike_state != StrikeState.IDLE:
+                        gs.logger.warning(f"Ignoring reset during active strike ({state.strike_state.name})")
+                    else:
+                        await state.reset_simulation()
 
                 elif packet.get("request") == "undo":
-                    await state.load_checkpoint()
+                    if state.strike_state != StrikeState.IDLE:
+                        gs.logger.warning(f"Ignoring undo during active strike ({state.strike_state.name})")
+                    else:
+                        await state.load_checkpoint()
 
                 elif packet.get("request") == "update":
                     if state.strike_state == StrikeState.IDLE:
