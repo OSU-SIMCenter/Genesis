@@ -998,13 +998,32 @@ class StrikeController:
             self.contact_R = False
             self.contact_width = 0.0
             
-            self.qpos = ckpt['qpos'].clone()
+            # Read the actual restored qpos from the rigid solver — sim.reset()
+            # already placed the robot at the correct checkpoint position via
+            # RigidSolverState.  Using ckpt['qpos'] would be redundant at best,
+            # and dangerous if the socket-side target had drifted from the
+            # physical position (e.g. during a strike).
+            # This mirrors the pattern used by reset_simulation().
+            self.qpos = self.robot.entity.get_qpos().clone()
+            
+            # Open the grippers (DOFs 2-3) — the checkpoint may have been taken
+            # mid-strike when grippers were closed.
             self.qpos[:, 2] = self.gripper_open_pos
             self.qpos[:, 3] = self.gripper_open_pos
             
+            # Zero all DOF velocities so residual momentum from the pre-undo
+            # state doesn't carry over and kick the robot on the first frame.
+            self.robot.entity.zero_all_dofs_velocity()
+            
+            # Only TELEPORT the gripper DOFs open — DOFs 0-1 are already correct
+            # from sim.reset() and touching them would redundantly reset the
+            # collider and disturb the freshly-restored coupler normals.
             self.robot.set_control_mode("TELEPORT")
-            self.robot.apply_action(self.qpos)
-            self.robot.apply_action(self.qpos) # Apply a few times to settle
+            gripper_open = torch.tensor(
+                [[self.gripper_open_pos, self.gripper_open_pos]],
+                dtype=torch.float32, device=gs.device,
+            )
+            self.robot.apply_action(gripper_open, dofs_idx_local=[2, 3])
             
             if 'recon_state' in ckpt:
                 self.reconstructor.set_state(ckpt['recon_state'])

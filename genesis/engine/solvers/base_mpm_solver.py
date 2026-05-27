@@ -402,12 +402,14 @@ class BaseMPMSolver(Solver):
             Cp = self.get_steel_cp(self.particles[f, i_p, i_b].temp)
             if delta_gamma > 0.0:
                 vol_work = effective_yield * delta_gamma
-                self.particles[f, i_p, i_b].plastic_strain += delta_gamma
-                self.particles[f, i_p, i_b].plastic_work += vol_work
+                self.particles[f + 1, i_p, i_b].plastic_strain = self.particles[f, i_p, i_b].plastic_strain + delta_gamma
+                self.particles[f + 1, i_p, i_b].plastic_work = self.particles[f, i_p, i_b].plastic_work + vol_work
                 dT = fraction * vol_work / (rho * Cp)
                 self.particles[f + 1, i_p, i_b].temp = self.particles[f, i_p, i_b].temp + dT
                 self.particles[f + 1, i_p, i_b].dT_adiabatic = self.particles[f, i_p, i_b].dT_adiabatic + dT
             else:
+                self.particles[f + 1, i_p, i_b].plastic_strain = self.particles[f, i_p, i_b].plastic_strain
+                self.particles[f + 1, i_p, i_b].plastic_work = self.particles[f, i_p, i_b].plastic_work
                 self.particles[f + 1, i_p, i_b].temp = self.particles[f, i_p, i_b].temp
                 self.particles[f + 1, i_p, i_b].dT_adiabatic = self.particles[f, i_p, i_b].dT_adiabatic
 
