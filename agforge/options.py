@@ -214,17 +214,37 @@ class AgilityForgeOptions(Options):
         arbitrary_types_allowed = True
 
     def model_post_init(self, __context: any) -> None:
-        # --- Perform all calculations first ---
+        import math
+        
+        # 1. Derive timestep from CFL condition
+        # CFL limit: substep_dt <= dx / c, where c = sqrt(E/rho) is the speed of sound.
+        # We use a 0.95 safety margin (5% below the theoretical CFL limit).
+        temp_robot = RobotOptions(robot_time_to_seconds=1.0)
+        dx = 1.0 / temp_robot.base_grid_density
+        c = math.sqrt(self.mat.E / self.mat.rho)
+        dt_cfl = dx / c  # Theoretical max substep_dt
+
+        cfl_safety = 0.95                         # 5% safety margin
+        substeps = 8                              # Fixed substep count for real-time teleop
+        substep_dt = dt_cfl * cfl_safety          # Safe substep timestep
+        macro_dt = substep_dt * substeps           # Macro timestep = substep_dt × substeps
+        
+        # CFL validation: guard against future material/grid changes silently breaking stability
+        assert substep_dt < dt_cfl, (
+            f"CFL violation: substep_dt={substep_dt:.3e} >= dt_CFL={dt_cfl:.3e} "
+            f"(E={self.mat.E:.1e}, rho={self.mat.rho:.0f}, dx={dx:.4e}, c={c:.1f})"
+        )
+        
         self.sim = SimOptions(
-            dt=1.4e-6 * 8,
-            substeps=8,
+            dt=macro_dt,
+            substeps=substeps,
             gravity=(0, 0, 0),
             check_bounds=not self.performance_mode,
         )
         self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt)
         self.mpm = MPMOptions(
             grid_density=self.robot.base_grid_density,
-            particle_size=0.8 * 0.01 * 64.0 / self.robot.base_grid_density,
+            particle_size=dx / 2.0,  # 8 particles per cell (2³ = 8 PPC)
             lower_bound=self.robot.mpm_lower_bound,
             upper_bound=self.robot.mpm_upper_bound,
             enable_CPIC=True,  # Improved rigid-MPM contact accuracy
