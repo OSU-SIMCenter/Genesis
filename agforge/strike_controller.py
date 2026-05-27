@@ -134,6 +134,12 @@ class StrikeController:
                 gs.logger.info(f"Thermal ACTIVATED (power={self.heating_power}W)")
             else:
                 gs.logger.info("Thermal FROZEN")
+                
+            # Force server to broadcast the new thermal state back to Unity
+            # This flushes any stale "heating=True" frames that might cause
+            # Unity's SyncHeatVisual to erroneously flip the button back to ON.
+            self.pending_mesh_send = True
+            self.stabilization_steps = max(getattr(self, 'stabilization_steps', 0), 5)
 
     def _apply_fixed_end_heat_sink(self):
         """Apply Dirichlet BC at the fixed end to model bulk billet conduction.
@@ -782,7 +788,7 @@ class StrikeController:
                 self._stability_grace_steps -= 1
                 needs_check = False
             else:
-                needs_check = False
+                needs_check = True
 
             if needs_check:
                 try:
@@ -886,7 +892,10 @@ class StrikeController:
             
             # Extract and spatial-interpolate thermal data to vertices
             if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
-                particles_temp = self.env.scene.sim.mpm_solver.particles.temp.to_numpy()[0, :, 0]
+                # Use entity API to read from the correct double-buffered substep frame.
+                # The raw field access (.temp.to_numpy()[0, :, 0]) reads from a hardcoded
+                # frame index which may be stale after undo/checkpoint restore.
+                particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
                 
                 import scipy.spatial
                 parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
@@ -1009,6 +1018,10 @@ class StrikeController:
 
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
+            
+            # Ensure the simulation loop sends multiple consecutive frames so Unity
+            # reliably picks up the undo result, even if the first frame is missed.
+            self.stabilization_steps = max(self.stabilization_steps, 5)
 
             # Suppress stability checks for a grace period so residual elastic
             # energy in the restored state doesn't immediately trigger another undo.
@@ -1196,6 +1209,7 @@ class StrikeController:
             
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
+            self.stabilization_steps = max(self.stabilization_steps, 5)
 
             # Suppress stability checks while the freshly reset state settles
             safety = getattr(self.env.cfg, 'safety', None)

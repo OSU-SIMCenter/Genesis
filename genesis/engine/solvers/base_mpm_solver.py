@@ -896,6 +896,8 @@ class BaseMPMSolver(Solver):
                 self._ckpt[ckpt_name]["F"] = torch.zeros((self._B, self._n_particles, 3, 3), dtype=gs.tc_float)
                 self._ckpt[ckpt_name]["Jp"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
                 self._ckpt[ckpt_name]["active"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_bool)
+                self._ckpt[ckpt_name]["temp"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
+                self._ckpt[ckpt_name]["plastic_strain"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
 
             self._kernel_get_state(
                 0,
@@ -905,6 +907,8 @@ class BaseMPMSolver(Solver):
                 self._ckpt[ckpt_name]["F"],
                 self._ckpt[ckpt_name]["Jp"],
                 self._ckpt[ckpt_name]["active"],
+                self._ckpt[ckpt_name]["temp"],
+                self._ckpt[ckpt_name]["plastic_strain"],
             )
 
             for entity in self._entities:
@@ -928,6 +932,8 @@ class BaseMPMSolver(Solver):
                 self._ckpt[ckpt_name]["F"],
                 self._ckpt[ckpt_name]["Jp"],
                 self._ckpt[ckpt_name]["active"],
+                self._ckpt[ckpt_name]["temp"],
+                self._ckpt[ckpt_name]["plastic_strain"],
             )
 
             for entity in self._entities:
@@ -935,7 +941,11 @@ class BaseMPMSolver(Solver):
 
     def set_state(self, f, state, envs_idx=None):
         if self.is_active:
-            self._kernel_set_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active)
+            # Use dummy zero arrays for thermal fields when not present in state
+            import torch
+            temp = state.temp if state.temp is not None else torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
+            plastic_strain = state.plastic_strain if state.plastic_strain is not None else torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
+            self._kernel_set_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active, temp, plastic_strain)
 
     @qd.kernel
     def _kernel_set_state(
@@ -947,6 +957,8 @@ class BaseMPMSolver(Solver):
         F: qd.types.ndarray(),  # shape [B, n_particles, 3, 3]
         Jp: qd.types.ndarray(),  # shape [B, n_particles]
         active: qd.types.ndarray(),  # shape [B, n_particles]
+        temp: qd.types.ndarray(),  # shape [B, n_particles] (zeros if thermal disabled)
+        plastic_strain: qd.types.ndarray(),  # shape [B, n_particles] (zeros if thermal disabled)
     ):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             # Write pos, vel
@@ -960,13 +972,21 @@ class BaseMPMSolver(Solver):
             # Write Jp, active
             self.particles[f, i_p, i_b].Jp = Jp[i_b, i_p]
             self.particles_ng[f, i_p, i_b].active = active[i_b, i_p]
+            # Write thermal fields
+            if qd.static(self._enable_thermal):
+                self.particles[f, i_p, i_b].temp = temp[i_b, i_p]
+                self.particles[f, i_p, i_b].plastic_strain = plastic_strain[i_b, i_p]
 
     def get_state(self, f):
         if not self.is_active:
             return None
 
         state = MPMSolverState(self._scene)
-        self._kernel_get_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active)
+        # Use dummy zero arrays for thermal fields when thermal is disabled
+        import torch
+        temp = state.temp if state.temp is not None else torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
+        plastic_strain = state.plastic_strain if state.plastic_strain is not None else torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
+        self._kernel_get_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active, temp, plastic_strain)
         return state
 
     @qd.kernel
@@ -979,6 +999,8 @@ class BaseMPMSolver(Solver):
         F: qd.types.ndarray(),  # shape [B, n_particles, 3, 3]
         Jp: qd.types.ndarray(),  # shape [B, n_particles]
         active: qd.types.ndarray(),  # shape [B, n_particles]
+        temp: qd.types.ndarray(),  # shape [B, n_particles] (zeros if thermal disabled)
+        plastic_strain: qd.types.ndarray(),  # shape [B, n_particles] (zeros if thermal disabled)
     ):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             for j in qd.static(range(3)):
@@ -989,6 +1011,9 @@ class BaseMPMSolver(Solver):
                     F[i_b, i_p, j, k] = self.particles[f, i_p, i_b].F[j, k]
             Jp[i_b, i_p] = self.particles[f, i_p, i_b].Jp
             active[i_b, i_p] = qd.cast(self.particles_ng[f, i_p, i_b].active, gs.qd_bool)
+            if qd.static(self._enable_thermal):
+                temp[i_b, i_p] = self.particles[f, i_p, i_b].temp
+                plastic_strain[i_b, i_p] = self.particles[f, i_p, i_b].plastic_strain
 
     def update_render_fields(self):
         self._kernel_update_render_fields(self.sim.cur_substep_local)

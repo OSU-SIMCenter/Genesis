@@ -168,6 +168,18 @@ class MPMSolverState(RBC):
         args["requires_grad"] = False
         self._active = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), **args)
 
+        # Thermal fields (only allocated when thermal simulation is enabled)
+        self._temp = None
+        self._plastic_strain = None
+        if getattr(scene.sim.mpm_solver, '_enable_thermal', False):
+            thermal_args = {
+                "dtype": gs.tc_float,
+                "requires_grad": False,
+                "scene": self._scene,
+            }
+            self._temp = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), **thermal_args)
+            self._plastic_strain = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), **thermal_args)
+
     def serializable(self):
         self._scene = None
 
@@ -177,6 +189,10 @@ class MPMSolverState(RBC):
         self._F = self._F.detach()
         self._Jp = self._Jp.detach()
         self._active = self._active.detach()
+        if self._temp is not None:
+            self._temp = self._temp.detach()
+        if self._plastic_strain is not None:
+            self._plastic_strain = self._plastic_strain.detach()
 
     @property
     def scene(self):
@@ -205,6 +221,14 @@ class MPMSolverState(RBC):
     @property
     def active(self):
         return self._active
+
+    @property
+    def temp(self):
+        return self._temp
+
+    @property
+    def plastic_strain(self):
+        return self._plastic_strain
 
 
 class SPHSolverState:
