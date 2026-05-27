@@ -235,6 +235,30 @@ class AgilityForgeOptions(Options):
             f"(E={self.mat.E:.1e}, rho={self.mat.rho:.0f}, dx={dx:.4e}, c={c:.1f})"
         )
         
+        # 2. Derive thermal_time_scale from thermal CFL condition
+        # Thermal diffusion stability (3D explicit FTCS): substep_dt <= dx² / (6 · α_scaled)
+        # where α_scaled = α_base · S_T.  Rearranging: S_T <= dx² / (6 · α_base · substep_dt)
+        #
+        # Use worst-case (highest) thermal diffusivity — room-temp AISI 4340 steel:
+        #   k(293K) = 44 W/m·K,  ρ = 7850 kg/m³,  Cp(293K) = 450 J/kg·K
+        #   α_worst = k / (ρ · Cp) ≈ 1.245e-5 m²/s
+        # At forging temps (1000K+), α drops to ~4.6e-6, so room temp is the binding limit.
+        alpha_worst = 44.0 / (7850.0 * 450.0)  # ~1.245e-5 m²/s
+        S_T_max = dx**2 / (6.0 * alpha_worst * substep_dt)
+        
+        # Use 50% of the theoretical maximum — explicit forward Euler diffusion develops
+        # checkerboard oscillations above ~60-70% of CFL, so 50% is max-reasonable-safe.
+        thermal_cfl_fraction = 0.50
+        thermal_time_scale = S_T_max * thermal_cfl_fraction
+        
+        # Thermal CFL validation
+        alpha_scaled = alpha_worst * thermal_time_scale
+        dt_thermal_cfl = dx**2 / (6.0 * alpha_scaled)
+        assert substep_dt < dt_thermal_cfl, (
+            f"Thermal CFL violation: substep_dt={substep_dt:.3e} >= dt_thermal={dt_thermal_cfl:.3e} "
+            f"(α_worst={alpha_worst:.3e}, S_T={thermal_time_scale:.0f}, dx={dx:.4e})"
+        )
+        
         self.sim = SimOptions(
             dt=macro_dt,
             substeps=substeps,
@@ -250,7 +274,7 @@ class AgilityForgeOptions(Options):
             enable_CPIC=True,  # Improved rigid-MPM contact accuracy
             enable_thermal=True,
             default_initial_temperature=293.0,
-            thermal_time_scale=20000.0,  # Map thermal time to wall-clock time (balanced heating/cooling)
+            thermal_time_scale=thermal_time_scale,
         )
         self.env = EnvOptions(
             num_envs=1,
@@ -350,7 +374,7 @@ class TeleopOptions(AgilityForgeOptions):
     print_profiling_on_exit: bool = True  # Print profiler visualizations on shutdown
     
     # Induction Heater physical configurations
-    heating_power: float = 10000.0  # 10 kW (heats billet to 1000°C in ~16s with thermal_time_scale=20000)
+    heating_power: float = 10000.0  # 10 kW total coil power (distributed per-particle via skin-depth profile)
     skin_depth: Optional[float] = None # Calculated parametrically based on cylinder radius
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
