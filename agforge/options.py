@@ -134,7 +134,7 @@ class RobotOptions(Options):
         self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
         self.cylinder_euler = (0.0, 90.0, 0.0)
 
-        self.base_grid_density = int(8 / self.cylinder_diameter)
+        self.base_grid_density = int(7 / self.cylinder_diameter)
         dx = 1.0 / self.base_grid_density
         mpm_solver_padding = 3 * dx
         mpm_x_padding_lower = self.cylinder_height * 0.85
@@ -331,7 +331,7 @@ class StrikeOptions(Options):
     contact_force_threshold: float = 150.0 # Force threshold to detect contact
     
     target_strain: float = 0.5 # 50% reduction
-    pressing_speed: float = 30.0 # m/s
+    pressing_speed: float = 25.0 # m/s
     
     # Force Balance Control
     # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).
@@ -344,6 +344,7 @@ class StrikeOptions(Options):
     pressing_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     release_timeout: float = 10.0 # seconds
+    hold_steps: int = 15 # Number of steps to hold position after reaching target before releasing
     post_release_steps: int = 10 # steps
 
 class SafetyOptions(Options):

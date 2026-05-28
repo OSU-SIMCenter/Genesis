@@ -365,8 +365,9 @@ class StrikeController:
                         else: stop_reason = "Unknown"
                         
                         strain_val = current_strain_tensor.item()
-                        gs.logger.info(f"Strike -> RELEASE ({stop_reason}, strain={strain_val:.4f}, steps={self.strike_step_count}, time={elapsed_time:.2f}s)")
-                        self.strike_state = StrikeState.RELEASE
+                        gs.logger.info(f"Strike -> HOLDING ({stop_reason}, strain={strain_val:.4f}, steps={self.strike_step_count}, time={elapsed_time:.2f}s)")
+                        self.strike_state = StrikeState.HOLDING
+                        self.hold_steps_remaining = self.env.cfg.strike.hold_steps
                         self.stage_start_time = time.time()
                         self._stop_motors()
                         return
@@ -479,7 +480,22 @@ class StrikeController:
 
             # --- HOLDING STAGE ---
             elif self.strike_state == StrikeState.HOLDING:
-                pass
+                with self._profile("logic_get_resistance"):
+                    force_L, force_R = self.robot.get_resistance_forces()
+                self._update_force_gauge(force_L, force_R)
+                
+                with self._profile("logic_update_state"):
+                    self.hold_steps_remaining -= 1
+                    self._stop_motors()
+                    
+                    if VERBOSE_LOGGING and self.strike_step_count % LOG_EVERY_N_FRAMES == 0:
+                        gs.logger.info(f"HOLDING[{self.strike_step_count}]: F=[{force_L.item():.3f},{force_R.item():.3f}] steps_left={self.hold_steps_remaining}")
+                    
+                    if self.hold_steps_remaining <= 0:
+                        gs.logger.info(f"Strike -> RELEASE (Hold complete)")
+                        self.strike_state = StrikeState.RELEASE
+                        self.stage_start_time = time.time()
+                return
 
     def _stop_motors(self):
         self._vel_cmd.zero_()
@@ -516,7 +532,7 @@ class StrikeController:
         During PRESSING, force can only increase (monotonic ramp-up) for a stable gauge reading."""
         avg_abs = (torch.abs(force_L) + torch.abs(force_R)) * 0.5
         new_val = min(1.0, avg_abs.item() / self._force_gauge_max)
-        if self.strike_state in (StrikeState.PRESSING, StrikeState.RELEASE):
+        if self.strike_state in (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE):
             self.last_force_normalized = max(self.last_force_normalized, new_val)
         else:
             self.last_force_normalized = new_val
