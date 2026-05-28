@@ -571,7 +571,7 @@ class StrikeController:
         frozen_temps_tensor = None
         _temps_before_heating = None
         _temps_after_heating = None
-        _is_striking = self.strike_state not in (StrikeState.IDLE, StrikeState.HOLDING)
+        _is_striking = self.strike_state != StrikeState.IDLE
         if self.thermal_enabled:
             with self._profile("teleop_heating"):
                 if self.heater is None:
@@ -896,7 +896,7 @@ class StrikeController:
     async def update_and_get_recon_data(self):
         """Updates reconstruction and returns data for visualization/IO."""
         with self._profile("teleop_recon"):
-            allowed_stages = (StrikeState.PRESSING, StrikeState.RELEASE)
+            allowed_stages = (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE)
             should_reconstruct = self.strike_state in allowed_stages
             
             if should_reconstruct:
