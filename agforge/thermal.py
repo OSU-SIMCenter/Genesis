@@ -24,32 +24,6 @@ def get_steel_cp_numpy(temp: np.ndarray) -> np.ndarray:
     return cp
 
 
-def get_steel_cp_torch(temp: torch.Tensor) -> torch.Tensor:
-    """PyTorch GPU-compatible computation of temperature-dependent specific heat for low-alloy steel.
-    
-    Same piecewise linear model as get_steel_cp_numpy, but operates entirely on GPU tensors.
-    """
-    cp = torch.full_like(temp, 450.0)
-    
-    # T >= 1000K: Cp = 750
-    mask_high = temp >= 1000.0
-    cp[mask_high] = 750.0
-    
-    # 700K <= T < 1000K: Cp = 580 + (T-700)/300 * 70
-    mask_mid = (temp >= 700.0) & (temp < 1000.0)
-    if mask_mid.any():
-        u = (temp[mask_mid] - 700.0) / 300.0
-        cp[mask_mid] = 580.0 + u * 70.0
-    
-    # 293K < T < 700K: Cp = 450 + (T-293)/407 * 130
-    mask_low = (temp > 293.15) & (temp < 700.0)
-    if mask_low.any():
-        u = (temp[mask_low] - 293.15) / 406.85
-        cp[mask_low] = 450.0 + u * 130.0
-    
-    return cp
-
-
 class InductionHeater:
     def __init__(self, solver, entity, reconstructor=None, static_verts=None, static_faces=None):
         """
@@ -76,9 +50,8 @@ class InductionHeater:
         self.static_faces = static_faces
         
         self._cached_mesh_version = -1
-        self._cached_weights_gpu = None  # GPU tensor (was numpy _cached_weights)
-        self._cached_pos_gpu = None      # GPU tensor (was numpy _cached_pos)
-        self._particle_mass = None       # Cached real particle mass (scalar)
+        self._cached_weights = None
+        self._cached_pos = None
 
     def step_heat(self, dt: float, surface_power: float = 2000.0, skin_depth: float = 0.02, coil_center=None, coil_radius: float = 0.3, profile_ctx=None):
         """
@@ -105,9 +78,9 @@ class InductionHeater:
             return contextlib.suppress()
 
         current_version = getattr(self.reconstructor, 'mesh_version', -1) if self.reconstructor else 0
-        cache_miss = current_version != self._cached_mesh_version or self._cached_weights_gpu is None
+        cache_miss = current_version != self._cached_mesh_version or self._cached_weights is None
 
-        # 1. Acquire current boundary surface (CPU-side, only on cache miss)
+        # 1. Acquire current boundary surface
         with prof("heat_prep_mesh"):
             if cache_miss:
                 if (
@@ -135,13 +108,14 @@ class InductionHeater:
 
         with prof("heat_sdf"):
             if cache_miss:
-                # SDF computation must stay CPU-side (libigl is CPU-only).
-                # But we only do this on cache miss (mesh reconstruction events).
+                # 2. Extract particle positions
+                # shape [B, n_particles, 3] usually, squeeze down to [n_particles, 3] for igl
                 pos_tensor = self.entity.get_particles_pos()
                 pos_np = pos_tensor.cpu().numpy().squeeze()
                 if pos_np.ndim != 2 or pos_np.shape[-1] != 3:
                     raise ValueError(f"Unexpected particle position shape: {pos_np.shape}. Expected (N, 3).")
     
+                # 3. Calculate Signed Distance (depth from surface)
                 distances, _, _, _ = igl.signed_distance(pos_np.astype(np.float64), verts, faces)
                 depth = np.abs(distances)
     
@@ -152,52 +126,63 @@ class InductionHeater:
                     gs.logger.warning(f"InductionHeater: {n_bad} particles got NaN/inf SDF distance, treating as interior.")
                     depth[bad_mask] = skin_depth * 10.0  # effectively zero heating
                     
-                # Cache weights and positions as GPU tensors
-                weights_np = np.exp(-depth / skin_depth)
-                self._cached_weights_gpu = torch.tensor(weights_np, dtype=torch.float32, device=pos_tensor.device)
-                self._cached_pos_gpu = pos_tensor.squeeze(0)  # [N, 3] on GPU
+                # Store the geometric exponential cache
+                self._cached_weights = np.exp(-depth / skin_depth)
+                self._cached_pos = pos_np
                 self._cached_mesh_version = current_version
-                
-                # Cache the real particle mass (scalar, doesn't change)
-                particle_mass_scaled = self.solver.particles_info[0].mass
-                self._particle_mass = particle_mass_scaled / self.solver._particle_volume_scale
 
-        # --- Per-step heating: 100% GPU when cache hit ---
-        with prof("heat_apply"):
-            # Read current temperatures (stays on GPU — no .cpu()!)
-            current_temp = self.entity.get_particles_temp()  # [1, N] or [B, N]
-            
-            # NaN guard (single GPU op, no sync)
-            if torch.isnan(current_temp).any():
+        with prof("heat_fetch_temps"):
+            # 4. Read current particle temperatures
+            # shape [B, n_particles] -> squeeze to [n_particles]
+            current_temp_tensor = self.entity.get_particles_temp()
+            current_temp = current_temp_tensor.cpu().numpy().squeeze()
+
+            # Guard: if temps are already NaN, skip to avoid cascading corruption
+            if not np.isfinite(current_temp).all():
                 gs.logger.warning("InductionHeater: NaN detected in current particle temps, skipping heat step.")
                 return
 
-            # Flatten to [N] for math
-            orig_shape = current_temp.shape
-            t = current_temp.float().view(-1)  # [N]
+        with prof("heat_math"):
+            # 5. Compute heating delta via energy conservation: dT = P * dt / (m * Cp)
+            # NOTE: Genesis inflates particle mass by _particle_volume_scale (1e3) for numerical
+            # stability. This cancels internally in the engine (mass/volume = rho), but we need
+            # the real physical mass here for correct energy-to-temperature conversion.
+            #
+            # surface_power is TOTAL coil power in Watts, distributed across particles
+            # proportionally to their skin-depth profile weight: w_i = exp(-depth_i / skin_depth).
+            # Each particle's share: P_i = surface_power * w_i / Σ(w_j)
+            particle_mass_scaled = self.solver.particles_info[0].mass
+            particle_mass = particle_mass_scaled / self.solver._particle_volume_scale
+            Cp = get_steel_cp_numpy(current_temp)
             
-            # Temperature-dependent Cp on GPU
-            Cp = get_steel_cp_torch(t)
-            
-            # Start from cached SDF weights
-            weights = self._cached_weights_gpu.clone()
+            # Use cached weights to avoid exponential block repeats
+            weights = self._cached_weights.copy()
 
-            # Apply coil spatial mask on GPU
+            # 5b. Apply positional mask if coil bounds provided (BEFORE normalization
+            # so that surface_power is distributed only among particles inside the coil)
             if coil_center is not None:
-                # coil_center is a Python list [x, y, z]
-                coil_x = coil_center[0]
-                dx = self._cached_pos_gpu[:, 0] - coil_x
-                mask = torch.abs(dx) <= coil_radius
-                weights = weights * mask.float()
+                c = np.array(coil_center, dtype=np.float64)
+                
+                # 1D slice along the X-axis (Infinite Radius Cylinder)
+                # Note: The caller passes 'coil_length / 2.0' into the coil_radius parameter
+                dx = self._cached_pos[:, 0] - c[0]
+                mask = np.abs(dx) <= coil_radius
+                weights[~mask] = 0.0
 
             weight_sum = weights.sum()
-            if weight_sum.item() < 1e-12:
+            if weight_sum < 1e-12:
                 return 0.0  # no particles to heat
+            delta_temp = surface_power * weights / weight_sum * dt / (particle_mass * Cp)
 
-            # dT = P * w_i / Σw * dt / (m * Cp)
-            delta_temp = surface_power * weights / weight_sum * dt / (self._particle_mass * Cp)
-            
-            # Apply and write back (stays on GPU — no CPU round-trip!)
-            new_temp = t + delta_temp
-            self.entity.set_particles_temp(new_temp.view(orig_shape))
-            return delta_temp.max().item()
+        with prof("heat_push_temps"):
+            # 6. Push new heat state
+            new_temp = current_temp + delta_temp
+            new_temp_tensor = torch.tensor(new_temp, dtype=torch.float32, device=current_temp_tensor.device)
+
+            # Ensure it perfectly matches the original buffer dimensions (e.g., [1, N])
+            # If the original was [1, N], unsqueeze back
+            if len(current_temp_tensor.shape) > 1 and len(new_temp_tensor.shape) == 1:
+                new_temp_tensor = new_temp_tensor.unsqueeze(0)
+
+            self.entity.set_particles_temp(new_temp_tensor)
+            return float(delta_temp.max())

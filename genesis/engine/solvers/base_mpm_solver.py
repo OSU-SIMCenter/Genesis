@@ -55,10 +55,6 @@ class BaseMPMSolver(Solver):
         self._h_air = options.thermal_air_conductivity * self._thermal_time_scale
         self._alpha_thermal = options.default_thermal_diffusivity * self._thermal_time_scale
         self._emissivity = options.emissivity  # Stefan-Boltzmann emissivity (not pre-scaled; computed dynamically)
-        
-        # Runtime gating flag: when False, coupler skips grid diffusion and surface cooling.
-        # Used by the controller to "freeze" temperatures without wasteful CPU-side snapshot/restore.
-        self.thermal_diffusion_active = True
 
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
 

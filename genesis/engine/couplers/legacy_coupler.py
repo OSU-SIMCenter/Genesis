@@ -1096,7 +1096,7 @@ class LegacyCoupler(RBC):
                 sdf_info=self.rigid_solver.collider._sdf._sdf_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
-            if self.mpm_solver._enable_thermal and self.mpm_solver.thermal_diffusion_active:
+            if self.mpm_solver._enable_thermal:
                 self.mpm_grid_thermal_diffusion(f)
 
         # SPH <-> Rigid
