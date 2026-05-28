@@ -534,10 +534,14 @@ class StrikeController:
                 self.env.scene.sim.coupler.clear_link_coupling_forces()
 
         # 3b. Thermodynamics
-        frozen_temps_tensor = None
         _temps_before_heating = None
         _temps_after_heating = None
         _is_striking = self.strike_state not in (StrikeState.IDLE, StrikeState.HOLDING)
+        
+        # Set the solver diffusion gate BEFORE the physics step
+        solver = self.env.scene.sim.mpm_solver
+        solver.thermal_diffusion_active = self.thermal_enabled
+        
         if self.thermal_enabled:
             with self._profile("teleop_heating"):
                 if self.heater is None:
@@ -577,10 +581,6 @@ class StrikeController:
                 else:
                     # During strikes: just snapshot pre-physics temps (1 GPU sync instead of 3)
                     _temps_after_heating = self.env.mpm_entity.get_particles_temp().clone()
-        else:
-            # Thermal Freezing: Disable natural diffusion by snapshotting temperatures before physics step
-            if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
-                frozen_temps_tensor = self.env.mpm_entity.get_particles_temp().clone()
 
         # 4. Physics Step
         physics_failed = False
@@ -595,10 +595,7 @@ class StrikeController:
                 gs.logger.error(f"Physics step failed: {e}")
                 physics_failed = True
 
-        # Restore frozen temperatures to halt diffusion if thermal_enabled == False
         with self._profile("teleop_thermal_bcs"):
-            if not self.thermal_enabled and frozen_temps_tensor is not None and not physics_failed:
-                self.env.mpm_entity.set_particles_temp(frozen_temps_tensor)
 
             self._physics_step_counter += 1
 
