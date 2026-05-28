@@ -93,18 +93,18 @@ def visualize_all_data(shard_path, episode_idx=-1, output_img=None):
         axs[0].plot(time_steps, forces[:, 0], label="Left Gripper Force", color='r')
         axs[0].plot(time_steps, forces[:, 1], label="Right Gripper Force", color='b')
         axs[0].set_ylabel("Force")
-        axs[0].set_title("Resistance Forces (Outliers Removed)")
+        axs[0].set_title("Resistance Forces")
         axs[0].grid(True, alpha=0.5)
         axs[0].legend()
         
         # Robust Y-limit for Forces to cut off extreme outliers
-        f_flat = forces.flatten()
-        f_valid = f_flat[np.abs(f_flat) > 1e-3]
-        if len(f_valid) > 0:
-            # Use 5th and 95th percentile of non-zero forces
-            v_min, v_max = np.percentile(f_valid, 5), np.percentile(f_valid, 95)
-            margin = max((v_max - v_min) * 0.2, 10.0)
-            axs[0].set_ylim(v_min - margin, v_max + margin)
+        # f_flat = forces.flatten()
+        # f_valid = f_flat[np.abs(f_flat) > 1e-3]
+        # if len(f_valid) > 0:
+        #     # Use 5th and 95th percentile of non-zero forces
+        #     v_min, v_max = np.percentile(f_valid, 5), np.percentile(f_valid, 95)
+        #     margin = max((v_max - v_min) * 0.2, 10.0)
+        #     axs[0].set_ylim(v_min - margin, v_max + margin)
         
         # 2. Joint Positions
         axs[1].plot(time_steps, qpos[:, 0], label="Slider X", color='purple')
