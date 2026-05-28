@@ -134,7 +134,7 @@ class RobotOptions(Options):
         self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
         self.cylinder_euler = (0.0, 90.0, 0.0)
 
-        self.base_grid_density = int(7 / self.cylinder_diameter)
+        self.base_grid_density = int(8 / self.cylinder_diameter)
         dx = 1.0 / self.base_grid_density
         mpm_solver_padding = 3 * dx
         mpm_x_padding_lower = self.cylinder_height * 0.85
@@ -224,7 +224,7 @@ class AgilityForgeOptions(Options):
         c = math.sqrt(self.mat.E / self.mat.rho)
         dt_cfl = dx / c  # Theoretical max substep_dt
 
-        cfl_safety = 0.95                         # 5% safety margin
+        cfl_safety = 0.90                         # 5% safety margin
         substeps = 8                              # Fixed substep count for real-time teleop
         substep_dt = dt_cfl * cfl_safety          # Safe substep timestep
         macro_dt = substep_dt * substeps           # Macro timestep = substep_dt × substeps

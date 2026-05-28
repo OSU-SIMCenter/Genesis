@@ -191,7 +191,7 @@ class StrikeController:
             active_avg = T_ambient
             
         # Delta-T formulation: anchors at room temp, scales the gradient gap smoothly
-        target_calc = T_ambient + (active_avg - T_ambient) * (1.0 / 2.0)
+        target_calc = T_ambient + (active_avg - T_ambient) * (2.0 / 3.0)
         
         # Floor safely to ambient. Note: we no longer cap the physical boundaries to 900K! 
         # The metal can reach 1200K natively; visualization limits are handled separately.
