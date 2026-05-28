@@ -376,10 +376,6 @@ class TeleopOptions(AgilityForgeOptions):
     # Induction Heater physical configurations
     heating_power: float = 10000.0  # 10 kW total coil power (distributed per-particle via skin-depth profile)
     skin_depth: Optional[float] = None # Calculated parametrically based on cylinder radius
-    
-    # Fixed-End Thermal Boundary Condition
-    T_visual_cap: float = 900.0        # Max particle temp (K) in the Unity overlap zone (prevents visual seam)
-    bulk_billet_length: float = 0.300   # Assumed total billet length (m) for reservoir mass calculation
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002
