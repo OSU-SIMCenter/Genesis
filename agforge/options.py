@@ -248,7 +248,7 @@ class AgilityForgeOptions(Options):
         
         # Use 50% of the theoretical maximum — explicit forward Euler diffusion develops
         # checkerboard oscillations above ~60-70% of CFL, so 50% is max-reasonable-safe.
-        thermal_cfl_fraction = 0.50
+        thermal_cfl_fraction = 0.10
         thermal_time_scale = S_T_max * thermal_cfl_fraction
         
         # Thermal CFL validation
