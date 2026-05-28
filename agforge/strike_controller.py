@@ -85,6 +85,10 @@ class StrikeController:
         self._dofs_idx_local = torch.tensor([0, 1, 2, 3], device=self.env.device)
         self._force_next_apply = True
 
+        # Normalized force for Unity pressure gauge (0-1, where 1 = 150kN)
+        self.last_force_normalized = 0.0
+        self._force_gauge_max = 100000.0  # Normalization ceiling in Newtons
+
         # Thermal state logic
         self.thermal_enabled = False
         self.heating_power = self.env.cfg.heating_power
@@ -266,6 +270,7 @@ class StrikeController:
                     with self._profile("logic_get_resistance"):
                         # force_L, force_R are now TENSORS
                         force_L, force_R = self.robot.get_resistance_forces()
+                    self._update_force_gauge(force_L, force_R)
                     
                     # Batch contact check sync: Combine predicates
                     # We need to know specific contacts to set velocity
@@ -316,6 +321,7 @@ class StrikeController:
 
                     with self._profile("logic_get_resistance"):
                         force_L, force_R = self.robot.get_resistance_forces()
+                    self._update_force_gauge(force_L, force_R)
                 
                     pos_L = self.robot.left_gripper.get_pos()
                     pos_R = self.robot.right_gripper.get_pos()
@@ -415,6 +421,7 @@ class StrikeController:
                 
                 with self._profile("logic_get_resistance"):
                     force_L, force_R = self.robot.get_resistance_forces()
+                self._update_force_gauge(force_L, force_R)
 
                 with self._profile("logic_update_state"):
                     imbalance = force_L - force_R
@@ -489,6 +496,7 @@ class StrikeController:
     def _force_idle_reset(self):
          self._stop_motors()
          self._force_next_apply = True
+         self.last_force_normalized = 0.0  # Reset pressure gauge on idle
          
          current_qpos = self.qpos.clone()
          current_qpos[:, 2] = self.gripper_open_pos
@@ -502,6 +510,16 @@ class StrikeController:
          self.contact_L = False
          self.contact_R = False
          self.contact_width = 0.0
+
+    def _update_force_gauge(self, force_L, force_R):
+        """Update normalized force for Unity pressure gauge: avg(|F_L|, |F_R|) / max, clamped to [0, 1].
+        During PRESSING, force can only increase (monotonic ramp-up) for a stable gauge reading."""
+        avg_abs = (torch.abs(force_L) + torch.abs(force_R)) * 0.5
+        new_val = min(1.0, avg_abs.item() / self._force_gauge_max)
+        if self.strike_state in (StrikeState.PRESSING, StrikeState.RELEASE):
+            self.last_force_normalized = max(self.last_force_normalized, new_val)
+        else:
+            self.last_force_normalized = new_val
 
     async def step_simulation(self):
         """

@@ -24,7 +24,8 @@ logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
 # Configuration constants
 TARGET_FPS = 60  # Target frame rate for the sim loop
-FORCE_SCALE = 10.0  # Scale factor for client force/strain values (client sends 0-0.1, we want 0-1)
+FORCE_SCALE = 5.0  # Scale factor for client force/strain values (client sends 0-0.1, we want 0-0.5)
+MAX_STRAIN = 0.5   # Maximum target strain (50%)
 
 
 class InputMapper:
@@ -121,6 +122,7 @@ async def simulation_loop(websocket, state: StrikeController):
                         "is_pressing": state.strike_state != StrikeState.IDLE,
                         "thermal_enabled": getattr(state, 'thermal_enabled', False),
                         "checkpoint_count": len(state.checkpoints),
+                        "force": state.last_force_normalized,
                         "counts": {
                             "vertices": v_count,
                             "faces": t_count,
@@ -253,8 +255,8 @@ async def handle_client(websocket, state: StrikeController, path=None):
                          # PROCEED WITH STRIKE
                          raw_force = packet.get("force", 0.05)  # Default 0.05 -> 0.5 strain after scaling
                          
-                         # Scale client value (0-0.1) to strain range (0-1)
-                         scaled_strain = min(1.0, max(0.0, raw_force * FORCE_SCALE))
+                         # Scale client value (0-0.1) to strain range (0-MAX_STRAIN)
+                         scaled_strain = min(MAX_STRAIN, max(0.0, raw_force * FORCE_SCALE))
                          
                          gs.logger.info(f"Strike request: raw={raw_force}, scaled_strain={scaled_strain:.2f}")
                          await state.trigger_strike(scaled_strain)
