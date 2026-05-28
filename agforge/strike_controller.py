@@ -934,6 +934,10 @@ class StrikeController:
                 import scipy.spatial
                 parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
                 
+                if parts_np.shape[0] != particles_temp.shape[0]:
+                    active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0).cpu().numpy()
+                    particles_temp = particles_temp[active_mask]
+                
                 # --- VISUAL STATE OVERRIDE ---
                 # We fade the visual temperatures of the 11-21% clamp zone down to 900K *before* the KD-Tree
                 # so the renderer keeps the dummy handle black, without capping the actual physics engine.
