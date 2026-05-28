@@ -55,6 +55,12 @@ class BaseMPMSolver(Solver):
         self._h_air = options.thermal_air_conductivity * self._thermal_time_scale
         self._alpha_thermal = options.default_thermal_diffusivity * self._thermal_time_scale
         self._emissivity = options.emissivity  # Stefan-Boltzmann emissivity (not pre-scaled; computed dynamically)
+        
+        # Fixed-End Conductive BC (Robin boundary toward lumped reservoir)
+        self._T_reservoir = float(self._default_initial_temperature)  # Evolving bulk billet temperature
+        self.thermal_diffusion_active = True  # Gating flag for thermal freezing (Phase 3)
+        # _fixed_end_x_cell: the grid-local X index above which the conductive BC activates.
+        # Set during build() once grid geometry is resolved.
 
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
 
@@ -298,6 +304,17 @@ class BaseMPMSolver(Solver):
                         f"({dt_cfl:.6g}) for explicitly-scaled alpha={self._alpha_thermal}. Heat diffusion may mathematically explode. "
                         f"Consider lowering the thermal_time_scale hyperparameter (current: {self._thermal_time_scale})."
                     )
+            
+            # Fixed-end conductive BC geometry: activate on the last 20% of grid cells in X.
+            # This is the +X end where the billet is held and connects to the unsimulated bulk.
+            if self._enable_thermal:
+                n_x = self._grid_res[0]
+                self._fixed_end_x_cell = int(n_x * 0.80)  # grid-local index
+                gs.logger.info(
+                    f"Fixed-end thermal BC: activates at grid-local X >= {self._fixed_end_x_cell} "
+                    f"(last {n_x - self._fixed_end_x_cell} of {n_x} cells, "
+                    f"T_reservoir={self._T_reservoir:.1f}K)"
+                )
 
         # FIXME: _gravity must be a raw qd.field() because LegacyCoupler.mpm_grid_op accesses it via template attribute on a
         # @qd.data_oriented class, and Quadrants doesn't support Ndarray attrs on data_oriented in kernel scope. Fix by either:
@@ -382,6 +399,33 @@ class BaseMPMSolver(Solver):
             u = (temp - gs.qd_float(293.15)) / gs.qd_float(406.85)
             k = gs.qd_float(44.0) - u * gs.qd_float(9.0)
         return k
+
+    def update_reservoir(self, T_active_avg, dt_macro, bulk_mass_ratio=2.0):
+        """Evolve the lumped-mass reservoir temperature toward the active zone average.
+        
+        The reservoir models the unsimulated bulk billet beyond the simulation domain.
+        Its temperature evolves via Newton's law with a time constant proportional to
+        the mass ratio of the unsimulated vs simulated portions.
+        
+        Parameters
+        ----------
+        T_active_avg : float
+            Current average temperature of the active (non-fixed-end) particles.
+        dt_macro : float
+            Macro timestep (sim.dt).
+        bulk_mass_ratio : float
+            Mass of unsimulated billet / mass of simulated tip (~2.0 for 300mm total).
+        """
+        if not self._enable_thermal:
+            return
+        # Effective thermal time constant: larger mass → slower response.
+        # tau = bulk_mass_ratio * (L_eff² / alpha) where we use a simplified form:
+        # The reservoir tracks the active zone with a lag of bulk_mass_ratio timesteps.
+        # dt_effective includes thermal_time_scale so the reservoir accelerates with it.
+        dt_effective = dt_macro * self._thermal_time_scale
+        # Decay rate: 1/tau where tau ∝ bulk_mass_ratio (dimensionless exponential decay)
+        alpha_decay = min(1.0, dt_effective / (bulk_mass_ratio * 0.5))
+        self._T_reservoir += (T_active_avg - self._T_reservoir) * alpha_decay
 
     @qd.func
     def get_particle_thermal_state(self, f: qd.i32, i_p: qd.i32, i_b: qd.i32):

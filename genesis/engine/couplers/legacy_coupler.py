@@ -451,7 +451,25 @@ class LegacyCoupler(RBC):
 
                             self.mpm_solver.grid[f, I, i_b].temp = T_cell_after_air - dT_rad
                         
-
+                        # --- Fixed-End Conductive BC (Robin boundary toward bulk reservoir) ---
+                        # Grid cells near the +X boundary conduct heat toward T_reservoir,
+                        # modeling conduction into the unsimulated bulk billet.
+                        # Uses Fourier's law: q = k(T) · (T_cell - T_res) / dx
+                        if I[0] >= self.mpm_solver._fixed_end_x_cell:
+                            T_cell_bc = self.mpm_solver.grid[f, I, i_b].temp
+                            T_res = self.mpm_solver._T_reservoir
+                            mass_thermal_real_bc = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
+                            Cp_bc = self.mpm_solver.get_steel_cp(T_cell_bc)
+                            A_cross = self.mpm_solver.dx ** 2
+                            
+                            # Conductive flux: h_cond = k(T) / dx, scaled by thermal_time_scale
+                            k_cond_local = self.mpm_solver.get_steel_thermal_conductivity(T_cell_bc)
+                            h_cond = (k_cond_local / self.mpm_solver.dx) * self.mpm_solver._thermal_time_scale
+                            k_cond_rate = (h_cond * A_cross) / (mass_thermal_real_bc * Cp_bc)
+                            decay_cond = qd.math.exp(-k_cond_rate * self.mpm_solver.substep_dt)
+                            dT_cond = (T_cell_bc - T_res) * (1.0 - decay_cond)
+                            
+                            self.mpm_solver.grid[f, I, i_b].temp = T_cell_bc - dT_cond
 
                 # gravity
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]

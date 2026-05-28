@@ -141,64 +141,7 @@ class StrikeController:
             self.pending_mesh_send = True
             self.stabilization_steps = max(getattr(self, 'stabilization_steps', 0), 5)
 
-    def _apply_fixed_end_heat_sink(self):
-        """Apply Dirichlet BC at the fixed end to model bulk billet conduction.
 
-        Particles within the fixed region have their temperature lerped back
-        toward ambient. The lerp strength increases toward the boundary:
-        - At the inner edge (closest to free end): gentle pull (alpha ~ 0)
-        - At the far end of the fixed region: full clamp (alpha ~ 1)
-
-        This models heat conduction into the infinite thermal mass of the
-        remaining billet beyond the simulated section.
-        """
-        T_ambient = 293.0
-
-        pos = self.env.mpm_entity.get_particles_pos()    # [1, N, 3]
-        temps = self.env.mpm_entity.get_particles_temp()  # [1, N]
-
-        x_pos = pos[0, :, 0]  # [N] particle X positions
-
-        # Parametrically lock the bounds to the initial cylinder dimensions
-        # This prevents the clamp zone from dragging/shrinking when the hammer squishes the billet, 
-        # and ignores the artificially oversized 'fixed_region_bounds' box.
-        L = self.env.cfg.robot.cylinder_height
-        cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
-        x_max = cylinder_center_x + (L / 2.0)
-
-        # 0% to 11% from fixed end -> 100% clamped.
-        # 11% to 21% from fixed end -> Smooth linear fade to 0%.
-        x_clamp = x_max - 0.11 * L
-        x_fade = x_max - 0.21 * L
-        
-        # Calculate alpha:
-        # > x_clamp : alpha = 1.0
-        # < x_fade  : alpha = 0.0
-        alpha = ((x_pos - x_fade) / (x_clamp - x_fade)).clamp(0.0, 1.0)
-
-        # We need a true Dirichlet constraint: at alpha=1, temperature MUST be locked to a heat sink target.
-        # We decouple the physical drain from visuals: we clamp to 1/3 of the ACTIVE ZONE average temp.
-        active_mask = x_pos < x_fade
-        active_temps = temps[0][active_mask]
-        
-        if active_temps.numel() > 0:
-            active_avg = active_temps.mean().item()
-        else:
-            active_avg = T_ambient
-            
-        # Delta-T formulation: anchors at room temp, scales the gradient gap smoothly
-        target_calc = T_ambient + (active_avg - T_ambient) * (1.0 / 2.0)
-        
-        # Floor safely to ambient. Note: we no longer cap the physical boundaries to 900K! 
-        # The metal can reach 1200K natively; visualization limits are handled separately.
-        target_clamp_temp = max(T_ambient, target_calc)
-
-        new_temps = temps.clone()
-        new_temps[0] = temps[0] * (1.0 - alpha) + target_clamp_temp * alpha
-        self.env.mpm_entity.set_particles_temp(new_temps)
-        
-        # Return dT for telemetry
-        return new_temps - temps
 
     async def set_qpos(self, new_qpos):
         async with self.lock:
@@ -602,50 +545,20 @@ class StrikeController:
 
             self._physics_step_counter += 1
 
-            # --- Fixed-End Heat Sink (Dirichlet BC) ---
-            # Model heat conduction into the bulk billet by clamping particles
-            # near the held end toward ambient temperature.
-            self._dt_heat_sink = None
+            # --- Reservoir Update (lumped-mass model of unsimulated bulk billet) ---
+            # The grid-level conductive BC in the coupler handles the actual boundary
+            # physics. Here we just evolve the reservoir temperature that it targets.
             if self.thermal_enabled and not physics_failed:
-                self._dt_heat_sink = self._apply_fixed_end_heat_sink()
-
-            # --- DEBUG TEMP OVERRIDE ---
-            # Uncomment the block below to manually test visual alignment of the induction coil and press geometry.
-            # This completely overrides all thermal physics and boundary conditions to forcefully render
-            # particles inside the geometrical bounds as brightly colored (orange/yellow) for alignment debugging.
-            #
-            # import torch
-            # pos = self.env.mpm_entity.get_particles_pos()
-            # slider_x = self.qpos[0, 0].item() if self.qpos is not None else 0.0
-            # 
-            # # ** 1. Coil Calculation (1300K) **
-            # c_x = slider_x + self.env.cfg.robot.coil_offset_x
-            # dx_coil = pos[:, :, 0] - c_x
-            # coil_mask = torch.abs(dx_coil) <= (self.env.cfg.robot.coil_length / 2.0)
-            # 
-            # # ** 2. Press Calculation (1800K) **
-            # # The gripper X-position tracks the slider exactly (no offset).
-            # # The X half-length of the gripper box in the MJCF is defined as 0.5 * cylinder_radius.
-            # dx_press = pos[:, :, 0] - slider_x
-            # press_mask = torch.abs(dx_press) <= (self.env.cfg.robot.cylinder_radius * 0.5)
-            # 
-            # curr_temps = self.env.mpm_entity.get_particles_temp()
-            # # Handle shape dynamically
-            # if coil_mask.dim() < curr_temps.dim():
-            #     coil_mask = coil_mask.unsqueeze(-1)
-            #     press_mask = press_mask.unsqueeze(-1)
-            #     
-            # # Base temperature (293K)
-            # debug_temps = torch.full_like(curr_temps, 293.0)
-            # 
-            # # Overlay Coil mask (1300K - glowing orange/red)
-            # debug_temps = torch.where(coil_mask, torch.tensor(1300.0, device=pos.device, dtype=curr_temps.dtype), debug_temps)
-            # 
-            # # Overlay Press mask (1800K - bright yellow/white for contrast)
-            # debug_temps = torch.where(press_mask, torch.tensor(1800.0, device=pos.device, dtype=curr_temps.dtype), debug_temps)
-            # 
-            # self.env.mpm_entity.set_particles_temp(debug_temps)
-            # ---------------------------
+                solver = self.env.scene.sim.mpm_solver
+                # Compute the bulk mass ratio from configured billet length
+                sim_length = self.env.cfg.robot.cylinder_height
+                bulk_length = max(0.0, self.env.cfg.bulk_billet_length - sim_length)
+                bulk_mass_ratio = bulk_length / sim_length if sim_length > 0 else 2.0
+                # Use mean particle temp as the active zone average
+                # (will be fetched anyway for telemetry — shared read)
+                _temps_for_reservoir = self.env.mpm_entity.get_particles_temp()
+                T_active_avg = _temps_for_reservoir.float().mean().item()
+                solver.update_reservoir(T_active_avg, self.env.scene.sim.dt, bulk_mass_ratio)
 
         # --- Thermal Telemetry ---
         # Log every 5th frame during strikes, and every 10th frame during idle/heating
@@ -681,9 +594,8 @@ class StrikeController:
                         self.env.mpm_entity.get_particles_dT_adiabatic().float().squeeze(-1).view(-1)
                     ])
                     
-                    if self._dt_heat_sink is not None:
-                        all_dT_names.append("HeatSink")
-                        all_dT_tensors.append(self._dt_heat_sink.float().squeeze(-1).view(-1))
+                    # Note: HeatSink telemetry removed — conductive BC is now on-grid
+                    # and its effect is captured in the diffusion/convection channels.
 
                     def W_str(watts):
                         if abs(watts) > 1e6:
