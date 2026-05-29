@@ -245,6 +245,26 @@ class StrikeController:
             self.strike_step_count = 0
             self.robot.set_control_mode("VELOCITY_CONTROL")
             gs.logger.info(f"  Control mode -> VELOCITY_CONTROL")
+            
+            # === FIX: Zero stale CPIC normals before first physics step ===
+            # The CPIC normal field `mpm_rigid_normal` stores per-particle SDF
+            # normals from the last physics step. After the user teleports the
+            # robot (slider/hinge), these normals correspond to the OLD gripper
+            # position. The directional guard in `mpm_surface_to_particle`:
+            #     if sdf_normal.dot(mpm_rigid_normal[i_p, i_g, i_b]) >= 0:
+            # prevents updating normals that have flipped due to the teleport,
+            # leaving stale normals that cause incorrect CPIC separation
+            # decisions in p2g/g2p → massive force spike → blow-up.
+            #
+            # Zeroing both fields lets the very first substep's preprocess
+            # write fresh normals unconditionally (dot(new, zero) = 0 >= 0).
+            coupler = self.env.scene.sim.coupler
+            if hasattr(coupler, 'mpm_rigid_normal'):
+                coupler.mpm_rigid_normal.fill(0)
+            if hasattr(coupler, 'cpic_flag'):
+                coupler.cpic_flag.fill(0)
+            
+
 
     async def update_logic(self):
         """
@@ -1293,6 +1313,17 @@ class StrikeController:
             self.qpos[:, 3] = self.gripper_open_pos
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
+            
+            # --- CRITICAL FIX: Flush Ghost State ---
+            # Run several frames of physics to fully resolve the teleportation
+            # and flush out any residual collision/coupler forces from the broadphase.
+            # If we don't do this, the warm-up sequence's massive contact force will persist
+            # into the first strike attempt.
+            for _ in range(5):
+                self.env.scene.step(update_visualizer=False)
+                if hasattr(self.env.scene.sim.coupler, 'clear_link_coupling_forces'):
+                    self.env.scene.sim.coupler.clear_link_coupling_forces()
+
             self.reconstructor.reset()
             gs.logger.info("Initializing surface reconstruction...")
             self.reconstructor.create_reconstructed_mesh()

@@ -306,7 +306,9 @@ async def main():
     gs.logger.info("Warming up strike kernels...")
     shared_state.robot.set_control_mode("VELOCITY_CONTROL")
     vel_cmd = torch.zeros(4, device=env.device)
-    vel_cmd[2] = 1.0; vel_cmd[3] = 1.0
+    # DO NOT close the grippers here! Closing them hits the billet and knocks it over.
+    # Genesis's env.reset() does not perfectly restore complex MPM internal state or 
+    # upright position if it falls over during the 5 stabilization steps.
     shared_state.robot.apply_velocity(vel_cmd, dofs_idx_local=torch.tensor([0, 1, 2, 3], device=env.device))
     env.scene.step()
     shared_state.robot.get_resistance_forces()
