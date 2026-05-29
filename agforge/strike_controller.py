@@ -983,12 +983,44 @@ class StrikeController:
             return points.clone()
         return points.copy()
 
+    @staticmethod
+    def _deep_clone_sim_state(state):
+        """Recursively clone all tensors in a SimState to fully isolate GPU memory.
+        
+        .detach() (called by serializable()) does NOT copy data — it only
+        disconnects from autograd. Without cloning, checkpoint tensors can alias
+        the simulator's internal buffers, causing silent corruption as more
+        simulation steps overwrite that memory.
+        """
+        for solver_state in state.solvers_state:
+            if solver_state is None:
+                continue
+            for attr_name in list(vars(solver_state).keys()):
+                val = getattr(solver_state, attr_name)
+                if isinstance(val, torch.Tensor):
+                    setattr(solver_state, attr_name, val.clone())
+                elif isinstance(val, list):
+                    # ToolSolverState has a list of entity states
+                    for entity_state in val:
+                        if entity_state is None:
+                            continue
+                        for eattr in list(vars(entity_state).keys()):
+                            ev = getattr(entity_state, eattr)
+                            if isinstance(ev, torch.Tensor):
+                                setattr(entity_state, eattr, ev.clone())
+
     def _save_checkpoint_impl(self):
         # Genesis SimState
         sim_state = self.env.scene.sim.get_state()
-        sim_state.serializable() # Ensure CPU friendly if needed
+        sim_state.serializable() # Detach from autograd graph
         
-        # Clear specific internal cache if needed (from original code)
+        # CRITICAL: Deep-clone all tensors so the checkpoint is a fully
+        # independent snapshot. Without this, .detach()'d tensors still alias
+        # the simulator's GPU buffers and get silently corrupted by future
+        # simulation steps. This is the root cause of the "5+ strikes" bug.
+        self._deep_clone_sim_state(sim_state)
+        
+        # Clear the simulator's gradient-tracking cache
         if hasattr(self.env.scene.sim, '_queried_states'):
             self.env.scene.sim._queried_states.clear()
 
@@ -1036,13 +1068,12 @@ class StrikeController:
             self.contact_R = False
             self.contact_width = 0.0
             
-            # Read the actual restored qpos from the rigid solver — sim.reset()
-            # already placed the robot at the correct checkpoint position via
-            # RigidSolverState.  Using ckpt['qpos'] would be redundant at best,
-            # and dangerous if the socket-side target had drifted from the
-            # physical position (e.g. during a strike).
-            # This mirrors the pattern used by reset_simulation().
-            self.qpos = self.robot.entity.get_qpos().clone()
+            # Use the checkpoint's own qpos — the authoritative robot position
+            # at save time. Do NOT query the physics engine here: if the
+            # checkpoint's rigid state was corrupted by tensor aliasing (Bug 1),
+            # sim.reset() would inject garbage into the rigid solver, and
+            # get_qpos() would faithfully return that garbage.
+            self.qpos = ckpt['qpos'].clone()
             
             # Open the grippers (DOFs 2-3) — the checkpoint may have been taken
             # mid-strike when grippers were closed.
@@ -1053,15 +1084,11 @@ class StrikeController:
             # state doesn't carry over and kick the robot on the first frame.
             self.robot.entity.zero_all_dofs_velocity()
             
-            # Only TELEPORT the gripper DOFs open — DOFs 0-1 are already correct
-            # from sim.reset() and touching them would redundantly reset the
-            # collider and disturb the freshly-restored coupler normals.
+            # Teleport ALL DOFs to the authoritative position. Previous code
+            # only teleported grippers (DOFs 2-3), leaving slider/hinge (DOFs
+            # 0-1) at whatever the (potentially corrupted) rigid solver had.
             self.robot.set_control_mode("TELEPORT")
-            gripper_open = torch.tensor(
-                [[self.gripper_open_pos, self.gripper_open_pos]],
-                dtype=torch.float32, device=gs.device,
-            )
-            self.robot.apply_action(gripper_open, dofs_idx_local=[2, 3])
+            self.robot.apply_action(self.qpos)
             
             if 'recon_state' in ckpt:
                 self.reconstructor.set_state(ckpt['recon_state'])
@@ -1258,6 +1285,14 @@ class StrikeController:
             self.contact_R = False
             self.checkpoints = []
             self.contact_width = 0.0
+            
+            # Zero residual velocities from previous strikes and ensure
+            # grippers are open, then teleport ALL DOFs to the clean state.
+            self.robot.entity.zero_all_dofs_velocity()
+            self.qpos[:, 2] = self.gripper_open_pos
+            self.qpos[:, 3] = self.gripper_open_pos
+            self.robot.set_control_mode("TELEPORT")
+            self.robot.apply_action(self.qpos)
             self.reconstructor.reset()
             gs.logger.info("Initializing surface reconstruction...")
             self.reconstructor.create_reconstructed_mesh()
