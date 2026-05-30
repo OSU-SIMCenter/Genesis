@@ -952,9 +952,16 @@ class StrikeController:
                 particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
                 
                 import scipy.spatial
-                parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
                 
-                if parts_np.shape[0] != particles_temp.shape[0]:
+                # USE STATIC PARTICLES FOR MAPPING
+                # This ensures the KD-Tree perfectly maps the 1-to-1 structure between vertices
+                # and particles, even if the billet has been translated in IDLE mode.
+                mapping_parts_np = self.reconstructor._cached_particles
+                if mapping_parts_np is None:
+                    # Fallback if cache is missing
+                    mapping_parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
+                
+                if mapping_parts_np.shape[0] != particles_temp.shape[0]:
                     active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0).cpu().numpy()
                     particles_temp = particles_temp[active_mask]
                 
@@ -968,7 +975,9 @@ class StrikeController:
                 x_clamp_v = x_max_v - 0.11 * L_v
                 x_fade_v = x_max_v - 0.21 * L_v
                 
-                alpha_vis = np.clip((parts_np[:, 0] - x_fade_v) / (x_clamp_v - x_fade_v), 0.0, 1.0)
+                # Evaluate fade based on the STATIC mesh-generation coordinates, so the handle
+                # is always correctly identified regardless of teleop translation.
+                alpha_vis = np.clip((mapping_parts_np[:, 0] - x_fade_v) / (x_clamp_v - x_fade_v), 0.0, 1.0)
                 target_vis = np.minimum(particles_temp, 900.0)
                 particles_temp = particles_temp * (1.0 - alpha_vis) + target_vis * alpha_vis
                 
@@ -978,8 +987,8 @@ class StrikeController:
                     verts_np = vertices_raw
                     
                 # Guard against degenerate mesh/particles
-                if parts_np.shape[0] >= 3 and verts_np.shape[0] > 0:
-                    tree = scipy.spatial.cKDTree(parts_np)
+                if mapping_parts_np.shape[0] >= 3 and verts_np.shape[0] > 0:
+                    tree = scipy.spatial.cKDTree(mapping_parts_np)
                     dists, indices = tree.query(verts_np, k=3)
                     
                     # Inverse distance weighting
@@ -1053,6 +1062,7 @@ class StrikeController:
             'heating_power': self.heating_power,
             'skin_depth': self.skin_depth
         }
+            
         self.checkpoints.append(ckpt)
         if len(self.checkpoints) > MAX_CHECKPOINTS:
             self.checkpoints.pop(0)
@@ -1089,24 +1099,29 @@ class StrikeController:
             self.contact_width = 0.0
             
             # Use the checkpoint's own qpos — the authoritative robot position
-            # at save time. Do NOT query the physics engine here: if the
-            # checkpoint's rigid state was corrupted by tensor aliasing (Bug 1),
-            # sim.reset() would inject garbage into the rigid solver, and
-            # get_qpos() would faithfully return that garbage.
-            self.qpos = ckpt['qpos'].clone()
+            # at save time. Do NOT query the physics engine here
+            strike_qpos = ckpt['qpos'].clone()
+            
+            # Preserve current Unity slider position so the induction coil
+            # doesn't snap away from the Unity visual when we return to IDLE.
+            current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else None
+            
+            self.qpos = strike_qpos.clone()
             
             # Open the grippers (DOFs 2-3) — the checkpoint may have been taken
             # mid-strike when grippers were closed.
             self.qpos[:, 2] = self.gripper_open_pos
             self.qpos[:, 3] = self.gripper_open_pos
             
+            # Restore the slider position for IDLE mode
+            if current_slider_x is not None:
+                self.qpos[0, 0] = current_slider_x
+            
             # Zero all DOF velocities so residual momentum from the pre-undo
             # state doesn't carry over and kick the robot on the first frame.
             self.robot.entity.zero_all_dofs_velocity()
             
-            # Teleport ALL DOFs to the authoritative position. Previous code
-            # only teleported grippers (DOFs 2-3), leaving slider/hinge (DOFs
-            # 0-1) at whatever the (potentially corrupted) rigid solver had.
+            # Teleport ALL DOFs to the authoritative position.
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
             
@@ -1275,6 +1290,9 @@ class StrikeController:
 
     async def reset_simulation(self):
         async with self.lock:
+            # Preserve current slider position
+            current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else None
+            
             # Flush current episode if recording
             if getattr(self, 'recorder', None) and self.recorder.is_recording:
                 self.recorder.flush_episode(success_flag=False, language_instruction="Episode interrupted by reset")
@@ -1311,6 +1329,11 @@ class StrikeController:
             self.robot.entity.zero_all_dofs_velocity()
             self.qpos[:, 2] = self.gripper_open_pos
             self.qpos[:, 3] = self.gripper_open_pos
+            
+            # Restore the slider position so the coil doesn't snap away from the Unity visual
+            if current_slider_x is not None:
+                self.qpos[0, 0] = current_slider_x
+                
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
             

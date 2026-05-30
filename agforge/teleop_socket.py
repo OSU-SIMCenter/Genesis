@@ -116,11 +116,14 @@ async def simulation_loop(websocket, state: StrikeController):
                     t_flat, t_count = _prepare_array(triangles, np.int32)
                     p_flat, p_count = _prepare_array(particles, np.float32)
                     temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
+                    # Force Unity to process the temp array on the first frame after a reset
+                    # so that it clears any stale deformed color buffers.
+                    send_thermal_enabled = getattr(state, 'thermal_enabled', False) or getattr(state, 'pending_mesh_send', False)
                     
                     header = {
                         "stage": state.strike_state.name,
                         "is_pressing": state.strike_state != StrikeState.IDLE,
-                        "thermal_enabled": getattr(state, 'thermal_enabled', False),
+                        "thermal_enabled": send_thermal_enabled,
                         "checkpoint_count": len(state.checkpoints),
                         "force": state.last_force_normalized,
                         "counts": {

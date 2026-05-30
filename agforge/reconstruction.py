@@ -86,6 +86,7 @@ class SurfaceReconstructor:
             'mesh': self.reconstructed_mesh.copy(),
             'recon_enabled': self.recon_enabled,
             'frame_counter': self.frame_counter,
+            '_cached_particles': self._cached_particles.copy() if self._cached_particles is not None else None
         }
 
     def set_state(self, state):
@@ -93,6 +94,14 @@ class SurfaceReconstructor:
         self.reconstructed_mesh = state['mesh'].copy()
         self.recon_enabled = state.get('recon_enabled', True)
         self.frame_counter = state.get('frame_counter', 0)
+        
+        # Restore the exact particles that were used to generate this mesh
+        # This is critical for the visual KD-Tree temperature mapping to remain aligned
+        if '_cached_particles' in state and state['_cached_particles'] is not None:
+            self._cached_particles = state['_cached_particles'].copy()
+        else:
+            self._cached_particles = None
+            
         self.mesh_version += 1
         self.density_initialized = False
         self._prev_grid_origin = None
