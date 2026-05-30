@@ -1102,9 +1102,10 @@ class StrikeController:
             # at save time. Do NOT query the physics engine here
             strike_qpos = ckpt['qpos'].clone()
             
-            # Preserve current Unity slider position so the induction coil
+            # Preserve current Unity slider position and rotation so the induction coil
             # doesn't snap away from the Unity visual when we return to IDLE.
             current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else None
+            current_hinge_qpos = self.qpos[0, 1].item() if self.qpos is not None else None
             
             self.qpos = strike_qpos.clone()
             
@@ -1113,9 +1114,11 @@ class StrikeController:
             self.qpos[:, 2] = self.gripper_open_pos
             self.qpos[:, 3] = self.gripper_open_pos
             
-            # Restore the slider position for IDLE mode
+            # Restore the slider position and rotation for IDLE mode
             if current_slider_x is not None:
                 self.qpos[0, 0] = current_slider_x
+            if current_hinge_qpos is not None:
+                self.qpos[0, 1] = current_hinge_qpos
             
             # Zero all DOF velocities so residual momentum from the pre-undo
             # state doesn't carry over and kick the robot on the first frame.
@@ -1290,8 +1293,9 @@ class StrikeController:
 
     async def reset_simulation(self):
         async with self.lock:
-            # Preserve current slider position
+            # Preserve current slider position and rotation
             current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else None
+            current_hinge_qpos = self.qpos[0, 1].item() if self.qpos is not None else None
             
             # Flush current episode if recording
             if getattr(self, 'recorder', None) and self.recorder.is_recording:
@@ -1330,9 +1334,11 @@ class StrikeController:
             self.qpos[:, 2] = self.gripper_open_pos
             self.qpos[:, 3] = self.gripper_open_pos
             
-            # Restore the slider position so the coil doesn't snap away from the Unity visual
+            # Restore the slider position and rotation so the coil doesn't snap away from the Unity visual
             if current_slider_x is not None:
                 self.qpos[0, 0] = current_slider_x
+            if current_hinge_qpos is not None:
+                self.qpos[0, 1] = current_hinge_qpos
                 
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
