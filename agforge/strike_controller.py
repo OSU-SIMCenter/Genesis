@@ -618,11 +618,12 @@ class StrikeController:
                     thermal_dt = self.env.scene.sim.dt * self.env.scene.sim.mpm_solver._thermal_time_scale
 
                     self.heater.step_heat(
-                        thermal_dt, 
-                        self.heating_power, 
-                        self.skin_depth, 
-                        coil_center, 
-                        self.env.cfg.robot.coil_length / 2.0,
+                        dt=thermal_dt, 
+                        surface_power=self.heating_power, 
+                        skin_depth=self.skin_depth, 
+                        coil_center=coil_center, 
+                        coil_half_length=self.env.cfg.robot.coil_length / 2.0,
+                        coil_radius=self.env.cfg.robot.coil_radius,
                         profile_ctx=self._profile
                     )
                     

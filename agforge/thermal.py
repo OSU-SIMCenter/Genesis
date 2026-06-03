@@ -53,7 +53,7 @@ class InductionHeater:
         self._cached_weights = None
         self._cached_pos = None
 
-    def step_heat(self, dt: float, surface_power: float = 2000.0, skin_depth: float = 0.02, coil_center=None, coil_radius: float = 0.3, profile_ctx=None):
+    def step_heat(self, dt: float, surface_power: float = 2000.0, skin_depth: float = 0.02, coil_center=None, coil_half_length: float = 0.15, coil_radius: float = 0.04, profile_ctx=None):
         """
         Inject heat energy into the particle domain using an induction profile.
         Heat falls off exponentially proportional to depth inside the reconstructed surface.
@@ -143,36 +143,48 @@ class InductionHeater:
                 return
 
         with prof("heat_math"):
-            # 5. Compute heating delta via energy conservation: dT = P * dt / (m * Cp)
-            # NOTE: Genesis inflates particle mass by _particle_volume_scale (1e3) for numerical
-            # stability. This cancels internally in the engine (mass/volume = rho), but we need
-            # the real physical mass here for correct energy-to-temperature conversion.
+            # 5. Compute heating delta via volumetric power density and Biot-Savart distribution
             #
-            # surface_power is TOTAL coil power in Watts, distributed across particles
-            # proportionally to their skin-depth profile weight: w_i = exp(-depth_i / skin_depth).
-            # Each particle's share: P_i = surface_power * w_i / Σ(w_j)
-            particle_mass_scaled = self.solver.particles_info[0].mass
-            particle_mass = particle_mass_scaled / self.solver._particle_volume_scale
+            # surface_power represents the theoretical total power of the coil.
+            # We convert this to a Peak Volumetric Power Density (W/m^3).
             Cp = get_steel_cp_numpy(current_temp)
             
-            # Use cached weights to avoid exponential block repeats
+            # Use cached weights (skin depth: e^(-depth/skin_depth))
             weights = self._cached_weights.copy()
 
-            # 5b. Apply positional mask if coil bounds provided (BEFORE normalization
-            # so that surface_power is distributed only among particles inside the coil)
             if coil_center is not None:
                 c = np.array(coil_center, dtype=np.float64)
-                
-                # 1D slice along the X-axis (Infinite Radius Cylinder)
-                # Note: The caller passes 'coil_length / 2.0' into the coil_radius parameter
                 dx = self._cached_pos[:, 0] - c[0]
-                mask = np.abs(dx) <= coil_radius
-                weights[~mask] = 0.0
+                
+                # Magnetic Field profile (Biot-Savart for finite solenoid)
+                h = coil_half_length
+                R = coil_radius
+                
+                # Avoid division by zero if R=0
+                if R > 0 and h > 0:
+                    term1 = (dx + h) / np.sqrt((dx + h)**2 + R**2)
+                    term2 = (dx - h) / np.sqrt((dx - h)**2 + R**2)
+                    B_field = 0.5 * (term1 - term2)
+                    
+                    # Power is proportional to B^2
+                    B_sq = B_field**2
+                    weights = weights * B_sq
+                else:
+                    weights = weights * 0.0
 
-            weight_sum = weights.sum()
-            if weight_sum < 1e-12:
-                return 0.0  # no particles to heat
-            delta_temp = surface_power * weights / weight_sum * dt / (particle_mass * Cp)
+            # Compute Volumetric Power Density (W/m^3)
+            # Volume of the coil = pi * R^2 * L = pi * R^2 * 2h
+            if coil_half_length > 0 and coil_radius > 0:
+                volume_coil = np.pi * (coil_radius**2) * (2.0 * coil_half_length)
+                q_max = surface_power / volume_coil
+            else:
+                q_max = 0.0
+
+            # Delta T = (q_max * combined_weight * dt) / (rho * Cp)
+            # We use standard steel density (7850 kg/m^3)
+            # The particle_mass terms cancel out, making this perfectly grid-independent!
+            rho = 7850.0 
+            delta_temp = (q_max * weights * dt) / (rho * Cp)
 
         with prof("heat_push_temps"):
             # 6. Push new heat state
