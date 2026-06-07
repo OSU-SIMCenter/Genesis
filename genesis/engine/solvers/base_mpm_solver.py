@@ -56,6 +56,14 @@ class BaseMPMSolver(Solver):
         self._alpha_thermal = options.default_thermal_diffusivity * self._thermal_time_scale
         self._emissivity = options.emissivity  # Stefan-Boltzmann emissivity (not pre-scaled; computed dynamically)
 
+        # Fixed-end (truncated-domain) BC. These are static config baked into the grid kernel
+        # at compile time (the `_thermal_time_scale` pattern), so they must be set before the
+        # first step. The app layer (agforge) supplies `fixed_end_x_cut` from billet geometry.
+        self._enable_fixed_end_bc = bool(options.enable_fixed_end_bc)
+        self._fixed_end_x_cut = float(options.fixed_end_x_cut)
+        self._fixed_end_conduction_length = float(options.fixed_end_conduction_length)
+        self._fixed_end_ambient = float(options.fixed_end_ambient)
+
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
 
         # `_particle_volume_scale` is used to avoid potential numerical instability, as the actual `_particle_volume` may be very small.
@@ -176,6 +184,24 @@ class BaseMPMSolver(Solver):
         )
         if self._enable_thermal:
             self.particles.temp.fill(self._default_initial_temperature)
+
+            # --- Induction heating fields ---
+            # `induction_depth`: per-particle skin depth below the coil-facing surface,
+            # precomputed from the surface-mesh SDF once per geometry change (see
+            # `set_induction_depth`). Standalone (not double-buffered, no gradient): it is a
+            # static material property between strikes, like particle mass. Default "deep" =>
+            # zero heating until populated.
+            self.induction_depth = qd.field(dtype=gs.qd_float, shape=(self._n_particles, self._B))
+            self.induction_depth.fill(1.0e9)
+
+            # Per-frame coil uniforms (mutable => must be fields, the `_gravity` pattern).
+            # _induction_params packs [coil_half_length, coil_radius, q_peak, skin_depth].
+            self._induction_center = qd.field(dtype=gs.qd_vec3, shape=(self._B,))
+            self._induction_params = qd.field(dtype=gs.qd_float, shape=(self._B, 4))
+            self._induction_active = qd.field(dtype=gs.qd_int, shape=(self._B,))
+            self._induction_center.fill(0.0)
+            self._induction_params.fill(0.0)
+            self._induction_active.fill(0)
 
     def _make_grid_cell_state_template(self):
         template = {
@@ -414,6 +440,40 @@ class BaseMPMSolver(Solver):
                 self.particles[f + 1, i_p, i_b].dT_adiabatic = self.particles[f, i_p, i_b].dT_adiabatic
 
     @qd.func
+    def p2g_induction(self, f, i_p, i_b):
+        # Volumetric induction body source — sibling of p2g_post_constitutive's adiabatic heating.
+        #   dT = q_peak * w_skin * f_axial * S_T * substep_dt / (rho * Cp)
+        # Applied per substep so deposited heat is diffused/cooled in the same step (no operator
+        # splitting). q_peak is a PEAK VOLUMETRIC POWER DENSITY [W/m^3] — a property of the coil
+        # field, independent of how much metal is in the coil (no total-power normalization).
+        if qd.static(self._enable_thermal):
+            if self._induction_active[i_b] == 1:
+                half_length = self._induction_params[i_b, 0]
+                radius = self._induction_params[i_b, 1]
+                q_peak = self._induction_params[i_b, 2]
+                skin_depth = self._induction_params[i_b, 3]
+
+                if (q_peak > 0.0) and (half_length > 0.0) and (radius > 0.0) and (skin_depth > 0.0):
+                    rho = self.particles_info[i_p].mass / qd.math.max(self._particle_volume, gs.EPS)
+                    Cp = self.get_steel_cp(self.particles[f + 1, i_p, i_b].temp)
+
+                    # Skin-depth weight from precomputed SDF depth (power ~ exp(-2 d / delta)).
+                    d = self.induction_depth[i_p, i_b]
+                    w_skin = qd.math.exp(-2.0 * d / skin_depth)
+
+                    # Normalized finite-solenoid axial profile B(x)^2 / B(0)^2, B(0)=h/sqrt(h^2+R^2).
+                    x = self.particles[f, i_p, i_b].pos[0] - self._induction_center[i_b][0]
+                    t1 = (x + half_length) / qd.math.sqrt((x + half_length) * (x + half_length) + radius * radius)
+                    t2 = (x - half_length) / qd.math.sqrt((x - half_length) * (x - half_length) + radius * radius)
+                    B = 0.5 * (t1 - t2)
+                    B_peak = half_length / qd.math.sqrt(half_length * half_length + radius * radius)
+                    f_axial = (B * B) / qd.math.max(B_peak * B_peak, gs.EPS)
+
+                    q_eff = q_peak * self._thermal_time_scale
+                    dT = q_eff * w_skin * f_axial * self.substep_dt / qd.math.max(rho * Cp, gs.EPS)
+                    self.particles[f + 1, i_p, i_b].temp = self.particles[f + 1, i_p, i_b].temp + dT
+
+    @qd.func
     def p2g_transfer_extra_fields(self, f, i_p, idx: qd.template(), i_b, weight):
         if qd.static(self._enable_thermal):
             mass = self.particles_info[i_p].mass
@@ -502,7 +562,8 @@ class BaseMPMSolver(Solver):
                             temp=p_temp,
                         )
                         self.p2g_post_constitutive(f, i_p, i_b, delta_gamma, effective_yield)
-                
+                        self.p2g_induction(f, i_p, i_b)
+
                 self.particles[f + 1, i_p, i_b].F = F_new
                 self.particles[f + 1, i_p, i_b].Jp = Jp_new
 
@@ -1205,6 +1266,58 @@ class BaseMPMSolver(Solver):
                 i_p = particles_idx[i_b_, i_p_]
                 i_b = envs_idx[i_b_]
                 self.particles[f, i_p, i_b].temp = temps[i_b_, i_p_]
+
+    @qd.kernel
+    def _kernel_set_induction(
+        self,
+        cx: qd.f32, cy: qd.f32, cz: qd.f32,
+        half_length: qd.f32, radius: qd.f32, q_peak: qd.f32, skin_depth: qd.f32,
+        active: qd.i32,
+    ):
+        if qd.static(self._enable_thermal):
+            for i_b in range(self._B):
+                self._induction_center[i_b] = qd.Vector([cx, cy, cz])
+                self._induction_params[i_b, 0] = half_length
+                self._induction_params[i_b, 1] = radius
+                self._induction_params[i_b, 2] = q_peak
+                self._induction_params[i_b, 3] = skin_depth
+                self._induction_active[i_b] = active
+
+    def set_induction_params(self, center, half_length, radius, q_peak, skin_depth, active):
+        """Set per-frame induction coil uniforms. Call once per macro-step before stepping.
+
+        center : world position of the coil center [x, y, z]
+        half_length, radius : coil geometry [m]
+        q_peak : PEAK volumetric power density [W/m^3] (coil field intensity)
+        skin_depth : EM skin depth delta [m]
+        active : bool, whether the coil is powered this step
+        """
+        if not self._enable_thermal:
+            return
+        self._kernel_set_induction(
+            float(center[0]), float(center[1]), float(center[2]),
+            float(half_length), float(radius), float(q_peak), float(skin_depth),
+            1 if active else 0,
+        )
+
+    @qd.kernel
+    def _kernel_set_induction_depth(self, depths: qd.types.ndarray()):  # shape [B, n_particles]
+        if qd.static(self._enable_thermal):
+            for i_p, i_b in qd.ndrange(self._n_particles, self._B):
+                self.induction_depth[i_p, i_b] = depths[i_b, i_p]
+
+    def set_induction_depth(self, depth_np):
+        """Upload per-particle skin depth (|SDF| to the coil-facing surface) to the GPU.
+
+        Call once per geometry change (init, after each strike, on checkpoint restore).
+        depth_np : array of shape [n_particles] or [B, n_particles].
+        """
+        if not self._enable_thermal:
+            return
+        d = np.asarray(depth_np, dtype=gs.np_float)
+        if d.ndim == 1:
+            d = np.repeat(d[None, :], self._B, axis=0)  # broadcast to [B, n_particles]
+        self._kernel_set_induction_depth(d)
 
     @qd.kernel
     def _kernel_get_particles_temp(

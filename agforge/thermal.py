@@ -1,34 +1,42 @@
 import numpy as np
-import torch
 import igl
 
 import genesis as gs
 
+
 def get_steel_cp_numpy(temp: np.ndarray) -> np.ndarray:
     """Numpy vectorized computation of temperature-dependent specific heat for low-alloy steel."""
     cp = np.full_like(temp, 450.0)
-    
+
     mask_high = temp >= 1000.0
     cp[mask_high] = 750.0
-    
+
     mask_mid = (temp >= 700.0) & (temp < 1000.0)
     if np.any(mask_mid):
         u = (temp[mask_mid] - 700.0) / 300.0
         cp[mask_mid] = 580.0 + u * 70.0
-        
+
     mask_low = (temp > 293.15) & (temp < 700.0)
     if np.any(mask_low):
         u = (temp[mask_low] - 293.15) / 406.85
         cp[mask_low] = 450.0 + u * 130.0
-        
+
     return cp
 
 
 class InductionHeater:
+    """Precomputes the per-particle induction skin depth from a surface-mesh SDF.
+
+    The actual heat deposition is performed on the GPU inside the MPM P2G kernel
+    (`base_mpm_solver.p2g_induction`), which reads the uploaded depth field together
+    with the per-frame coil uniforms set via `solver.set_induction_params`. This class
+    only owns the expensive, geometry-dependent CPU step: computing `|SDF|` of every
+    particle below the coil-facing surface, which is recomputed once per geometry change
+    (init, after each strike, on checkpoint restore) — never per frame.
+    """
+
     def __init__(self, solver, entity, reconstructor=None, static_verts=None, static_faces=None):
         """
-        Initialize the InductionHeater.
-
         Parameters
         ----------
         solver : BaseMPMSolver
@@ -36,165 +44,77 @@ class InductionHeater:
         entity : MPMEntity
             The MPM billet to heat.
         reconstructor : SurfaceReconstructor, optional
-            A pipeline that dynamically provides `reconstructed_mesh`.
-            If None, heating will rely on the static CAD mesh.
-        static_verts : np.ndarray, optional
-            Static vertices structure if no reconstructor is used.
-        static_faces : np.ndarray, optional
-            Static faces structure if no reconstructor is used.
+            Pipeline that dynamically provides `reconstructed_mesh`. If its mesh is empty
+            (e.g. before the first strike) a reconstruction is forced so the initial
+            (cylindrical) billet still produces a valid depth field.
+        static_verts, static_faces : np.ndarray, optional
+            Fallback surface mesh used if no reconstructor is available.
         """
         self.solver = solver
         self.entity = entity
         self.reconstructor = reconstructor
         self.static_verts = static_verts
         self.static_faces = static_faces
-        
-        self._cached_mesh_version = -1
-        self._cached_weights = None
-        self._cached_pos = None
 
-    def step_heat(self, dt: float, surface_power: float = 2000.0, skin_depth: float = 0.02, coil_center=None, coil_half_length: float = 0.15, coil_radius: float = 0.04, profile_ctx=None):
+    def _acquire_surface_mesh(self):
+        """Return (verts, faces) of the current billet surface, or (None, None)."""
+        if (
+            self.reconstructor is not None
+            and getattr(self.reconstructor, "reconstructed_mesh", None) is not None
+            and len(self.reconstructor.reconstructed_mesh.vertices) >= 4
+            and len(self.reconstructor.reconstructed_mesh.faces) >= 4
+        ):
+            mesh = self.reconstructor.reconstructed_mesh
+            return np.asarray(mesh.vertices, dtype=np.float64), np.asarray(mesh.faces, dtype=np.int32)
+
+        # No usable mesh yet — force one so induction works before the first strike.
+        if self.reconstructor is not None:
+            try:
+                self.reconstructor.create_reconstructed_mesh(is_deforming=False)
+                self.reconstructor.mesh_version += 1
+            except Exception as e:
+                gs.logger.warning(f"InductionHeater: failed to force reconstruction: {e}")
+            mesh = getattr(self.reconstructor, "reconstructed_mesh", None)
+            if mesh is not None and len(mesh.vertices) >= 4 and len(mesh.faces) >= 4:
+                return np.asarray(mesh.vertices, dtype=np.float64), np.asarray(mesh.faces, dtype=np.int32)
+
+        if self.static_verts is not None and self.static_faces is not None:
+            return np.asarray(self.static_verts, dtype=np.float64), np.asarray(self.static_faces, dtype=np.int32)
+
+        return None, None
+
+    def compute_skin_depth(self):
+        """Compute |SDF| depth of every particle below the surface mesh.
+
+        Returns a numpy array of shape [n_particles] (depth in metres), or None if no
+        usable surface mesh is available yet (caller should leave the depth field unchanged).
         """
-        Inject heat energy into the particle domain using an induction profile.
-        Heat falls off exponentially proportional to depth inside the reconstructed surface.
-        If coil_center is provided (like [x,y,z]), heating is strictly masked to within coil_radius.
+        verts, faces = self._acquire_surface_mesh()
+        if verts is None:
+            gs.logger.warning("InductionHeater: no surface mesh available, skipping skin-depth recompute.")
+            return None
 
-        Temperature rise is computed via energy conservation: dT = P * dt / (m * Cp)
+        pos_tensor = self.entity.get_particles_pos()
+        pos_np = pos_tensor.cpu().numpy().reshape(-1, 3)
 
-        Parameters
-        ----------
-        dt : float
-            Time step for the heating duration.
-        surface_power : float
-            Heating power in Watts at the absolute surface boundary.
-            Distributed per-particle with exponential skin-depth falloff.
-        skin_depth : float
-            The e-folding depth parameter for exponential falloff.
+        distances, _, _, _ = igl.signed_distance(pos_np.astype(np.float64), verts, faces)
+        depth = np.abs(distances)
+
+        # Guard against NaN/inf from degenerate triangles: treat as deep interior (no heating).
+        bad = ~np.isfinite(depth)
+        if bad.any():
+            gs.logger.warning(f"InductionHeater: {int(bad.sum())} particles got NaN/inf SDF distance, treating as interior.")
+            depth[bad] = 1.0e9
+
+        return depth
+
+    def recompute_and_upload(self):
+        """Compute the skin depth and push it to the solver's GPU induction field.
+
+        Returns True if the depth field was updated, False otherwise.
         """
-        import contextlib
-        def prof(name):
-            if profile_ctx is not None:
-                return profile_ctx(name)
-            return contextlib.suppress()
-
-        current_version = getattr(self.reconstructor, 'mesh_version', -1) if self.reconstructor else 0
-        cache_miss = current_version != self._cached_mesh_version or self._cached_weights is None
-
-        # 1. Acquire current boundary surface
-        with prof("heat_prep_mesh"):
-            if cache_miss:
-                if (
-                    self.reconstructor is not None
-                    and hasattr(self.reconstructor, "reconstructed_mesh")
-                    and self.reconstructor.reconstructed_mesh is not None
-                ):
-                    mesh = self.reconstructor.reconstructed_mesh
-                    if mesh.vertices is None or len(mesh.vertices) == 0:
-                        gs.logger.warning("InductionHeater: empty reconstruction mesh, skipping heat step.")
-                        return
-                    verts = np.asarray(mesh.vertices, dtype=np.float64)
-                    faces = np.asarray(mesh.faces, dtype=np.int32)
-                else:
-                    if self.static_verts is None or self.static_faces is None:
-                        raise ValueError(
-                            "InductionHeater needs either a valid SurfaceReconstructor or explicit static_verts/faces."
-                        )
-                    verts = self.static_verts
-                    faces = self.static_faces
-    
-                if len(verts) < 4 or len(faces) < 4:
-                    gs.logger.warning(f"InductionHeater: degenerate mesh ({len(verts)} verts, {len(faces)} faces), skipping.")
-                    return
-
-        with prof("heat_sdf"):
-            if cache_miss:
-                # 2. Extract particle positions
-                # shape [B, n_particles, 3] usually, squeeze down to [n_particles, 3] for igl
-                pos_tensor = self.entity.get_particles_pos()
-                pos_np = pos_tensor.cpu().numpy().squeeze()
-                if pos_np.ndim != 2 or pos_np.shape[-1] != 3:
-                    raise ValueError(f"Unexpected particle position shape: {pos_np.shape}. Expected (N, 3).")
-    
-                # 3. Calculate Signed Distance (depth from surface)
-                distances, _, _, _ = igl.signed_distance(pos_np.astype(np.float64), verts, faces)
-                depth = np.abs(distances)
-    
-                # Guard against NaN/inf from degenerate triangles
-                bad_mask = ~np.isfinite(depth)
-                if bad_mask.any():
-                    n_bad = bad_mask.sum()
-                    gs.logger.warning(f"InductionHeater: {n_bad} particles got NaN/inf SDF distance, treating as interior.")
-                    depth[bad_mask] = skin_depth * 10.0  # effectively zero heating
-                    
-                # Store the geometric exponential cache
-                self._cached_weights = np.exp(-depth / skin_depth)
-                self._cached_pos = pos_np
-                self._cached_mesh_version = current_version
-
-        with prof("heat_fetch_temps"):
-            # 4. Read current particle temperatures
-            # shape [B, n_particles] -> squeeze to [n_particles]
-            current_temp_tensor = self.entity.get_particles_temp()
-            current_temp = current_temp_tensor.cpu().numpy().squeeze()
-
-            # Guard: if temps are already NaN, skip to avoid cascading corruption
-            if not np.isfinite(current_temp).all():
-                gs.logger.warning("InductionHeater: NaN detected in current particle temps, skipping heat step.")
-                return
-
-        with prof("heat_math"):
-            # 5. Compute heating delta via volumetric power density and Biot-Savart distribution
-            #
-            # surface_power represents the theoretical total power of the coil.
-            # We convert this to a Peak Volumetric Power Density (W/m^3).
-            Cp = get_steel_cp_numpy(current_temp)
-            
-            # Use cached weights (skin depth: e^(-depth/skin_depth))
-            weights = self._cached_weights.copy()
-
-            if coil_center is not None:
-                c = np.array(coil_center, dtype=np.float64)
-                dx = self._cached_pos[:, 0] - c[0]
-                
-                # Magnetic Field profile (Biot-Savart for finite solenoid)
-                h = coil_half_length
-                R = coil_radius
-                
-                # Avoid division by zero if R=0
-                if R > 0 and h > 0:
-                    term1 = (dx + h) / np.sqrt((dx + h)**2 + R**2)
-                    term2 = (dx - h) / np.sqrt((dx - h)**2 + R**2)
-                    B_field = 0.5 * (term1 - term2)
-                    
-                    # Power is proportional to B^2
-                    B_sq = B_field**2
-                    weights = weights * B_sq
-                else:
-                    weights = weights * 0.0
-
-            # Compute Volumetric Power Density (W/m^3)
-            # Volume of the coil = pi * R^2 * L = pi * R^2 * 2h
-            if coil_half_length > 0 and coil_radius > 0:
-                volume_coil = np.pi * (coil_radius**2) * (2.0 * coil_half_length)
-                q_max = surface_power / volume_coil
-            else:
-                q_max = 0.0
-
-            # Delta T = (q_max * combined_weight * dt) / (rho * Cp)
-            # We use standard steel density (7850 kg/m^3)
-            # The particle_mass terms cancel out, making this perfectly grid-independent!
-            rho = 7850.0 
-            delta_temp = (q_max * weights * dt) / (rho * Cp)
-
-        with prof("heat_push_temps"):
-            # 6. Push new heat state
-            new_temp = current_temp + delta_temp
-            new_temp_tensor = torch.tensor(new_temp, dtype=torch.float32, device=current_temp_tensor.device)
-
-            # Ensure it perfectly matches the original buffer dimensions (e.g., [1, N])
-            # If the original was [1, N], unsqueeze back
-            if len(current_temp_tensor.shape) > 1 and len(new_temp_tensor.shape) == 1:
-                new_temp_tensor = new_temp_tensor.unsqueeze(0)
-
-            self.entity.set_particles_temp(new_temp_tensor)
-            return float(delta_temp.max())
+        depth = self.compute_skin_depth()
+        if depth is None:
+            return False
+        self.solver.set_induction_depth(depth)
+        return True

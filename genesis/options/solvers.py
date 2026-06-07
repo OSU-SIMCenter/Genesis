@@ -596,6 +596,16 @@ class MPMOptions(Options):
     T_ref: float = 293.15  # Reference temperature for Johnson-Cook
     T_melt: float = 1793.0  # Melting point for 4340 steel
 
+    # Fixed-end (truncated-domain) thermal boundary condition.
+    # The simulated billet is only a section of a longer rod held in a chuck. The held
+    # end (cut plane) is NOT exposed to air — it conducts into the unsimulated bulk. When
+    # enabled, grid cells at the cut plane apply a Robin (convective-into-bulk) flux toward
+    # `fixed_end_ambient` instead of air convection/radiation. See Thermal_Induction_Refactor_Spec.
+    enable_fixed_end_bc: bool = False
+    fixed_end_x_cut: float = 0.0  # World X of the cut plane (held end). Set by the app layer.
+    fixed_end_conduction_length: float = 0.05  # L_eff [m]: effective conduction length into the bulk rod
+    fixed_end_ambient: float = 293.15  # Bulk/chuck temperature the cut plane drains toward [K]
+
     use_legacy_solver: bool = True
 
     def __init__(self, *, use_sparse_grid: bool = False, leaf_block_size: int = 8, **data):

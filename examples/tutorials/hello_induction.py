@@ -80,18 +80,37 @@ def main():
     # Run the induction heating loop
     print("Beginning 1.0 second of induction heating...")
     heating_duration = 1.0
-    power = 2000.0       # Kelvin/sec at surface
-    skin_depth = 0.02    # 2cm skin depth
+
+    # Induction config. heating_power is a PEAK VOLUMETRIC POWER DENSITY [W/m^3] (coil field
+    # intensity), not a total wattage — geometry-independent. Heat is deposited on the GPU
+    # inside the MPM P2G kernel; we only publish the coil uniforms each frame.
+    q_peak = 5.0e7        # Peak volumetric power density [W/m^3]
+    skin_depth = 0.05     # EM skin depth [m]
+
+    # Precompute the per-particle skin depth ONCE from the surface mesh (recompute only after
+    # large deformations). This is the expensive CPU/SDF step; per-frame heating stays on GPU.
+    reconstructor.create_reconstructed_mesh()
+    heater.recompute_and_upload()
+
+    # Coil coaxial with the billet along the X axis, centered on the billet centroid.
+    centroid = billet.get_particles_pos().cpu().numpy().reshape(-1, 3).mean(axis=0)
+    coil_center = [float(centroid[0]), float(centroid[1]), float(centroid[2])]
+    coil_half_length = 0.2   # covers the billet's X extent
+    coil_radius = 0.15
 
     # Simulation loop
     for i in range(int(heating_duration / dt)):
-        # Calculate new surface mesh (only costs 10-15ms!)
-        reconstructor.create_reconstructed_mesh()
+        # Publish coil uniforms; the engine deposits heat in P2G during scene.step().
+        scene.sim.mpm_solver.set_induction_params(
+            center=coil_center,
+            half_length=coil_half_length,
+            radius=coil_radius,
+            q_peak=q_peak,
+            skin_depth=skin_depth,
+            active=True,
+        )
 
-        # Apply heat
-        heater.step_heat(dt, power, skin_depth)
-
-        # Step physics
+        # Step physics (induction + diffusion + cooling all happen here)
         scene.step()
 
         if i % 50 == 0:

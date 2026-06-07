@@ -275,6 +275,12 @@ class AgilityForgeOptions(Options):
             enable_thermal=True,
             default_initial_temperature=293.0,
             thermal_time_scale=thermal_time_scale,
+            # Fixed-end (truncated-domain) BC: the held end conducts into the unsimulated
+            # rod (Robin BC on the cut plane) instead of being exposed to air.
+            enable_fixed_end_bc=True,
+            fixed_end_x_cut=float(self.robot.cylinder_pos[0] + self.robot.cylinder_height / 2.0),
+            fixed_end_conduction_length=0.05,  # L_eff [m]; tune for gradient steepness
+            fixed_end_ambient=293.0,
         )
         self.env = EnvOptions(
             num_envs=1,
@@ -375,8 +381,14 @@ class TeleopOptions(AgilityForgeOptions):
     print_profiling_on_exit: bool = True  # Print profiler visualizations on shutdown
     
     # Induction Heater physical configurations
-    heating_power: float = 10000.0  # 10 kW total coil power (distributed per-particle via skin-depth profile)
+    # NOTE: heating_power is now a PEAK VOLUMETRIC POWER DENSITY [W/m^3], i.e. the coil field
+    # intensity at the surface directly under the coil center. It is geometry-independent: a
+    # partially- and a fully-inserted billet heat at the same surface rate (no total-power
+    # funneling). Deposition profile: q_peak * exp(-2*depth/skin_depth) * f_axial(x).
+    # Calibrate with the energy-balance calculator; ~2e8 gives forging temps that beat cooling.
+    heating_power: float = 2.0e8  # Peak volumetric power density [W/m^3]
     skin_depth: Optional[float] = None # Calculated parametrically based on cylinder radius
+    thermal_visual_fade: bool = True  # Display-only: fade held-end color to <=900K at the seam (physics unchanged)
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
     _gripper_speed: float = 0.002

@@ -419,7 +419,40 @@ class LegacyCoupler(RBC):
                         elif self.mpm_solver.grid[f, I_front, i_b].mass_thermal < gs.EPS:
                             is_surface = 1
                         
-                        if is_surface == 1:
+                        # --- Fixed-end (cut plane) detection ---
+                        # The held end is welded to the unsimulated rod, NOT exposed to air.
+                        # A cut-face cell is metal whose +X neighbor is empty and that sits at
+                        # the known held-end plane. It drains into the bulk (Robin BC), not air.
+                        is_cut_face = 0
+                        if qd.static(self.mpm_solver._enable_fixed_end_bc):
+                            cell_x = (I + self.mpm_solver.grid_offset)[0] * self.mpm_solver.dx
+                            right_empty = 0
+                            if I_right[0] >= self.mpm_solver.grid_res[0]:
+                                right_empty = 1
+                            elif self.mpm_solver.grid[f, I_right, i_b].mass_thermal < gs.EPS:
+                                right_empty = 1
+                            if right_empty == 1 and cell_x >= (self.mpm_solver._fixed_end_x_cut - self.mpm_solver.dx):
+                                is_cut_face = 1
+
+                        if is_cut_face == 1:
+                            # --- Fixed-end conduction into bulk rod (Robin BC) ---
+                            # Newton-form flux toward the bulk temperature with conductance
+                            # h_bulk = k(T) / L_eff. Same stable exponential update as air
+                            # convection; replaces (not adds to) air+radiation on this face.
+                            T_cell = self.mpm_solver.grid[f, I, i_b].temp
+                            T_bulk = self.mpm_solver._fixed_end_ambient
+                            mass_thermal_real = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
+                            Cp = self.mpm_solver.get_steel_cp(T_cell)
+                            A_cut = self.mpm_solver.dx ** 2
+                            k_local = self.mpm_solver.get_steel_thermal_conductivity(T_cell)
+                            h_bulk = k_local / self.mpm_solver._fixed_end_conduction_length
+                            h_bulk_scaled = h_bulk * self.mpm_solver._thermal_time_scale  # match air pre-scaling
+                            k_bulk = (h_bulk_scaled * A_cut) / (mass_thermal_real * Cp)
+                            decay_bulk = qd.math.exp(-k_bulk * self.mpm_solver.substep_dt)
+                            dT_bulk = (T_cell - T_bulk) * (1.0 - decay_bulk)
+                            self.mpm_solver.grid[f, I, i_b].temp = T_cell - dT_bulk
+
+                        elif is_surface == 1:
                             T_cell = self.mpm_solver.grid[f, I, i_b].temp
                             T_amb = 293.15  # Room temp
                             # N.B. mass_thermal is inflated by _particle_volume_scale; divide it out for real physics

@@ -145,65 +145,6 @@ class StrikeController:
             self.pending_mesh_send = True
             self.stabilization_steps = max(getattr(self, 'stabilization_steps', 0), 5)
 
-    def _apply_fixed_end_heat_sink(self):
-        """Apply Dirichlet BC at the fixed end to model bulk billet conduction.
-
-        Particles within the fixed region have their temperature lerped back
-        toward ambient. The lerp strength increases toward the boundary:
-        - At the inner edge (closest to free end): gentle pull (alpha ~ 0)
-        - At the far end of the fixed region: full clamp (alpha ~ 1)
-
-        This models heat conduction into the infinite thermal mass of the
-        remaining billet beyond the simulated section.
-        """
-        T_ambient = 293.0
-
-        pos = self.env.mpm_entity.get_particles_pos()    # [1, N, 3]
-        temps = self.env.mpm_entity.get_particles_temp()  # [1, N]
-
-        x_pos = pos[0, :, 0]  # [N] particle X positions
-
-        # Parametrically lock the bounds to the initial cylinder dimensions
-        # This prevents the clamp zone from dragging/shrinking when the hammer squishes the billet, 
-        # and ignores the artificially oversized 'fixed_region_bounds' box.
-        L = self.env.cfg.robot.cylinder_height
-        cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
-        x_max = cylinder_center_x + (L / 2.0)
-
-        # 0% to 11% from fixed end -> 100% clamped.
-        # 11% to 21% from fixed end -> Smooth linear fade to 0%.
-        x_clamp = x_max - 0.11 * L
-        x_fade = x_max - 0.21 * L
-        
-        # Calculate alpha:
-        # > x_clamp : alpha = 1.0
-        # < x_fade  : alpha = 0.0
-        alpha = ((x_pos - x_fade) / (x_clamp - x_fade)).clamp(0.0, 1.0)
-
-        # We need a true Dirichlet constraint: at alpha=1, temperature MUST be locked to a heat sink target.
-        # We decouple the physical drain from visuals: we clamp to 1/3 of the ACTIVE ZONE average temp.
-        active_mask = x_pos < x_fade
-        active_temps = temps[0][active_mask]
-        
-        if active_temps.numel() > 0:
-            active_avg = active_temps.mean().item()
-        else:
-            active_avg = T_ambient
-            
-        # Delta-T formulation: anchors at room temp, scales the gradient gap smoothly
-        target_calc = T_ambient + (active_avg - T_ambient) * (2.0 / 3.0)
-        
-        # Floor safely to ambient. Note: we no longer cap the physical boundaries to 900K! 
-        # The metal can reach 1200K natively; visualization limits are handled separately.
-        target_clamp_temp = max(T_ambient, target_calc)
-
-        new_temps = temps.clone()
-        new_temps[0] = temps[0] * (1.0 - alpha) + target_clamp_temp * alpha
-        self.env.mpm_entity.set_particles_temp(new_temps)
-        
-        # Return dT for telemetry
-        return new_temps - temps
-
     async def set_qpos(self, new_qpos):
         async with self.lock:
             # Only clamp slider/hinge, grippers managed by logic if striking
@@ -493,9 +434,14 @@ class StrikeController:
                         # Replace the pre-strike checkpoint (saved in trigger_strike)
                         # with this post-strike state so 1 undo = 1 strike reversal.
                         await self.save_checkpoint(replace_last=True)
-                        
+
                         # Flag to ensure updated mesh is sent to client
                         self.pending_mesh_send = True
+
+                        # Recompute the induction skin-depth field from the post-strike
+                        # geometry so heating tracks the newly forged surface.
+                        if self.thermal_enabled and self.heater is not None:
+                            self.heater.recompute_and_upload()
                         return
 
             # --- HOLDING STAGE ---
@@ -597,41 +543,28 @@ class StrikeController:
                 if self.heater is None:
                     from agforge.thermal import InductionHeater
                     self.heater = InductionHeater(
-                        solver=self.env.scene.sim.mpm_solver, 
-                        entity=self.env.mpm_entity, 
+                        solver=self.env.scene.sim.mpm_solver,
+                        entity=self.env.mpm_entity,
                         reconstructor=self.reconstructor
                     )
-                
-                if not _is_striking:
-                    # Only do induction heating + snapshots when NOT in a strike
-                    # (avoids 2 extra GPU syncs that serialize the pipeline during fast strike loops)
-                    _temps_before_heating = self.env.mpm_entity.get_particles_temp().clone()
-                    
-                    # Ride the sidecar! Calculate absolute physics position dynamically from the sliding arm
-                    current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else 0.0
-                    dynamic_coil_x = current_slider_x + self.env.cfg.robot.coil_offset_x
-                    
-                    # Hardcode Y to 0 and Z to the cylinder's world center
-                    coil_center = [dynamic_coil_x, 0.0, self.env.cfg.robot.cylinder_pos[2]]
-                    
-                    # Use real-time physical dt for induction heating calculation
-                    thermal_dt = self.env.scene.sim.dt * self.env.scene.sim.mpm_solver._thermal_time_scale
+                    # Precompute the initial skin-depth field so induction works from t=0
+                    # (before the first strike, this forces a reconstruction of the cylinder).
+                    self.heater.recompute_and_upload()
 
-                    self.heater.step_heat(
-                        dt=thermal_dt, 
-                        surface_power=self.heating_power, 
-                        skin_depth=self.skin_depth, 
-                        coil_center=coil_center, 
-                        coil_half_length=self.env.cfg.robot.coil_length / 2.0,
-                        coil_radius=self.env.cfg.robot.coil_radius,
-                        profile_ctx=self._profile
-                    )
-                    
-                    # Snapshot after induction heating (before engine physics)
-                    _temps_after_heating = self.env.mpm_entity.get_particles_temp().clone()
-                else:
-                    # During strikes: just snapshot pre-physics temps (1 GPU sync instead of 3)
-                    _temps_after_heating = self.env.mpm_entity.get_particles_temp().clone()
+                # Induction heat is deposited on the GPU inside the MPM P2G kernel. Here we
+                # only publish the per-frame coil uniforms (center rides the sliding arm).
+                # The coil is "powered" only when not striking.
+                current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else 0.0
+                dynamic_coil_x = current_slider_x + self.env.cfg.robot.coil_offset_x
+                coil_center = [dynamic_coil_x, 0.0, self.env.cfg.robot.cylinder_pos[2]]
+                self.env.scene.sim.mpm_solver.set_induction_params(
+                    center=coil_center,
+                    half_length=self.env.cfg.robot.coil_length / 2.0,
+                    radius=self.env.cfg.robot.coil_radius,
+                    q_peak=self.heating_power,
+                    skin_depth=self.skin_depth,
+                    active=(not _is_striking),
+                )
         else:
             # Thermal Freezing: Disable natural diffusion by snapshotting temperatures before physics step
             if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
@@ -657,12 +590,12 @@ class StrikeController:
 
             self._physics_step_counter += 1
 
-            # --- Fixed-End Heat Sink (Dirichlet BC) ---
-            # Model heat conduction into the bulk billet by clamping particles
-            # near the held end toward ambient temperature.
+            # --- Fixed-End Boundary Condition ---
+            # Conduction into the unsimulated bulk rod is now handled physically on the GPU
+            # by the Robin (convective-into-bulk) BC in the MPM grid kernel (enabled via
+            # MPMOptions.enable_fixed_end_bc / fixed_end_x_cut). The old Python Dirichlet
+            # heat-sink heuristic has been removed.
             self._dt_heat_sink = None
-            if self.thermal_enabled and not physics_failed:
-                self._dt_heat_sink = self._apply_fixed_end_heat_sink()
 
             # --- DEBUG TEMP OVERRIDE ---
             # Uncomment the block below to manually test visual alignment of the induction coil and press geometry.
@@ -966,21 +899,24 @@ class StrikeController:
                     active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0).cpu().numpy()
                     particles_temp = particles_temp[active_mask]
                 
-                # --- VISUAL STATE OVERRIDE ---
-                # We fade the visual temperatures of the 11-21% clamp zone down to 900K *before* the KD-Tree
-                # so the renderer keeps the dummy handle black, without capping the actual physics engine.
-                L_v = self.env.cfg.robot.cylinder_height
-                cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
-                x_max_v = cylinder_center_x + (L_v / 2.0)
-                
-                x_clamp_v = x_max_v - 0.11 * L_v
-                x_fade_v = x_max_v - 0.21 * L_v
-                
-                # Evaluate fade based on the STATIC mesh-generation coordinates, so the handle
-                # is always correctly identified regardless of teleop translation.
-                alpha_vis = np.clip((mapping_parts_np[:, 0] - x_fade_v) / (x_clamp_v - x_fade_v), 0.0, 1.0)
-                target_vis = np.minimum(particles_temp, 900.0)
-                particles_temp = particles_temp * (1.0 - alpha_vis) + target_vis * alpha_vis
+                # --- VISUAL STATE OVERRIDE (display-only; physics is never modified) ---
+                # We fade the visual temperatures of the 11-21% clamp zone down to <=900K *before*
+                # the KD-Tree so the renderer keeps the dummy handle black at the truncation seam,
+                # without capping the actual physics engine. Toggleable for debugging: set
+                # cfg.thermal_visual_fade = False to send raw physical temperatures to Unity.
+                if getattr(self.env.cfg, 'thermal_visual_fade', True):
+                    L_v = self.env.cfg.robot.cylinder_height
+                    cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
+                    x_max_v = cylinder_center_x + (L_v / 2.0)
+
+                    x_clamp_v = x_max_v - 0.11 * L_v
+                    x_fade_v = x_max_v - 0.21 * L_v
+
+                    # Evaluate fade based on the STATIC mesh-generation coordinates, so the handle
+                    # is always correctly identified regardless of teleop translation.
+                    alpha_vis = np.clip((mapping_parts_np[:, 0] - x_fade_v) / (x_clamp_v - x_fade_v), 0.0, 1.0)
+                    target_vis = np.minimum(particles_temp, 900.0)
+                    particles_temp = particles_temp * (1.0 - alpha_vis) + target_vis * alpha_vis
                 
                 if isinstance(vertices_raw, torch.Tensor):
                     verts_np = vertices_raw.cpu().numpy()
@@ -1138,6 +1074,11 @@ class StrikeController:
             self.thermal_enabled = ckpt.get('thermal_enabled', False)
             self.heating_power = ckpt.get('heating_power', 2000.0)
             self.skin_depth = ckpt.get('skin_depth', 0.02)
+
+            # Particle positions changed on restore — recompute the induction skin-depth
+            # field so heating tracks the restored geometry.
+            if self.thermal_enabled and self.heater is not None:
+                self.heater.recompute_and_upload()
 
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
