@@ -123,8 +123,11 @@ class BaseMPMSolver(Solver):
                 "plastic_strain": gs.qd_float,
                 "plastic_work": gs.qd_float,
                 "dT_adiabatic": gs.qd_float,
+                "dT_induction": gs.qd_float,
                 "dT_conv": gs.qd_float,
                 "dT_rad": gs.qd_float,
+                "dT_bulk": gs.qd_float,
+                "dT_diffusion": gs.qd_float,
                 "dT_contact": gs.qd_float,
             })
         return template
@@ -216,6 +219,8 @@ class BaseMPMSolver(Solver):
                 "mass_thermal": gs.qd_float,
                 "dT_conv": gs.qd_float,
                 "dT_rad": gs.qd_float,
+                "dT_bulk": gs.qd_float,
+                "dT_diffusion": gs.qd_float,
                 "dT_contact": gs.qd_float,
             })
         return template
@@ -472,6 +477,11 @@ class BaseMPMSolver(Solver):
                     q_eff = q_peak * self._thermal_time_scale
                     dT = q_eff * w_skin * f_axial * self.substep_dt / qd.math.max(rho * Cp, gs.EPS)
                     self.particles[f + 1, i_p, i_b].temp = self.particles[f + 1, i_p, i_b].temp + dT
+                    self.particles[f + 1, i_p, i_b].dT_induction = self.particles[f, i_p, i_b].dT_induction + dT
+                else:
+                    self.particles[f + 1, i_p, i_b].dT_induction = self.particles[f, i_p, i_b].dT_induction
+            else:
+                self.particles[f + 1, i_p, i_b].dT_induction = self.particles[f, i_p, i_b].dT_induction
 
     @qd.func
     def p2g_transfer_extra_fields(self, f, i_p, idx: qd.template(), i_b, weight):
@@ -486,6 +496,8 @@ class BaseMPMSolver(Solver):
             self.particles[f + 1, i_p, i_b].temp = gs.qd_float(0.0)
             self.particles[f + 1, i_p, i_b].dT_conv = self.particles[f, i_p, i_b].dT_conv
             self.particles[f + 1, i_p, i_b].dT_rad = self.particles[f, i_p, i_b].dT_rad
+            self.particles[f + 1, i_p, i_b].dT_bulk = self.particles[f, i_p, i_b].dT_bulk
+            self.particles[f + 1, i_p, i_b].dT_diffusion = self.particles[f, i_p, i_b].dT_diffusion
             self.particles[f + 1, i_p, i_b].dT_contact = self.particles[f, i_p, i_b].dT_contact
 
     @qd.func
@@ -494,6 +506,8 @@ class BaseMPMSolver(Solver):
             self.particles[f + 1, i_p, i_b].temp += weight * self.grid[f, grid_index, i_b].temp_diffused
             self.particles[f + 1, i_p, i_b].dT_conv += weight * self.grid[f, grid_index, i_b].dT_conv
             self.particles[f + 1, i_p, i_b].dT_rad += weight * self.grid[f, grid_index, i_b].dT_rad
+            self.particles[f + 1, i_p, i_b].dT_bulk += weight * self.grid[f, grid_index, i_b].dT_bulk
+            self.particles[f + 1, i_p, i_b].dT_diffusion += weight * self.grid[f, grid_index, i_b].dT_diffusion
             self.particles[f + 1, i_p, i_b].dT_contact += weight * self.grid[f, grid_index, i_b].dT_contact
 
     # ------------------------------------------------------------------------------------
@@ -808,8 +822,11 @@ class BaseMPMSolver(Solver):
             self.particles[target, i_p, i_b].plastic_strain = self.particles[source, i_p, i_b].plastic_strain
             self.particles[target, i_p, i_b].plastic_work = self.particles[source, i_p, i_b].plastic_work
             self.particles[target, i_p, i_b].dT_adiabatic = self.particles[source, i_p, i_b].dT_adiabatic
+            self.particles[target, i_p, i_b].dT_induction = self.particles[source, i_p, i_b].dT_induction
             self.particles[target, i_p, i_b].dT_conv = self.particles[source, i_p, i_b].dT_conv
             self.particles[target, i_p, i_b].dT_rad = self.particles[source, i_p, i_b].dT_rad
+            self.particles[target, i_p, i_b].dT_bulk = self.particles[source, i_p, i_b].dT_bulk
+            self.particles[target, i_p, i_b].dT_diffusion = self.particles[source, i_p, i_b].dT_diffusion
             self.particles[target, i_p, i_b].dT_contact = self.particles[source, i_p, i_b].dT_contact
         self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
 
@@ -830,8 +847,11 @@ class BaseMPMSolver(Solver):
             self.particles.grad[target, i_p, i_b].plastic_strain = self.particles.grad[source, i_p, i_b].plastic_strain
             self.particles.grad[target, i_p, i_b].plastic_work = self.particles.grad[source, i_p, i_b].plastic_work
             self.particles.grad[target, i_p, i_b].dT_adiabatic = self.particles.grad[source, i_p, i_b].dT_adiabatic
+            self.particles.grad[target, i_p, i_b].dT_induction = self.particles.grad[source, i_p, i_b].dT_induction
             self.particles.grad[target, i_p, i_b].dT_conv = self.particles.grad[source, i_p, i_b].dT_conv
             self.particles.grad[target, i_p, i_b].dT_rad = self.particles.grad[source, i_p, i_b].dT_rad
+            self.particles.grad[target, i_p, i_b].dT_bulk = self.particles.grad[source, i_p, i_b].dT_bulk
+            self.particles.grad[target, i_p, i_b].dT_diffusion = self.particles.grad[source, i_p, i_b].dT_diffusion
             self.particles.grad[target, i_p, i_b].dT_contact = self.particles.grad[source, i_p, i_b].dT_contact
         self.particles_ng[target, i_p, i_b].active = self.particles_ng[source, i_p, i_b].active
 
@@ -853,6 +873,8 @@ class BaseMPMSolver(Solver):
                 self.grid[f, i, j, k, i_b].mass_thermal = gs.qd_float(0.0)
                 self.grid[f, i, j, k, i_b].dT_conv = gs.qd_float(0.0)
                 self.grid[f, i, j, k, i_b].dT_rad = gs.qd_float(0.0)
+                self.grid[f, i, j, k, i_b].dT_bulk = gs.qd_float(0.0)
+                self.grid[f, i, j, k, i_b].dT_diffusion = gs.qd_float(0.0)
                 self.grid[f, i, j, k, i_b].dT_contact = gs.qd_float(0.0)
 
             self.grid.grad[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
@@ -1352,9 +1374,23 @@ class BaseMPMSolver(Solver):
                 i_p = i_p_ + particle_start
                 i_b = envs_idx[i_b_]
                 self.particles[f, i_p, i_b].dT_adiabatic = gs.qd_float(0.0)
+                self.particles[f, i_p, i_b].dT_induction = gs.qd_float(0.0)
                 self.particles[f, i_p, i_b].dT_conv = gs.qd_float(0.0)
                 self.particles[f, i_p, i_b].dT_rad = gs.qd_float(0.0)
+                self.particles[f, i_p, i_b].dT_bulk = gs.qd_float(0.0)
+                self.particles[f, i_p, i_b].dT_diffusion = gs.qd_float(0.0)
                 self.particles[f, i_p, i_b].dT_contact = gs.qd_float(0.0)
+
+    @qd.kernel
+    def _kernel_get_particles_dT_induction(
+        self, f: qd.i32, particle_start: qd.i32, n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(), dTs: qd.types.ndarray()
+    ):
+        if qd.static(self._enable_thermal):
+            for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+                i_p = i_p_ + particle_start
+                i_b = envs_idx[i_b_]
+                dTs[i_b_, i_p_] = self.particles[f, i_p, i_b].dT_induction
 
     @qd.kernel
     def _kernel_get_particles_dT_conv(
@@ -1377,6 +1413,28 @@ class BaseMPMSolver(Solver):
                 i_p = i_p_ + particle_start
                 i_b = envs_idx[i_b_]
                 dTs[i_b_, i_p_] = self.particles[f, i_p, i_b].dT_rad
+
+    @qd.kernel
+    def _kernel_get_particles_dT_bulk(
+        self, f: qd.i32, particle_start: qd.i32, n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(), dTs: qd.types.ndarray()
+    ):
+        if qd.static(self._enable_thermal):
+            for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+                i_p = i_p_ + particle_start
+                i_b = envs_idx[i_b_]
+                dTs[i_b_, i_p_] = self.particles[f, i_p, i_b].dT_bulk
+
+    @qd.kernel
+    def _kernel_get_particles_dT_diffusion(
+        self, f: qd.i32, particle_start: qd.i32, n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(), dTs: qd.types.ndarray()
+    ):
+        if qd.static(self._enable_thermal):
+            for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+                i_p = i_p_ + particle_start
+                i_b = envs_idx[i_b_]
+                dTs[i_b_, i_p_] = self.particles[f, i_p, i_b].dT_diffusion
 
     @qd.kernel
     def _kernel_get_particles_dT_contact(

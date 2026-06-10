@@ -535,8 +535,6 @@ class StrikeController:
 
         # 3b. Thermodynamics
         frozen_temps_tensor = None
-        _temps_before_heating = None
-        _temps_after_heating = None
         _is_striking = self.strike_state != StrikeState.IDLE
         if self.thermal_enabled:
             with self._profile("teleop_heating"):
@@ -589,13 +587,6 @@ class StrikeController:
                 self.env.mpm_entity.set_particles_temp(frozen_temps_tensor)
 
             self._physics_step_counter += 1
-
-            # --- Fixed-End Boundary Condition ---
-            # Conduction into the unsimulated bulk rod is now handled physically on the GPU
-            # by the Robin (convective-into-bulk) BC in the MPM grid kernel (enabled via
-            # MPMOptions.enable_fixed_end_bc / fixed_end_x_cut). The old Python Dirichlet
-            # heat-sink heuristic has been removed.
-            self._dt_heat_sink = None
 
             # --- DEBUG TEMP OVERRIDE ---
             # Uncomment the block below to manually test visual alignment of the induction coil and press geometry.
@@ -656,22 +647,27 @@ class StrikeController:
                     all_dT_names = []
                     all_dT_tensors = []
 
-                    if _temps_before_heating is not None and _temps_after_heating is not None:
-                        all_dT_names.append("Induction")
-                        all_dT_tensors.append((_temps_after_heating - _temps_before_heating).float().squeeze(-1).view(-1))
-
-                    # --- Engine Mechanisms ---
-                    all_dT_names.extend(["Convection", "Radiation", "Contact", "Adiabatic"])
+                    # Per-mechanism dT telemetry (accumulated over substeps each macro-step).
+                    # Air convection and fixed-end bulk conduction use the same Robin exponential
+                    # form but are applied on disjoint cell sets (air-exposed vs cut-face).
+                    all_dT_names.extend([
+                        "Induction",
+                        "AirConv",
+                        "Radiation",
+                        "FixedEnd",
+                        "Diffusion",
+                        "Contact",
+                        "Adiabatic",
+                    ])
                     all_dT_tensors.extend([
+                        self.env.mpm_entity.get_particles_dT_induction().float().squeeze(-1).view(-1),
                         self.env.mpm_entity.get_particles_dT_conv().float().squeeze(-1).view(-1),
                         self.env.mpm_entity.get_particles_dT_rad().float().squeeze(-1).view(-1),
+                        self.env.mpm_entity.get_particles_dT_bulk().float().squeeze(-1).view(-1),
+                        self.env.mpm_entity.get_particles_dT_diffusion().float().squeeze(-1).view(-1),
                         self.env.mpm_entity.get_particles_dT_contact().float().squeeze(-1).view(-1),
-                        self.env.mpm_entity.get_particles_dT_adiabatic().float().squeeze(-1).view(-1)
+                        self.env.mpm_entity.get_particles_dT_adiabatic().float().squeeze(-1).view(-1),
                     ])
-                    
-                    if self._dt_heat_sink is not None:
-                        all_dT_names.append("HeatSink")
-                        all_dT_tensors.append(self._dt_heat_sink.float().squeeze(-1).view(-1))
 
                     def W_str(watts):
                         if abs(watts) > 1e6:

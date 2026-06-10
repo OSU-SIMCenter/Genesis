@@ -450,6 +450,7 @@ class LegacyCoupler(RBC):
                             k_bulk = (h_bulk_scaled * A_cut) / (mass_thermal_real * Cp)
                             decay_bulk = qd.math.exp(-k_bulk * self.mpm_solver.substep_dt)
                             dT_bulk = (T_cell - T_bulk) * (1.0 - decay_bulk)
+                            self.mpm_solver.grid[f, I, i_b].dT_bulk -= dT_bulk
                             self.mpm_solver.grid[f, I, i_b].temp = T_cell - dT_bulk
 
                         elif is_surface == 1:
@@ -1110,6 +1111,7 @@ class LegacyCoupler(RBC):
                     dt = self.mpm_solver.substep_dt
                     
                     T_new = T_C + alpha * dt / (dx * dx) * laplacian
+                    self.mpm_solver.grid[f, I, i_b].dT_diffusion = T_new - T_C
                     self.mpm_solver.grid[f, I, i_b].temp_diffused = T_new
                 else:
                     # Empty cells must have ambient temp so surface particles don't read 0K via G2P.

@@ -465,6 +465,16 @@ class MPMEntity(ParticleEntity):
             dTs = dTs[0]
         return dTs
 
+    def get_particles_dT_induction(self, envs_idx=None):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        dTs = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        self.solver._kernel_get_particles_dT_induction(
+            self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, dTs
+        )
+        if self._scene.n_envs == 0:
+            dTs = dTs[0]
+        return dTs
+
     def get_particles_dT_conv(self, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         dTs = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
@@ -479,6 +489,26 @@ class MPMEntity(ParticleEntity):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         dTs = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
         self.solver._kernel_get_particles_dT_rad(
+            self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, dTs
+        )
+        if self._scene.n_envs == 0:
+            dTs = dTs[0]
+        return dTs
+
+    def get_particles_dT_bulk(self, envs_idx=None):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        dTs = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        self.solver._kernel_get_particles_dT_bulk(
+            self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, dTs
+        )
+        if self._scene.n_envs == 0:
+            dTs = dTs[0]
+        return dTs
+
+    def get_particles_dT_diffusion(self, envs_idx=None):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        dTs = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        self.solver._kernel_get_particles_dT_diffusion(
             self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, dTs
         )
         if self._scene.n_envs == 0:
