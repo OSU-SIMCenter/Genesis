@@ -70,7 +70,8 @@ class TemperatureParticleRenderer:
 
         self._ctx = ctx
         self._mpm_entity = mpm_entity
-        self._particle_radius = particle_radius
+        self._physics_radius = float(particle_radius)
+        self._render_scale = 1.0
         self._n_particles = n_particles
         self._temp_min = temp_min
         self._temp_max = temp_max
@@ -95,7 +96,7 @@ class TemperatureParticleRenderer:
             if n_slots <= 0:
                 self._bucket_nodes.append(None)
                 continue
-            mesh = mu.create_sphere(particle_radius, subdivisions=1, color=self._colors[b])
+            mesh = mu.create_sphere(self._draw_radius(), subdivisions=1, color=self._colors[b])
             tfs = np.tile(np.eye(4), (n_slots, 1, 1))
             tfs[:, :3, 3] = OFF_SCREEN
             pr_mesh = pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs)
@@ -128,6 +129,30 @@ class TemperatureParticleRenderer:
             bucket_max_sizes=bucket_max_sizes,
         )
 
+    def _draw_radius(self) -> float:
+        return self._physics_radius * self._render_scale
+
+    def render_scale_label(self) -> str:
+        return "normal" if self._render_scale >= 0.99 else "small"
+
+    def cycle_render_scale(self, env: "AgilityForgeEnv") -> float:
+        """Toggle viewer sphere radius between full size and a smaller debug scale."""
+        small = float(getattr(env.cfg.general, "particle_render_scale_small", 0.3))
+        if self._render_scale >= 0.99:
+            self._render_scale = small
+        else:
+            self._render_scale = 1.0
+        self._rebuild_all_bucket_meshes()
+        if self._frame_pos is not None and self._bucket_idx is not None:
+            self._write_bucket_poses(self._frame_pos, self._bucket_idx)
+        return self._render_scale
+
+    def _rebuild_all_bucket_meshes(self):
+        for b in range(self._n_buckets):
+            n_slots = int(self._bucket_max[b])
+            if n_slots > 0:
+                self._recreate_bucket_node(b, n_slots)
+
     def _remove_default_nodes(self):
         for idx in self._ctx.rendered_envs_idx:
             key = (idx, self._mpm_entity.uid)
@@ -147,7 +172,7 @@ class TemperatureParticleRenderer:
         old = self._bucket_nodes[b]
         if old is not None:
             self._ctx.remove_node(old)
-        mesh = mu.create_sphere(self._particle_radius, subdivisions=1, color=self._colors[b])
+        mesh = mu.create_sphere(self._draw_radius(), subdivisions=1, color=self._colors[b])
         tfs = np.tile(np.eye(4), (n_slots, 1, 1))
         tfs[:, :3, 3] = OFF_SCREEN
         pr_mesh = pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs)
@@ -295,7 +320,12 @@ def _pyrender_viewer(env: "AgilityForgeEnv"):
     return vis.viewer._pyrender_viewer
 
 
-def update_particle_color_display(env: "AgilityForgeEnv", *, flash: bool = False) -> None:
+def update_particle_color_display(
+    env: "AgilityForgeEnv",
+    *,
+    flash: bool = False,
+    renderer: TemperatureParticleRenderer | None = None,
+) -> None:
     """Update window title and on-screen HUD with the active particle color mode."""
     pr = _pyrender_viewer(env)
     if pr is None:
@@ -306,7 +336,8 @@ def update_particle_color_display(env: "AgilityForgeEnv", *, flash: bool = False
 
     mode = getattr(env.cfg.general, "particle_color_mode", "temperature")
     label = PARTICLE_COLOR_MODE_LABELS.get(mode, mode)
-    hud = f"Particles: {label}  (G / Shift+G)"
+    size_label = renderer.render_scale_label() if renderer is not None else "normal"
+    hud = f"Particles: {label}  |  size: {size_label}  (G color, B size)"
 
     base = pr.viewer_flags.get("_agforge_base_title")
     if base is None:
@@ -361,7 +392,7 @@ def register_particle_color_keybinds(env: "AgilityForgeEnv", renderer: Temperatu
 
     def _show_mode(mode: str):
         label = PARTICLE_COLOR_MODE_LABELS.get(mode, mode)
-        update_particle_color_display(env, flash=True)
+        update_particle_color_display(env, flash=True, renderer=renderer)
         gs.logger.info(f"Particle color mode → {label} ({mode})")
 
     def _refresh_viewer():
@@ -374,6 +405,13 @@ def register_particle_color_keybinds(env: "AgilityForgeEnv", renderer: Temperatu
 
     def _cycle_prev():
         _show_mode(cycle_particle_color_mode(env, renderer, step=-1))
+        _refresh_viewer()
+
+    def _toggle_size():
+        scale = renderer.cycle_render_scale(env)
+        label = renderer.render_scale_label()
+        update_particle_color_display(env, flash=True, renderer=renderer)
+        gs.logger.info(f"Particle render size → {label} (scale={scale:.2f})")
         _refresh_viewer()
 
     viewer.register_keybinds(
@@ -392,12 +430,19 @@ def register_particle_color_keybinds(env: "AgilityForgeEnv", renderer: Temperatu
             callback=_cycle_prev,
             allow_overload=True,
         ),
+        Keybind(
+            "agforge_toggle_particle_size",
+            Key.B,
+            key_action=KeyAction.PRESS,
+            callback=_toggle_size,
+            allow_overload=True,
+        ),
         overwrite=False,
     )
-    update_particle_color_display(env)
+    update_particle_color_display(env, renderer=renderer)
     gs.logger.info(
-        "Particle color keybinds: [G] next mode, [Shift+G] previous "
-        f"(modes: {', '.join(PARTICLE_COLOR_MODES)})"
+        "Particle viewer keybinds: [G] color, [Shift+G] prev color, [B] size "
+        f"(color modes: {', '.join(PARTICLE_COLOR_MODES)})"
     )
 
 

@@ -93,6 +93,8 @@ class GeneralOptions(Options):
     particle_temp_max: float = 1450.0
     # Depth color scale for induction_depth mode [m]; None → 3 * skin_depth
     particle_depth_max: Optional[float] = None
+    # Viewer-only draw radius multiplier when toggled with [B] (physics unchanged).
+    particle_render_scale_small: float = 0.3
 
 class ReconstructionOptions(Options):
     """Parameters for surface reconstruction."""
