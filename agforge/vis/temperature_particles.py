@@ -42,6 +42,7 @@ def _scalars_to_bucket_indices(
     values: np.ndarray, vmin: float, vmax: float, n_buckets: int = N_BUCKETS
 ):
     values = np.asarray(values, dtype=np.float64).reshape(-1)
+    values = np.nan_to_num(values, nan=float(vmin), posinf=float(vmax), neginf=float(vmin))
     span = max(float(vmax) - float(vmin), 1e-12)
     tn = np.clip((values - vmin) / span, 0.0, 1.0)
     return np.minimum((tn * n_buckets).astype(np.int32), n_buckets - 1)
@@ -256,7 +257,17 @@ class TemperatureParticleRenderer:
             return weights, 0.0, 1.0
 
         if mode == "q_ind":
-            center, half_length, radius, q_peak, sd, _active = solver.get_induction_uniforms_numpy(0)
+            center, half_length, radius, q_peak, sd, active = solver.get_induction_uniforms_numpy(0)
+            uniforms_unset = half_length <= 0.0 or radius <= 0.0 or q_peak <= 0.0
+            if uniforms_unset:
+                # GPU uniforms are zero until thermal is enabled / set_induction_params runs.
+                half_length = cfg.robot.coil_length / 2.0
+                radius = cfg.robot.coil_radius
+                q_peak = cfg.heating_power
+                center = np.array(
+                    [float(cfg.robot.cylinder_pos[0]), 0.0, float(cfg.robot.cylinder_pos[2])],
+                    dtype=np.float64,
+                )
             if sd <= 0.0:
                 sd = skin_depth
             q = particle_q_ind(
@@ -269,7 +280,11 @@ class TemperatureParticleRenderer:
                 skin_depth=sd,
                 thermal_time_scale=float(cfg.mpm.thermal_time_scale),
             )
-            return q, 0.0, float(np.percentile(q, 99.5)) if q.size else (q, 0.0, 1.0)
+            if not uniforms_unset and not active:
+                q = np.zeros_like(q)
+            q = np.nan_to_num(q, nan=0.0, posinf=0.0, neginf=0.0)
+            vmax = float(np.percentile(q, 99.5)) if q.size else 1.0
+            return q, 0.0, max(vmax, 1e-12)
 
         temps = env.mpm_entity.get_particles_temp().detach().cpu().numpy().reshape(-1)
         return temps, cfg.general.particle_temp_min, cfg.general.particle_temp_max

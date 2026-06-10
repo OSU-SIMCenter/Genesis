@@ -34,6 +34,8 @@ def biot_savart_f_axial(
     x = np.asarray(x, dtype=np.float64)
     h = float(half_length)
     r = float(radius)
+    if h <= 0.0 or r <= 0.0:
+        return np.zeros_like(x, dtype=np.float64)
     b = biot_savart_b_axial(x, h, r)
     b_peak = h / np.sqrt(h * h + r * r)
     return (b * b) / np.maximum(b_peak * b_peak, _EPS)
