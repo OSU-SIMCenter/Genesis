@@ -171,19 +171,11 @@ async def viewer_idle_loop(state: StrikeController):
             
             if not is_connected:
                 if hasattr(state.env.scene, 'visualizer') and state.env.scene.visualizer:
+                     renderer = getattr(state, '_temp_particle_renderer', None)
+                     if renderer is not None:
+                         renderer.sync_from_env(state.env)
                      vis = state.env.scene.visualizer
-                     if hasattr(vis, 'render'):
-                         vis.render()
-                     elif hasattr(vis, 'viewer'):
-                         try:
-                             if hasattr(vis.viewer, 'dispatch_events'):
-                                 vis.viewer.dispatch_events()
-                             if hasattr(vis.viewer, 'flip'):
-                                 vis.viewer.flip()
-                         except Exception:
-                             pass
-                     else:
-                         vis.update_visual_states()
+                     vis.update(force=False, auto=True)
             
             await asyncio.sleep(0.02)
     except asyncio.CancelledError:
@@ -287,16 +279,25 @@ async def main():
     
     print("Building simulation environment...")
     cfg = TeleopOptions()
-    cfg.general.show_viewer = False
+    cfg.general.show_viewer = True
     
     # Enable MPM grid/boundary visualization
     cfg.vis.visualize_mpm_boundary = True
     cfg.vis.visualize_mpm_grid = True
     
     env = build_env(cfg)
+
+    from agforge.vis.temperature_particles import install_temperature_particle_renderer
+
+    temp_renderer = install_temperature_particle_renderer(
+        env,
+        temp_min=cfg.general.particle_temp_min,
+        temp_max=cfg.general.particle_temp_max,
+    )
     
     # Instantiate the new controller
     shared_state = StrikeController(env)
+    shared_state._temp_particle_renderer = temp_renderer
     shared_state.robot.set_control_mode("TELEPORT")
     
     # Add dynamic attributes needed for socket loop
@@ -317,6 +318,9 @@ async def main():
     shared_state.robot.get_resistance_forces()
     shared_state.robot.set_control_mode("TELEPORT")
     await shared_state.reset_simulation()
+
+    if temp_renderer is not None:
+        temp_renderer.sync_from_env(env)
     
     # Reset profiler after warmup so only actual operation is profiled
     env.scene.profiling_options.profiler.reset()

@@ -85,6 +85,10 @@ class GeneralOptions(Options):
     record: bool = False
     verbose: bool = True # Enable detailed logging
     log_dir: str = "logs/agforge_parametric"
+    # Genesis viewer: color MPM particles by temperature (inferno buckets).
+    visualize_particle_temperature: bool = True
+    particle_temp_min: float = 293.0
+    particle_temp_max: float = 1450.0
 
 class ReconstructionOptions(Options):
     """Parameters for surface reconstruction."""

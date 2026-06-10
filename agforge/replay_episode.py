@@ -23,6 +23,7 @@ import genesis as gs
 
 from agforge.options import TeleopOptions
 from agforge.agforge_builder import build_env
+from agforge.vis.temperature_particles import N_BUCKETS, TemperatureParticleRenderer
 
 
 def load_episode(data_path: str, episode_arg):
@@ -121,119 +122,37 @@ def main():
     temp_values = episode.get("temp_values")
     qpos_data = episode["qpos"]
 
-    # ---- Temperature colormap setup ----
-    import matplotlib as mpl
-    from genesis.ext import pyrender
-    import genesis.utils.mesh as mu
-
-    N_BUCKETS = 8
-    TEMP_MIN = 293.0
-    TEMP_MAX = 1450.0
-    cmap = mpl.colormaps.get_cmap("inferno")
-
-    bucket_colors = []
-    for i in range(N_BUCKETS):
-        t = 0.15 + (i / (N_BUCKETS - 1)) * 0.85
-        bucket_colors.append(tuple(cmap(t)))
-
-    n_particles = mpm_entity.n_particles
-    particle_radius = env.scene.sim.mpm_solver.particle_radius
+    temp_min = cfg.general.particle_temp_min
+    temp_max = cfg.general.particle_temp_max
     ctx = env.scene.visualizer._context
+    particle_radius = env.scene.sim.mpm_solver.particle_radius
 
-    # ---- Pre-compute bucket sizes across all frames ----
+    # Pre-compute bucket capacities across all frames for efficient instancing
     print("  Pre-computing temperature buckets...")
-    frame_bucket_indices = []
-    max_bucket_sizes = np.zeros(N_BUCKETS, dtype=int)
-
-    for fi in range(n_frames):
-        s, e = offsets[fi], offsets[fi + 1]
-        if temp_values is not None:
-            ft = temp_values[s:e]
-            tn = np.clip((ft - TEMP_MIN) / (TEMP_MAX - TEMP_MIN), 0.0, 1.0)
-            bi = np.minimum((tn * N_BUCKETS).astype(int), N_BUCKETS - 1)
-        else:
-            bi = np.full(e - s, N_BUCKETS // 2, dtype=int)
-        frame_bucket_indices.append(bi)
-        for b in range(N_BUCKETS):
-            count = (bi == b).sum()
-            if count > max_bucket_sizes[b]:
-                max_bucket_sizes[b] = count
+    if temp_values is not None:
+        max_bucket_sizes = TemperatureParticleRenderer.max_bucket_sizes_from_frames(
+            temp_values, offsets, n_frames, temp_min, temp_max,
+        )
+    else:
+        per_bucket = (mpm_entity.n_particles + N_BUCKETS - 1) // N_BUCKETS
+        max_bucket_sizes = np.full(N_BUCKETS, per_bucket, dtype=np.int32)
 
     total_instances = int(max_bucket_sizes.sum())
     print(f"  Max bucket sizes: {max_bucket_sizes.tolist()} (total: {total_instances})")
 
-    # ---- Remove default orange node ----
-    for idx in ctx.rendered_envs_idx:
-        key = (idx, mpm_entity.uid)
-        if key in ctx.static_nodes:
-            old_node = ctx.static_nodes.pop(key)
-            ctx.remove_node(old_node)
-
-    # ---- Pre-create right-sized bucket nodes ----
-    OFF_SCREEN = np.array([0.0, 0.0, -1000.0])
-    bucket_nodes = []
-    bucket_buf_ids = []
-    bucket_max = []
-
-    for b in range(N_BUCKETS):
-        n_slots = int(max_bucket_sizes[b])
-        if n_slots == 0:
-            bucket_nodes.append(None)
-            bucket_max.append(0)
-            continue
-
-        mesh = mu.create_sphere(particle_radius, subdivisions=1, color=bucket_colors[b])
-        OFF_SCREEN = np.array([0.0, 0.0, -0.05])
-        tfs = np.tile(np.eye(4), (n_slots, 1, 1))
-        tfs[:, :3, 3] = OFF_SCREEN
-        # Distribute the first few to ensure bounding box covers the scene
-        n_dist = min(n_slots, len(pos_values))
-        tfs[:n_dist, :3, 3] = pos_values[:n_dist]
-
-        pr_mesh = pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs)
-        scene_node = ctx.add_node(pr_mesh)
-        bucket_nodes.append(scene_node)
-        bucket_max.append(n_slots)
-
-    active_buckets = sum(1 for n in bucket_nodes if n is not None)
+    renderer = TemperatureParticleRenderer(
+        ctx,
+        mpm_entity,
+        particle_radius,
+        mpm_entity.n_particles,
+        temp_min=temp_min,
+        temp_max=temp_max,
+        bucket_max_sizes=max_bucket_sizes,
+    )
+    active_buckets = sum(1 for n in renderer._bucket_nodes if n is not None)
     print(f"  Created {active_buckets} bucket nodes ({total_instances} total slots)")
 
-    # ---- Monkeypatch update_mpm to update bucket nodes inside the render pipeline ----
-    # jit.update_buffer only works when called from within context.update().
-    # By replacing update_mpm, we take full control of particle visualization.
-    frame_pos = None
-    bucket_idx = None
-
-    def _replay_update_mpm():
-        # print("HOOK CALLED")
-        if frame_pos is None:
-            return
-
-        for b in range(N_BUCKETS):
-            if bucket_nodes[b] is None:
-                continue
-            n_slots = bucket_max[b]
-
-            OFF_SCREEN = np.array([0.0, 0.0, -0.05])
-            tfs = np.tile(np.eye(4), (n_slots, 1, 1))
-            tfs[:, :3, 3] = OFF_SCREEN
-
-            mask = bucket_idx == b
-            count = mask.sum()
-            if count > 0:
-                tfs[:count, :3, 3] = frame_pos[mask]
-
-            node = bucket_nodes[b]
-            for prim in node.mesh.primitives:
-                prim.poses = tfs
-            
-            buf_id = ctx._scene.get_buffer_id(node, "model")
-            if buf_id != -1:
-                ctx.jit.update_buffer(buf_id, tfs.transpose((0, 2, 1)))
-
-    ctx.update_mpm = _replay_update_mpm
-
-    # ---- Stop physics from advancing time ----
+    # Stop physics from advancing time
     env.scene.sim._dt = 0.0
     env.scene.sim._substep_dt = 0.0
 
@@ -243,28 +162,25 @@ def main():
             for frame_idx in range(n_frames):
                 t_start = time.time()
 
-                # --- 1. Extract particle positions for this frame ---
                 start = offsets[frame_idx]
                 end = offsets[frame_idx + 1]
                 frame_pos = pos_values[start:end]
 
-                # --- 2. Teleport MPM particles ---
                 pos_tensor = torch.tensor(frame_pos, dtype=gs.tc_float, device=gs.device).unsqueeze(0)
                 mpm_entity.set_position(pos_tensor)
 
-                # --- 3. Teleport robot joints ---
                 qpos = torch.tensor(qpos_data[frame_idx], dtype=gs.tc_float, device=gs.device).unsqueeze(0)
                 robot.entity.set_qpos(qpos)
 
-                # --- 4. Set frame data for the monkeypatched update_mpm ---
-                # frame_pos is already set above
-                bucket_idx = frame_bucket_indices[frame_idx]
+                if temp_values is not None:
+                    frame_temp = temp_values[start:end]
+                    renderer.set_frame(frame_pos, temps=frame_temp)
+                else:
+                    renderer.set_frame(frame_pos)
 
-                # --- 5. Step + render (update_mpm hook updates bucket nodes) ---
                 env.scene._t += 1
                 env.scene.step()
 
-                # --- 6. Frame pacing ---
                 elapsed = time.time() - t_start
                 sleep_time = frame_delay - elapsed
                 if sleep_time > 0:

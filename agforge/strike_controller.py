@@ -94,6 +94,7 @@ class StrikeController:
         self.heating_power = self.env.cfg.heating_power
         self.skin_depth = self.env.cfg.skin_depth
         self.heater = None
+        self._temp_particle_renderer = None
 
         # Initialize billet to physical room temperature (293.0 K)
         try:
@@ -797,6 +798,8 @@ class StrikeController:
         # 5. Render Update
         if self.env.scene.visualizer:
             with self._profile("teleop_render"):
+                if self._temp_particle_renderer is not None:
+                    self._temp_particle_renderer.sync_from_env(self.env)
                 self.env.scene.visualizer.update(force=False, auto=True)
 
         # 6. Record Data Frame (only if actively striking)
