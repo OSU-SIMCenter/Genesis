@@ -1341,6 +1341,29 @@ class BaseMPMSolver(Solver):
             d = np.repeat(d[None, :], self._B, axis=0)  # broadcast to [B, n_particles]
         self._kernel_set_induction_depth(d)
 
+    def get_induction_uniforms_numpy(self, env_idx: int = 0):
+        """Return (center_xyz, half_length, radius, q_peak, skin_depth, active) for visualization."""
+        if not self._enable_thermal:
+            return np.zeros(3), 0.0, 0.0, 0.0, 0.0, 0
+        center = self._induction_center.to_numpy()[env_idx]
+        half_length, radius, q_peak, skin_depth = self._induction_params.to_numpy()[env_idx]
+        active = int(self._induction_active.to_numpy()[env_idx])
+        return center, float(half_length), float(radius), float(q_peak), float(skin_depth), active
+
+    @qd.kernel
+    def _kernel_get_particles_induction_depth(
+        self,
+        particle_start: qd.i32,
+        n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(),
+        depths: qd.types.ndarray(),
+    ):
+        if qd.static(self._enable_thermal):
+            for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+                i_p = i_p_ + particle_start
+                i_b = envs_idx[i_b_]
+                depths[i_b_, i_p_] = self.induction_depth[i_p, i_b]
+
     @qd.kernel
     def _kernel_get_particles_temp(
         self,

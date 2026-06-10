@@ -72,3 +72,29 @@ def coil_axial_bounds(coil_center_x: float, half_length: float) -> tuple[float, 
     c = float(coil_center_x)
     h = float(half_length)
     return c - h, c + h
+
+
+def particle_q_ind(
+    positions: np.ndarray,
+    depths: np.ndarray,
+    *,
+    coil_center_x: float,
+    half_length: float,
+    radius: float,
+    q_peak: float,
+    skin_depth: float,
+    thermal_time_scale: float = 1.0,
+) -> np.ndarray:
+    """Per-particle volumetric heating rate [W/m^3] using the engine's induction model."""
+    pos = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
+    depth = np.asarray(depths, dtype=np.float64).reshape(-1)
+    x_axial = pos[:, 0] - float(coil_center_x)
+    return q_volumetric(
+        x_axial,
+        depth,
+        q_peak=q_peak,
+        half_length=half_length,
+        radius=radius,
+        skin_depth=skin_depth,
+        thermal_time_scale=thermal_time_scale,
+    )

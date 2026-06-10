@@ -85,10 +85,14 @@ class GeneralOptions(Options):
     record: bool = False
     verbose: bool = True # Enable detailed logging
     log_dir: str = "logs/agforge_parametric"
-    # Genesis viewer: color MPM particles by temperature (inferno buckets).
+    # Genesis viewer: color MPM particles by a scalar field (inferno buckets).
     visualize_particle_temperature: bool = True
+    # "temperature" | "induction_depth" | "skin_weight" | "q_ind"
+    particle_color_mode: str = "temperature"
     particle_temp_min: float = 293.0
     particle_temp_max: float = 1450.0
+    # Depth color scale for induction_depth mode [m]; None → 3 * skin_depth
+    particle_depth_max: Optional[float] = None
 
 class ReconstructionOptions(Options):
     """Parameters for surface reconstruction."""

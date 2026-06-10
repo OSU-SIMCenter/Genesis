@@ -29,11 +29,17 @@ def _bucket_colors(cmap_name: str = "inferno", n_buckets: int = N_BUCKETS):
     return colors
 
 
-def _temps_to_bucket_indices(temps: np.ndarray, temp_min: float, temp_max: float, n_buckets: int = N_BUCKETS):
-    temps = np.asarray(temps, dtype=np.float64).reshape(-1)
-    span = max(float(temp_max) - float(temp_min), 1e-6)
-    tn = np.clip((temps - temp_min) / span, 0.0, 1.0)
+def _scalars_to_bucket_indices(
+    values: np.ndarray, vmin: float, vmax: float, n_buckets: int = N_BUCKETS
+):
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    span = max(float(vmax) - float(vmin), 1e-12)
+    tn = np.clip((values - vmin) / span, 0.0, 1.0)
     return np.minimum((tn * n_buckets).astype(np.int32), n_buckets - 1)
+
+
+def _temps_to_bucket_indices(temps: np.ndarray, temp_min: float, temp_max: float, n_buckets: int = N_BUCKETS):
+    return _scalars_to_bucket_indices(temps, temp_min, temp_max, n_buckets)
 
 
 class TemperatureParticleRenderer:
@@ -168,29 +174,82 @@ class TemperatureParticleRenderer:
             if buf_id != -1:
                 self._ctx.jit.update_buffer(buf_id, tfs.transpose((0, 2, 1)))
 
-    def set_frame(self, positions: np.ndarray, temps: np.ndarray | None = None, bucket_idx: np.ndarray | None = None):
-        """Queue positions (and temperatures) for the next viewer update."""
+    def set_frame(
+        self,
+        positions: np.ndarray,
+        scalars: np.ndarray | None = None,
+        temps: np.ndarray | None = None,
+        bucket_idx: np.ndarray | None = None,
+        *,
+        vmin: float | None = None,
+        vmax: float | None = None,
+    ):
+        """Queue positions and scalar values for the next viewer update."""
         self._frame_pos = np.asarray(positions, dtype=np.float64)
         if bucket_idx is not None:
             self._bucket_idx = np.asarray(bucket_idx, dtype=np.int32)
-        elif temps is not None:
-            self._bucket_idx = _temps_to_bucket_indices(temps, self._temp_min, self._temp_max, self._n_buckets)
         else:
-            self._bucket_idx = np.full(self._frame_pos.shape[0], self._n_buckets // 2, dtype=np.int32)
+            values = scalars if scalars is not None else temps
+            if values is None:
+                self._bucket_idx = np.full(self._frame_pos.shape[0], self._n_buckets // 2, dtype=np.int32)
+            else:
+                lo = self._temp_min if vmin is None else vmin
+                hi = self._temp_max if vmax is None else vmax
+                self._bucket_idx = _scalars_to_bucket_indices(values, lo, hi, self._n_buckets)
+
+    def _scalar_field_from_env(self, env: "AgilityForgeEnv", pos: np.ndarray) -> tuple[np.ndarray, float, float]:
+        from agforge.thermal_field import particle_q_ind, skin_weight
+
+        cfg = env.cfg
+        mode = getattr(cfg.general, "particle_color_mode", "temperature")
+        solver = env.scene.sim.mpm_solver
+
+        if mode == "temperature":
+            temps = env.mpm_entity.get_particles_temp().detach().cpu().numpy().reshape(-1)
+            return temps, cfg.general.particle_temp_min, cfg.general.particle_temp_max
+
+        depths = env.mpm_entity.get_particles_induction_depth().detach().cpu().numpy().reshape(-1)
+        skin_depth = float(cfg.skin_depth)
+
+        if mode == "induction_depth":
+            d_max = cfg.general.particle_depth_max
+            if d_max is None:
+                d_max = 3.0 * skin_depth
+            return depths, 0.0, float(d_max)
+
+        if mode == "skin_weight":
+            weights = skin_weight(depths, skin_depth)
+            return weights, 0.0, 1.0
+
+        if mode == "q_ind":
+            center, half_length, radius, q_peak, sd, _active = solver.get_induction_uniforms_numpy(0)
+            if sd <= 0.0:
+                sd = skin_depth
+            q = particle_q_ind(
+                pos,
+                depths,
+                coil_center_x=float(center[0]),
+                half_length=half_length,
+                radius=radius,
+                q_peak=q_peak,
+                skin_depth=sd,
+                thermal_time_scale=float(cfg.mpm.thermal_time_scale),
+            )
+            return q, 0.0, float(np.percentile(q, 99.5)) if q.size else (q, 0.0, 1.0)
+
+        temps = env.mpm_entity.get_particles_temp().detach().cpu().numpy().reshape(-1)
+        return temps, cfg.general.particle_temp_min, cfg.general.particle_temp_max
 
     def sync_from_env(self, env: "AgilityForgeEnv"):
-        """Read live particle positions and temperatures from the simulation."""
+        """Read live particle positions and the configured scalar field from the simulation."""
         pos = env.mpm_entity.get_particles_pos().detach().cpu().numpy().reshape(-1, 3)
-        if hasattr(env.mpm_entity, "get_particles_temp"):
-            temps = env.mpm_entity.get_particles_temp().detach().cpu().numpy().reshape(-1)
-        else:
-            temps = np.full(pos.shape[0], self._temp_min, dtype=np.float64)
+        scalars, vmin, vmax = self._scalar_field_from_env(env, pos)
         if hasattr(env.mpm_entity, "get_particles_active"):
             active = env.mpm_entity.get_particles_active(envs_idx=0).detach().cpu().numpy().reshape(-1).astype(bool)
             if active.shape[0] == pos.shape[0]:
                 pos = pos[active]
-                temps = temps[active]
-        self.set_frame(pos, temps=temps)
+                scalars = scalars[active]
+        self.set_frame(pos, scalars=scalars, vmin=vmin, vmax=vmax)
 
     @staticmethod
     def max_bucket_sizes_from_frames(

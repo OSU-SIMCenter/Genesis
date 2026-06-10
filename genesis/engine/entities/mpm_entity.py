@@ -449,6 +449,17 @@ class MPMEntity(ParticleEntity):
             temps = temps[0]
         return temps
 
+    def get_particles_induction_depth(self, envs_idx=None):
+        """Per-particle |SDF| depth below the coil-facing surface [m]."""
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        depths = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        self.solver._kernel_get_particles_induction_depth(
+            self._particle_start, self.n_particles, envs_idx, depths
+        )
+        if self._scene.n_envs == 0:
+            depths = depths[0]
+        return depths
+
     def clear_thermal_telemetry_buffers(self, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         self.solver._kernel_clear_thermal_telemetry(
