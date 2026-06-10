@@ -110,7 +110,10 @@ class RobotOptions(Options):
     # Induction Coil physical placeholders (Unity Sync)
     coil_offset_x: float = -0.129891413331031800
     coil_length: float = 0.037
-    coil_radius: float = 0.04
+    # Effective solenoid radius = multiplier × billet radius. For close-coupled forging
+    # coils the bore is typically ~110–125% of workpiece OD (ASM / induction heating practice).
+    coil_radius_multiplier: float = 1.2
+    coil_radius: Optional[float] = None  # computed in model_post_init
     coup_softness: float = 5e-4
 
     # Declare fields for pydantic — Optional because they are computed in model_post_init
@@ -140,6 +143,7 @@ class RobotOptions(Options):
         # --- Perform all calculations first ---
         self.cylinder_diameter = (1.0 * ureg.inch).to(ureg.meter).magnitude
         self.cylinder_radius = self.cylinder_diameter / 2
+        self.coil_radius = self.coil_radius_multiplier * self.cylinder_radius
         self.cylinder_height = 8 * self.cylinder_radius
         self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
         self.cylinder_euler = (0.0, 90.0, 0.0)
