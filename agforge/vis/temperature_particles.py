@@ -17,6 +17,14 @@ if TYPE_CHECKING:
 N_BUCKETS = 8
 OFF_SCREEN = np.array([0.0, 0.0, -0.05])
 
+PARTICLE_COLOR_MODES = ("temperature", "induction_depth", "skin_weight", "q_ind")
+PARTICLE_COLOR_MODE_LABELS = {
+    "temperature": "Temperature",
+    "induction_depth": "SDF depth",
+    "skin_weight": "Skin weight e^(-2d/δ)",
+    "q_ind": "Heating rate q̇",
+}
+
 
 def _bucket_colors(cmap_name: str = "inferno", n_buckets: int = N_BUCKETS):
     import matplotlib as mpl
@@ -280,11 +288,125 @@ class TemperatureParticleRenderer:
             self._original_update_mpm = None
 
 
+def _pyrender_viewer(env: "AgilityForgeEnv"):
+    vis = env.scene.visualizer
+    if vis is None or vis.viewer is None:
+        return None
+    return vis.viewer._pyrender_viewer
+
+
+def update_particle_color_display(env: "AgilityForgeEnv", *, flash: bool = False) -> None:
+    """Update window title and on-screen HUD with the active particle color mode."""
+    pr = _pyrender_viewer(env)
+    if pr is None:
+        return
+
+    import numpy as np
+    from genesis.ext.pyrender.constants import TextAlign
+
+    mode = getattr(env.cfg.general, "particle_color_mode", "temperature")
+    label = PARTICLE_COLOR_MODE_LABELS.get(mode, mode)
+    hud = f"Particles: {label}  (G / Shift+G)"
+
+    base = pr.viewer_flags.get("_agforge_base_title")
+    if base is None:
+        base = pr.viewer_flags.get("window_title", "Genesis")
+        pr.viewer_flags["_agforge_base_title"] = base
+
+    title = f"{base} | {label}"
+    pr.viewer_flags["window_title"] = title
+    pr.set_caption(title)
+
+    pr.viewer_flags["caption"] = [
+        {
+            "text": hud,
+            "location": TextAlign.TOP_RIGHT,
+            "font_name": "OpenSans-Regular",
+            "font_pt": 16,
+            "color": np.array([0.85, 0.92, 1.0, 0.95]),
+            "scale": 1.0,
+        }
+    ]
+
+    if flash:
+        pr.set_message_text(f"Particle color: {label}")
+
+
+def cycle_particle_color_mode(env: "AgilityForgeEnv", renderer: TemperatureParticleRenderer, step: int = 1) -> str:
+    """Advance the live viewer scalar field and refresh particle colors."""
+    modes = PARTICLE_COLOR_MODES
+    current = getattr(env.cfg.general, "particle_color_mode", "temperature")
+    try:
+        idx = modes.index(current)
+    except ValueError:
+        idx = 0
+    mode = modes[(idx + step) % len(modes)]
+    env.cfg.general.particle_color_mode = mode
+    renderer.sync_from_env(env)
+    return mode
+
+
+def register_particle_color_keybinds(env: "AgilityForgeEnv", renderer: TemperatureParticleRenderer | None) -> None:
+    """Bind G / Shift+G in the Genesis viewer to cycle particle color modes."""
+    if renderer is None:
+        return
+    vis = env.scene.visualizer
+    if vis is None or vis.viewer is None:
+        return
+
+    import genesis as gs
+    from genesis.vis.keybindings import Key, KeyAction, KeyMod, Keybind
+
+    viewer = vis.viewer
+
+    def _show_mode(mode: str):
+        label = PARTICLE_COLOR_MODE_LABELS.get(mode, mode)
+        update_particle_color_display(env, flash=True)
+        gs.logger.info(f"Particle color mode → {label} ({mode})")
+
+    def _refresh_viewer():
+        if vis is not None:
+            vis.update(force=False, auto=True)
+
+    def _cycle_next():
+        _show_mode(cycle_particle_color_mode(env, renderer, step=1))
+        _refresh_viewer()
+
+    def _cycle_prev():
+        _show_mode(cycle_particle_color_mode(env, renderer, step=-1))
+        _refresh_viewer()
+
+    viewer.register_keybinds(
+        Keybind(
+            "agforge_cycle_particle_color",
+            Key.G,
+            key_action=KeyAction.PRESS,
+            callback=_cycle_next,
+            allow_overload=True,
+        ),
+        Keybind(
+            "agforge_cycle_particle_color_prev",
+            Key.G,
+            key_mods=(KeyMod.SHIFT,),
+            key_action=KeyAction.PRESS,
+            callback=_cycle_prev,
+            allow_overload=True,
+        ),
+        overwrite=False,
+    )
+    update_particle_color_display(env)
+    gs.logger.info(
+        "Particle color keybinds: [G] next mode, [Shift+G] previous "
+        f"(modes: {', '.join(PARTICLE_COLOR_MODES)})"
+    )
+
+
 def install_temperature_particle_renderer(
     env: "AgilityForgeEnv",
     *,
     temp_min: float = 293.0,
     temp_max: float = 1450.0,
+    register_keybinds: bool = True,
 ) -> TemperatureParticleRenderer | None:
     """Enable temperature coloring when the Genesis viewer is active."""
     if not getattr(env.cfg.general, "show_viewer", False):
@@ -293,4 +415,7 @@ def install_temperature_particle_renderer(
         return None
     if env.scene.visualizer is None:
         return None
-    return TemperatureParticleRenderer.from_env(env, temp_min=temp_min, temp_max=temp_max)
+    renderer = TemperatureParticleRenderer.from_env(env, temp_min=temp_min, temp_max=temp_max)
+    if register_keybinds:
+        register_particle_color_keybinds(env, renderer)
+    return renderer
