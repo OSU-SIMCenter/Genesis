@@ -21,8 +21,9 @@ PARTICLE_COLOR_MODES = ("temperature", "induction_depth", "skin_weight", "q_ind"
 PARTICLE_COLOR_MODE_LABELS = {
     "temperature": "Temperature",
     "induction_depth": "SDF depth",
-    "skin_weight": "Skin weight e^(-2d/δ)",
-    "q_ind": "Heating rate q̇",
+    # ASCII only — the viewer font lacks Greek/special glyphs (e.g. delta crashes on_draw).
+    "skin_weight": "Skin weight exp(-2d/d)",
+    "q_ind": "Heating rate q",
 }
 
 
