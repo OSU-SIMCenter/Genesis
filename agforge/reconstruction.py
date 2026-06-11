@@ -19,7 +19,7 @@ class SamplingMethod(Enum):
 
 @qd.data_oriented
 class SurfaceReconstructor:
-    def __init__(self, env, grid_res=128, backend='hybrid'):
+    def __init__(self, env, grid_res=128, backend='hybrid', physics_grid_res=96):
         self.env = env
         self.reconstructed_mesh = trimesh.Trimesh()
         self.recon_enabled = True
@@ -81,6 +81,31 @@ class SurfaceReconstructor:
         self._prev_verts = None
         self.vertex_blend_factor = 0.0  # Blend factor towards previous frame (0.0 = off, was 0.15)
 
+        # One-shot physics / induction SDF mesh at higher resolution (GPU, same instance).
+        self.physics_grid_res = int(physics_grid_res)
+        self.physics_density = qd.field(
+            dtype=float, shape=(self.physics_grid_res, self.physics_grid_res, self.physics_grid_res)
+        )
+        self.physics_prev_density = qd.field(
+            dtype=float, shape=(self.physics_grid_res, self.physics_grid_res, self.physics_grid_res)
+        )
+        self._physics_blur_temp = qd.field(
+            dtype=float, shape=(self.physics_grid_res, self.physics_grid_res, self.physics_grid_res)
+        )
+        self.physics_density_blur_sigma = 0.75
+        self._physics_blur_radius = int(math.ceil(2.0 * self.physics_density_blur_sigma))
+        physics_ksize = 2 * self._physics_blur_radius + 1
+        physics_weights = np.array(
+            [
+                math.exp(-0.5 * ((i - self._physics_blur_radius) / self.physics_density_blur_sigma) ** 2)
+                for i in range(physics_ksize)
+            ],
+            dtype=np.float32,
+        )
+        physics_weights /= physics_weights.sum()
+        self._physics_blur_weights = qd.field(dtype=float, shape=(physics_ksize,))
+        self._physics_blur_weights.from_numpy(physics_weights)
+
     def get_state(self):
         return {
             'mesh': self.reconstructed_mesh.copy(),
@@ -123,6 +148,8 @@ class SurfaceReconstructor:
         if hasattr(self, 'reconstructed_vertices_tensor'):
             self.reconstructed_vertices_tensor = None
         self.prev_density.fill(0)
+        if hasattr(self, "physics_prev_density"):
+            self.physics_prev_density.fill(0)
 
     # --- Compatibility Interface ---
     def init_skinning(self):
@@ -289,6 +316,105 @@ class SurfaceReconstructor:
         for I in qd.grouped(self.density):
             self.density[I] = self._blur_temp[I]
 
+    @qd.kernel
+    def _compute_physics_density_kernel(
+        self,
+        particles_pos: qd.types.ndarray(),  # type: ignore
+        particles_F: qd.types.ndarray(),  # type: ignore
+        active_mask: qd.types.ndarray(),  # type: ignore
+        n_particles: int,
+        lower_bound: qd.types.vector(3, float),  # type: ignore
+        dx: float,
+        influence_radius: float,
+    ):
+        for I in qd.grouped(self.physics_density):
+            self.physics_density[I] = 0.0
+
+        for i in range(n_particles):
+            if active_mask[i]:
+                pos = qd.Vector([particles_pos[i, 0], particles_pos[i, 1], particles_pos[i, 2]])
+                F = qd.Matrix([
+                    [particles_F[i, 0, 0], particles_F[i, 0, 1], particles_F[i, 0, 2]],
+                    [particles_F[i, 1, 0], particles_F[i, 1, 1], particles_F[i, 1, 2]],
+                    [particles_F[i, 2, 0], particles_F[i, 2, 1], particles_F[i, 2, 2]],
+                ])
+                detF = F.determinant()
+                vol_scale = (qd.abs(detF) + 1e-6) ** (1.0 / 3.0)
+                F_norm = F / vol_scale
+                B = F_norm @ F_norm.transpose()
+                B_reg = B + qd.Matrix.identity(float, 3) * 1e-4
+                B_inv = B_reg.inverse()
+
+                grid_pos = (pos - lower_bound) / dx
+                search_radius = influence_radius * 1.5
+                rad_cells = search_radius / dx
+                base_idx = qd.cast(qd.floor(grid_pos - rad_cells), qd.int32)
+                end_idx = qd.cast(qd.ceil(grid_pos + rad_cells), qd.int32)
+
+                for ix in range(base_idx[0], end_idx[0] + 1):
+                    for iy in range(base_idx[1], end_idx[1] + 1):
+                        for iz in range(base_idx[2], end_idx[2] + 1):
+                            if (
+                                0 <= ix < self.physics_grid_res
+                                and 0 <= iy < self.physics_grid_res
+                                and 0 <= iz < self.physics_grid_res
+                            ):
+                                cell_center = lower_bound + qd.Vector([ix, iy, iz]) * dx
+                                diff = cell_center - pos
+                                dist_sq = diff.dot(B_inv @ diff)
+                                if dist_sq < influence_radius**2:
+                                    r = qd.sqrt(dist_sq) / influence_radius
+                                    val = (1.0 - r) ** 4 * (4.0 * r + 1.0)
+                                    self.physics_density[ix, iy, iz] += val
+
+    @qd.kernel
+    def _blur_physics_pass_x(self, radius: int):
+        for i, j, k in self._physics_blur_temp:
+            acc = 0.0
+            for di in range(-radius, radius + 1):
+                ni = i + di
+                if 0 <= ni < self.physics_grid_res:
+                    acc += self.physics_density[ni, j, k] * self._physics_blur_weights[di + radius]
+                else:
+                    acc += self.physics_density[i, j, k] * self._physics_blur_weights[di + radius]
+            self._physics_blur_temp[i, j, k] = acc
+
+    @qd.kernel
+    def _blur_physics_pass_y(self, radius: int):
+        for i, j, k in self.physics_density:
+            acc = 0.0
+            for di in range(-radius, radius + 1):
+                nj = j + di
+                if 0 <= nj < self.physics_grid_res:
+                    acc += self._physics_blur_temp[i, nj, k] * self._physics_blur_weights[di + radius]
+                else:
+                    acc += self._physics_blur_temp[i, j, k] * self._physics_blur_weights[di + radius]
+            self.physics_density[i, j, k] = acc
+
+    @qd.kernel
+    def _blur_physics_pass_z(self, radius: int):
+        for i, j, k in self._physics_blur_temp:
+            acc = 0.0
+            for di in range(-radius, radius + 1):
+                nk = k + di
+                if 0 <= nk < self.physics_grid_res:
+                    acc += self.physics_density[i, j, nk] * self._physics_blur_weights[di + radius]
+                else:
+                    acc += self.physics_density[i, j, k] * self._physics_blur_weights[di + radius]
+            self._physics_blur_temp[i, j, k] = acc
+
+    @qd.kernel
+    def _copy_physics_blur_to_density(self):
+        for I in qd.grouped(self.physics_density):
+            self.physics_density[I] = self._physics_blur_temp[I]
+
+    def _blur_physics_density_gpu(self):
+        r = self._physics_blur_radius
+        self._blur_physics_pass_x(r)
+        self._blur_physics_pass_y(r)
+        self._blur_physics_pass_z(r)
+        self._copy_physics_blur_to_density()
+
     def update(self, should_reconstruct: bool, is_deforming: bool = False):
         if not self.recon_enabled:
             return
@@ -298,7 +424,17 @@ class SurfaceReconstructor:
         self.create_reconstructed_mesh(is_deforming=is_deforming)
         self.mesh_version += 1
 
-    def create_reconstructed_mesh(self, is_deforming: bool = False):
+    def create_reconstructed_mesh(self, is_deforming: bool = False, one_shot_physics: bool = False):
+        """Build the surface mesh from the current particle field.
+
+        Parameters
+        ----------
+        is_deforming : bool
+            When True, use faster temporal blending (live teleop during strikes).
+        one_shot_physics : bool
+            Accuracy-first snapshot for induction SDF: no vertex blending, no temporal
+            smoothing, minimal Taubin pass. Ignored for the SplashSurf backend.
+        """
         # Legacy SplashSurf Path
         if self.backend == 'splashsurf':
             self._create_splashsurf_mesh()
@@ -397,13 +533,17 @@ class SurfaceReconstructor:
             )
 
             # Adaptive Temporal Blending (state-based, no extra GPU transfer)
-            if not self.density_initialized:
+            if one_shot_physics:
+                alpha = 1.0
+            elif not self.density_initialized:
                 alpha = 1.0
             elif is_deforming:
                 alpha = 0.8  # Fast response during active deformation
             else:
                 alpha = 0.2  # Heavy smoothing at rest
 
+            if one_shot_physics:
+                self.density_initialized = False
             self._blend_density_temporal(alpha)
             self.density_initialized = True
 
@@ -442,18 +582,20 @@ class SurfaceReconstructor:
             verts = np.array(contour.points)
 
             # Vertex Correspondence Blending (Post-MC Temporal Smoothing)
-            if self.vertex_blend_factor > 0 and self._prev_verts is not None and len(self._prev_verts) > 0:
+            blend_factor = 0.0 if one_shot_physics else self.vertex_blend_factor
+            if blend_factor > 0 and self._prev_verts is not None and len(self._prev_verts) > 0:
                 try:
                     tree = cKDTree(self._prev_verts)
                     dists, indices = tree.query(verts)
                     valid_mask = dists < (dx * 2.0)
                     if valid_mask.any():
-                        blend = self.vertex_blend_factor
+                        blend = blend_factor
                         verts[valid_mask] = (1.0 - blend) * verts[valid_mask] + blend * self._prev_verts[indices[valid_mask]]
                 except Exception as e:
                     gs.logger.debug(f"Reconstruction: Vertex blending failed: {e}")
 
-            self._prev_verts = verts.copy()
+            if not one_shot_physics:
+                self._prev_verts = verts.copy()
 
             # Reverse winding order so normals point OUTWARD for Unity
             faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
@@ -466,10 +608,11 @@ class SurfaceReconstructor:
                 process=False
             )
 
-            # Taubin smoothing (1 iteration for light cleanup)
-            if len(mesh.vertices) > 0:
+            # Taubin smoothing (skipped for one-shot physics meshes)
+            taubin_iters = 0 if one_shot_physics else 1
+            if len(mesh.vertices) > 0 and taubin_iters > 0:
                 try:
-                    trimesh.smoothing.filter_taubin(mesh, iterations=1)
+                    trimesh.smoothing.filter_taubin(mesh, iterations=taubin_iters)
                 except Exception:
                     try:
                         trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=1)
@@ -490,6 +633,108 @@ class SurfaceReconstructor:
             import traceback
             gs.logger.warning(f"Reconstruction failed: {e}")
             traceback.print_exc()
+
+    def create_physics_reconstructed_mesh(self) -> trimesh.Trimesh:
+        """GPU one-shot mesh at physics_grid_res for induction SDF (does not touch visual mesh)."""
+        import contextlib
+
+        profiler = getattr(self.env.scene.profiling_options, "profiler", None)
+
+        def profile_block(name):
+            if profiler:
+                return profiler.time(name)
+            return contextlib.nullcontext()
+
+        try:
+            with profile_block("physics_hybrid_get_particles"):
+                try:
+                    mpm_entity = self.env.mpm_entity
+                    particles_pos = mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+                    particles_F = mpm_entity.get_particles_F(envs_idx=0).squeeze(0)
+                    particles_active = mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
+                except Exception:
+                    mpm_entity = self.env.mpm_entity
+                    particles_pos = mpm_entity.get_particles_pos()
+                    particles_F = mpm_entity.get_particles_F()
+                    particles_active = mpm_entity.get_particles_active()
+
+                n_particles = particles_pos.shape[0]
+                if n_particles == 0:
+                    return trimesh.Trimesh()
+
+                active_particles = particles_pos[particles_active]
+                if active_particles.shape[0] == 0:
+                    return trimesh.Trimesh()
+
+            dx = self.influence_radius / self._grid_coverage_ratio
+            raw_min = active_particles.min(dim=0).values.cpu().numpy()
+            raw_max = active_particles.max(dim=0).values.cpu().numpy()
+            padding = self.influence_radius * 2.0
+            raw_min -= padding
+            raw_max += padding
+            min_bound = np.floor(raw_min / dx) * dx
+            max_bound = np.ceil(raw_max / dx) * dx
+
+            extent = max_bound - min_bound
+            max_extent = float(np.max(extent))
+            if max_extent < 1e-4:
+                max_extent = 1.0
+            required_cells = int(np.ceil(max_extent / dx)) + 1
+            if required_cells > self.physics_grid_res:
+                dx = max_extent / (self.physics_grid_res - 1)
+                min_bound = np.floor(raw_min / dx) * dx
+
+            lower_bound_qd = qd.Vector([min_bound[0], min_bound[1], min_bound[2]])
+
+            with profile_block("physics_hybrid_density_kernel"):
+                self._compute_physics_density_kernel(
+                    particles_pos,
+                    particles_F,
+                    particles_active,
+                    n_particles,
+                    lower_bound_qd,
+                    float(dx),
+                    float(self.influence_radius),
+                )
+                if self.physics_density_blur_sigma > 0:
+                    self._blur_physics_density_gpu()
+
+            with profile_block("physics_hybrid_density_transfer"):
+                density_cpu = self.physics_density.to_numpy()
+
+            with profile_block("physics_hybrid_marching_cubes"):
+                valid_densities = density_cpu[density_cpu > 1e-4]
+                if len(valid_densities) == 0:
+                    gs.logger.warning("Physics reconstruction: no valid densities found.")
+                    return trimesh.Trimesh()
+
+                thresh = float(np.percentile(valid_densities, 95)) * 0.3
+                grid = pv.ImageData()
+                grid.dimensions = np.array(density_cpu.shape)
+                grid.spacing = (dx, dx, dx)
+                grid.origin = min_bound
+                grid.point_data["density"] = density_cpu.flatten(order="F")
+                contour = grid.contour(
+                    isosurfaces=[thresh],
+                    scalars="density",
+                    method="flying_edges",
+                    compute_normals=False,
+                )
+                if contour.n_points == 0:
+                    return trimesh.Trimesh()
+
+            with profile_block("physics_hybrid_post_process"):
+                verts = np.array(contour.points)
+                faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
+                faces = faces[:, ::-1]
+                return trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+
+        except Exception as e:
+            import traceback
+
+            gs.logger.warning(f"Physics reconstruction failed: {e}")
+            traceback.print_exc()
+            return trimesh.Trimesh()
 
     def _create_splashsurf_mesh(self):
         """Direct in-process SplashSurf reconstruction.
@@ -560,3 +805,77 @@ class SurfaceReconstructor:
             import traceback
             gs.logger.warning(f"SplashSurf failed: {e}")
             traceback.print_exc()
+
+
+def get_active_mpm_particles_numpy(env) -> np.ndarray | None:
+    """Active MPM particle positions as a CPU numpy array."""
+    try:
+        mpm_entity = env.mpm_entity
+        parts = mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
+        active = mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
+        return parts[active].cpu().numpy()
+    except Exception:
+        return None
+
+
+def infer_particle_radius(env) -> float:
+    try:
+        return float(env.scene.sim.mpm_solver.particle_size / 2.0)
+    except Exception:
+        return 0.005
+
+
+def build_splashsurf_mesh_from_env(env) -> trimesh.Trimesh:
+    """In-process SplashSurf reconstruction without allocating Quadrants fields."""
+    import contextlib
+    import ctypes
+    import ctypes.util
+    import pysplashsurf
+
+    profiler = getattr(env.scene.profiling_options, "profiler", None)
+
+    def profile_block(name):
+        if profiler:
+            return profiler.time(name)
+        return contextlib.nullcontext()
+
+    particles = get_active_mpm_particles_numpy(env)
+    if particles is None or len(particles) == 0:
+        return trimesh.Trimesh()
+
+    radius = infer_particle_radius(env) * 1.5
+
+    with profile_block("splashsurf_core_meshing"):
+        mesh_with_data, _ = pysplashsurf.reconstruction_pipeline(
+            particles,
+            particle_radius=radius,
+            smoothing_length=2.0,
+            cube_size=0.8,
+            iso_surface_threshold=0.6,
+            mesh_smoothing_weights=True,
+            mesh_smoothing_iters=25,
+            normals_smoothing_iters=10,
+            mesh_cleanup=True,
+            compute_normals=True,
+            multi_threading=True,
+        )
+        vertices = mesh_with_data.mesh.vertices
+        triangles = mesh_with_data.mesh.triangles
+        normals = mesh_with_data.point_attributes["normals"]
+        del mesh_with_data
+
+    mesh = trimesh.Trimesh(
+        vertices=vertices,
+        faces=triangles,
+        face_normals=normals,
+        process=False,
+    )
+    mesh.faces = mesh.faces[:, ::-1]
+
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"))
+        libc.malloc_trim(0)
+    except Exception:
+        pass
+
+    return mesh

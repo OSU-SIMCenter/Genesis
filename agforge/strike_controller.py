@@ -7,6 +7,7 @@ import genesis as gs
 import contextlib
 
 from agforge.reconstruction import SurfaceReconstructor
+from agforge.physics_mesh import InductionPhysicsMesher
 from agforge.recorder import AgForgeRecorder
 
 class StrikeState(enum.Enum):
@@ -62,12 +63,18 @@ class StrikeController:
         # Surface Reconstruction
         recon_cfg = env.cfg.reconstruction
         self.reconstructor = SurfaceReconstructor(
-            env, 
-            grid_res=recon_cfg.grid_res, 
-            backend=recon_cfg.backend
+            env,
+            grid_res=recon_cfg.grid_res,
+            backend=recon_cfg.backend,
+            physics_grid_res=recon_cfg.physics_mesh_grid_res,
         )
         self.reconstructor.recon_enabled = recon_cfg.enabled
         # Note: Reconstruction init mostly happens on demand or at start
+
+        self.physics_mesher = InductionPhysicsMesher(env, self.reconstructor, env.cfg)
+        self._mesh_overlay = None
+        self._pending_physics_rebuild = False
+        self._pending_physics_upload_sdf = True
         
         # Data Recorder
         import os
@@ -118,6 +125,50 @@ class StrikeController:
         self._diag_last_real_time = self._diag_start_real_time
         self._diag_last_sim_time = 0.0
         self._diag_last_step = 0
+
+    def request_physics_rebuild(self, upload_sdf: bool = True) -> None:
+        """Queue a physics mesh rebuild on the asyncio main thread."""
+        self._pending_physics_rebuild = True
+        self._pending_physics_upload_sdf = upload_sdf
+
+    def ensure_physics_mesh(self) -> bool:
+        """Build the physics mesh if missing and refresh the viewer overlay cache."""
+        if len(self.physics_mesher.physics_mesh.vertices) < 4:
+            self.request_physics_rebuild(upload_sdf=False)
+            return False
+        if self._mesh_overlay is not None:
+            self._mesh_overlay.sync_from_controller(self)
+        return True
+
+    async def process_pending_physics_rebuild(self) -> bool:
+        """Run a queued physics mesh rebuild (viewer keybinds must not call rebuild directly)."""
+        if not self._pending_physics_rebuild:
+            return False
+        self._pending_physics_rebuild = False
+        upload_sdf = self._pending_physics_upload_sdf
+        async with self.lock:
+            return self.rebuild_physics_induction(upload_sdf=upload_sdf)
+
+    def rebuild_physics_induction(self, upload_sdf: bool = True) -> bool:
+        """Rebuild the induction SDF mesh, optionally upload skin depths, refresh overlays."""
+        ok = self.physics_mesher.rebuild()
+        if upload_sdf and self.heater is not None:
+            self.heater.recompute_and_upload()
+        if self._mesh_overlay is not None:
+            self._mesh_overlay.sync_from_controller(self)
+        if self._temp_particle_renderer is not None:
+            self._temp_particle_renderer.sync_from_env(self.env)
+        from agforge.vis.temperature_particles import update_particle_color_display
+
+        update_particle_color_display(self.env, physics_mesher=self.physics_mesher)
+        return ok
+
+    def cycle_physics_mesh_backend(self) -> str:
+        """Swap the induction SDF backend; rebuild runs on the asyncio main thread."""
+        self.physics_mesher.cycle_backend(step=1)
+        gs.logger.info(f"Physics SDF backend: {self.physics_mesher.backend_label} (queued)")
+        self.request_physics_rebuild(upload_sdf=self.heater is not None)
+        return self.physics_mesher.backend.value
 
     def _init_gripper_limits(self):
         # We can re-use the XML generator logic or just hardcode if standard.
@@ -439,10 +490,10 @@ class StrikeController:
                         # Flag to ensure updated mesh is sent to client
                         self.pending_mesh_send = True
 
-                        # Recompute the induction skin-depth field from the post-strike
-                        # geometry so heating tracks the newly forged surface.
-                        if self.thermal_enabled and self.heater is not None:
-                            self.heater.recompute_and_upload()
+                        # Rebuild the physics mesh and induction skin-depth field from the
+                        # post-strike geometry so heating tracks the newly forged surface.
+                        if self.thermal_enabled:
+                            self.rebuild_physics_induction()
                         return
 
             # --- HOLDING STAGE ---
@@ -514,7 +565,8 @@ class StrikeController:
         - Render Update
         - Reconstruction (if needed)
         """
-        
+        await self.process_pending_physics_rebuild()
+
         # 1. Logic Update
         with self._profile("teleop_logic"):
             await self.update_logic()
@@ -544,11 +596,11 @@ class StrikeController:
                     self.heater = InductionHeater(
                         solver=self.env.scene.sim.mpm_solver,
                         entity=self.env.mpm_entity,
-                        reconstructor=self.reconstructor
+                        physics_mesher=self.physics_mesher,
+                        reconstructor=self.reconstructor,
                     )
-                    # Precompute the initial skin-depth field so induction works from t=0
-                    # (before the first strike, this forces a reconstruction of the cylinder).
-                    self.heater.recompute_and_upload()
+                    # Precompute the initial physics mesh + skin-depth field before the first strike.
+                    self.rebuild_physics_induction()
 
                 # Induction heat is deposited on the GPU inside the MPM P2G kernel. Here we
                 # only publish the per-frame coil uniforms (center rides the sliding arm).
@@ -798,6 +850,8 @@ class StrikeController:
         # 5. Render Update
         if self.env.scene.visualizer:
             with self._profile("teleop_render"):
+                if self._mesh_overlay is not None:
+                    self._mesh_overlay.sync_from_controller(self)
                 if self._temp_particle_renderer is not None:
                     self._temp_particle_renderer.sync_from_env(self.env)
                 self.env.scene.visualizer.update(force=False, auto=True)
@@ -1074,10 +1128,9 @@ class StrikeController:
             self.heating_power = ckpt.get('heating_power', 2000.0)
             self.skin_depth = ckpt.get('skin_depth', 0.02)
 
-            # Particle positions changed on restore — recompute the induction skin-depth
-            # field so heating tracks the restored geometry.
-            if self.thermal_enabled and self.heater is not None:
-                self.heater.recompute_and_upload()
+            # Particle positions changed on restore — rebuild physics mesh + skin-depth field.
+            if self.thermal_enabled:
+                self.rebuild_physics_induction()
 
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
@@ -1297,7 +1350,21 @@ class StrikeController:
             self.reconstructor.reset()
             gs.logger.info("Initializing surface reconstruction...")
             self.reconstructor.create_reconstructed_mesh()
-            
+
+            # Build physics/SDF mesh at startup (and after reset) so viewer overlays work
+            # before the first strike or before thermal is enabled.
+            if self.physics_mesher.rebuild():
+                gs.logger.info(
+                    f"Physics mesh ready [{self.physics_mesher.backend_label}]: "
+                    f"{len(self.physics_mesher.physics_mesh.vertices)} verts"
+                )
+            if self._mesh_overlay is not None:
+                self._mesh_overlay.sync_from_controller(self)
+
+            from agforge.vis.temperature_particles import update_particle_color_display
+
+            update_particle_color_display(self.env, physics_mesher=self.physics_mesher)
+
             self._save_checkpoint_impl()
             
             # Trigger mesh data send to client (without physics step)

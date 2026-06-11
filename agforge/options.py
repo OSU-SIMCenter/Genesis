@@ -101,6 +101,9 @@ class ReconstructionOptions(Options):
     grid_res: int = 64
     backend: str = "hybrid"  # 'hybrid' or 'splashsurf'
     enabled: bool = True
+    # Induction SDF mesh (one-shot, post-strike): hybrid_low | hybrid_high | splashsurf
+    physics_mesh_backend: str = "splashsurf"
+    physics_mesh_grid_res: int = 96  # hybrid_high marching-cubes grid resolution
 
 class RobotOptions(Options):
     """Parameters for the robot arm in the MuJoCo XML file."""

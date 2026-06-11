@@ -35,7 +35,15 @@ class InductionHeater:
     (init, after each strike, on checkpoint restore) — never per frame.
     """
 
-    def __init__(self, solver, entity, reconstructor=None, static_verts=None, static_faces=None):
+    def __init__(
+        self,
+        solver,
+        entity,
+        physics_mesher=None,
+        reconstructor=None,
+        static_verts=None,
+        static_faces=None,
+    ):
         """
         Parameters
         ----------
@@ -43,21 +51,31 @@ class InductionHeater:
             The Genesis solver handling the MPM physics.
         entity : MPMEntity
             The MPM billet to heat.
+        physics_mesher : InductionPhysicsMesher, optional
+            Preferred source for the induction SDF surface mesh (high-res MC or SplashSurf).
         reconstructor : SurfaceReconstructor, optional
-            Pipeline that dynamically provides `reconstructed_mesh`. If its mesh is empty
-            (e.g. before the first strike) a reconstruction is forced so the initial
-            (cylindrical) billet still produces a valid depth field.
+            Legacy fallback when no physics mesher is available.
         static_verts, static_faces : np.ndarray, optional
             Fallback surface mesh used if no reconstructor is available.
         """
         self.solver = solver
         self.entity = entity
+        self.physics_mesher = physics_mesher
         self.reconstructor = reconstructor
         self.static_verts = static_verts
         self.static_faces = static_faces
 
     def _acquire_surface_mesh(self):
         """Return (verts, faces) of the current billet surface, or (None, None)."""
+        if self.physics_mesher is not None:
+            verts, faces = self.physics_mesher.get_verts_faces()
+            if verts is not None:
+                return verts, faces
+            if self.physics_mesher.rebuild():
+                verts, faces = self.physics_mesher.get_verts_faces()
+                if verts is not None:
+                    return verts, faces
+
         if (
             self.reconstructor is not None
             and getattr(self.reconstructor, "reconstructed_mesh", None) is not None
@@ -70,7 +88,7 @@ class InductionHeater:
         # No usable mesh yet — force one so induction works before the first strike.
         if self.reconstructor is not None:
             try:
-                self.reconstructor.create_reconstructed_mesh(is_deforming=False)
+                self.reconstructor.create_reconstructed_mesh(is_deforming=False, one_shot_physics=True)
                 self.reconstructor.mesh_version += 1
             except Exception as e:
                 gs.logger.warning(f"InductionHeater: failed to force reconstruction: {e}")
