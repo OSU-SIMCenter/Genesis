@@ -93,6 +93,14 @@ class ReconMeshOverlay:
         self._refresh_node("physics")
         return self.physics_mode
 
+    def cycle_unified_display(self) -> MeshDisplayMode:
+        """Cycle mesh overlay display for unified visual+physics mesh."""
+        self.visual_mode = _cycle_display_mode(self.visual_mode)
+        self.physics_mode = MeshDisplayMode.OFF
+        self._remove_node("physics")
+        self._refresh_node("visual")
+        return self.visual_mode
+
     def sync_meshes(
         self,
         visual_mesh: trimesh.Trimesh | None,
@@ -128,7 +136,29 @@ class ReconMeshOverlay:
         if physics_changed:
             self._refresh_node("physics")
 
+    def _sync_unified_mesh(self, mesh: trimesh.Trimesh | None, stamp: int) -> None:
+        """Single overlay in unified mode (one color, no visual/physics double-draw)."""
+        self.physics_mode = MeshDisplayMode.OFF
+        if stamp == self._visual_stamp:
+            return
+        self._visual_stamp = int(stamp)
+        self._physics_stamp = int(stamp)
+        self._visual_mesh = (
+            mesh.copy() if mesh is not None and len(mesh.vertices) >= 4 else None
+        )
+        self._physics_mesh = None
+        self._remove_node("physics")
+        self._refresh_node("visual")
+
     def sync_from_controller(self, controller) -> None:
+        unified = bool(getattr(controller.env.cfg.reconstruction, "unified_mesh", True))
+        if unified:
+            mesh = getattr(controller.physics_mesher, "physics_mesh", None)
+            if mesh is None or len(mesh.vertices) < 4:
+                mesh = getattr(controller.reconstructor, "reconstructed_mesh", None)
+            stamp = getattr(controller.physics_mesher, "version", 0)
+            self._sync_unified_mesh(mesh, stamp)
+            return
         visual = getattr(controller.reconstructor, "reconstructed_mesh", None)
         physics = getattr(controller.physics_mesher, "physics_mesh", None)
         self.sync_meshes(
@@ -236,31 +266,51 @@ def register_mesh_overlay_keybinds(
                 temp_renderer.sync_from_env(env)
         _refresh_viewer()
 
+    unified = bool(getattr(env.cfg.reconstruction, "unified_mesh", True))
+
+    def _cycle_unified():
+        mode = overlay.cycle_unified_display()
+        gs.logger.info(f"Surface mesh display: {MESH_DISPLAY_MODE_LABELS.get(mode.value, mode.value)}")
+        update_mesh_overlay_display(env, overlay, physics_mesher, temp_renderer=temp_renderer)
+        _refresh_viewer()
+
     # M/N/Y avoid Genesis defaults: V=vertex normals, P=reload shader, H=shadow.
-    viewer.register_keybinds(
-        Keybind(
-            "cycle_visual_mesh",
-            Key.M,
-            key_action=KeyAction.PRESS,
-            callback=_cycle_visual,
-            allow_overload=True,
-        ),
-        Keybind(
-            "cycle_physics_mesh",
-            Key.N,
-            key_action=KeyAction.PRESS,
-            callback=_cycle_physics,
-            allow_overload=True,
-        ),
-        Keybind(
-            "cycle_sdf_mesh",
-            Key.Y,
-            key_action=KeyAction.PRESS,
-            callback=_cycle_physics_backend,
-            allow_overload=True,
-        ),
-        overwrite=False,
-    )
+    if unified:
+        viewer.register_keybinds(
+            Keybind(
+                "cycle_surface_mesh",
+                Key.M,
+                key_action=KeyAction.PRESS,
+                callback=_cycle_unified,
+                allow_overload=True,
+            ),
+            overwrite=False,
+        )
+    else:
+        viewer.register_keybinds(
+            Keybind(
+                "cycle_visual_mesh",
+                Key.M,
+                key_action=KeyAction.PRESS,
+                callback=_cycle_visual,
+                allow_overload=True,
+            ),
+            Keybind(
+                "cycle_physics_mesh",
+                Key.N,
+                key_action=KeyAction.PRESS,
+                callback=_cycle_physics,
+                allow_overload=True,
+            ),
+            Keybind(
+                "cycle_sdf_mesh",
+                Key.Y,
+                key_action=KeyAction.PRESS,
+                callback=_cycle_physics_backend,
+                allow_overload=True,
+            ),
+            overwrite=False,
+        )
     from agforge.vis.status_overlay import _refresh_keybind_help
 
     update_mesh_overlay_display(env, overlay, physics_mesher, temp_renderer=temp_renderer)

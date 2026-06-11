@@ -76,13 +76,16 @@ def update_viewer_status(
     mode = getattr(env.cfg.general, "particle_color_mode", "temperature")
     color_label = PARTICLE_COLOR_MODE_LABELS.get(mode, mode)
 
-    sdf_label = ""
+    unified = bool(getattr(env.cfg.reconstruction, "unified_mesh", True))
+    mesh_label = ""
     if physics_mesher is not None:
-        sdf_label = physics_mesher.backend_label
+        backend = physics_mesher.backend_label
+        mesh_label = f"{backend} (unified)" if unified else backend
 
     lines = [f"Color: {color_label}"]
-    if sdf_label:
-        lines.append(f"SDF mesh: {sdf_label}")
+    if mesh_label:
+        prefix = "Mesh" if unified else "SDF mesh"
+        lines.append(f"{prefix}: {mesh_label}")
 
     status_plugin.set_lines(lines)
 
