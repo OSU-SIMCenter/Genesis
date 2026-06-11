@@ -1119,20 +1119,26 @@ class LegacyCoupler(RBC):
                     self.mpm_solver.grid[f, I, i_b].temp_diffused = gs.qd_float(293.15)
 
     def couple(self, f):
+        import contextlib
+
+        profiler = self.sim.scene.profiling_options.profiler
+        sim_cfg = self.sim.scene.profiling_options.configs.simulator
         # MPM <-> all others
         if self.mpm_solver.is_active:
-            self.mpm_grid_op(
-                f,
-                self.sim.cur_t,
-                geoms_state=self.rigid_solver.geoms_state,
-                geoms_info=self.rigid_solver.geoms_info,
-                links_state=self.rigid_solver.links_state,
-                rigid_global_info=self.rigid_solver._rigid_global_info,
-                sdf_info=self.rigid_solver.collider._sdf._sdf_info,
-                collider_static_config=self.rigid_solver.collider._collider_static_config,
-            )
+            with profiler.time("couple_mpm_grid_op") if sim_cfg.couple_mpm_grid_op else contextlib.suppress():
+                self.mpm_grid_op(
+                    f,
+                    self.sim.cur_t,
+                    geoms_state=self.rigid_solver.geoms_state,
+                    geoms_info=self.rigid_solver.geoms_info,
+                    links_state=self.rigid_solver.links_state,
+                    rigid_global_info=self.rigid_solver._rigid_global_info,
+                    sdf_info=self.rigid_solver.collider._sdf._sdf_info,
+                    collider_static_config=self.rigid_solver.collider._collider_static_config,
+                )
             if self.mpm_solver._enable_thermal:
-                self.mpm_grid_thermal_diffusion(f)
+                with profiler.time("couple_thermal_diffusion") if sim_cfg.couple_thermal_diffusion else contextlib.suppress():
+                    self.mpm_grid_thermal_diffusion(f)
 
         # SPH <-> Rigid
         if self._rigid_sph:

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Callable
 import numpy as np
 import trimesh
 
+from agforge.profiling_util import teleop_profile
+
 if TYPE_CHECKING:
     from agforge.environment import AgilityForgeEnv
     from agforge.physics_mesh import InductionPhysicsMesher
@@ -58,6 +60,7 @@ class ReconMeshOverlay:
         self,
         ctx,
         *,
+        env: "AgilityForgeEnv | None" = None,
         visual_color=(0.25, 0.75, 0.95, 1.0),
         physics_color=(0.95, 0.55, 0.15, 1.0),
         transparent_alpha: float = 0.35,
@@ -65,6 +68,7 @@ class ReconMeshOverlay:
         from genesis.ext import pyrender
 
         self._ctx = ctx
+        self._env = env
         self._pyrender = pyrender
         self._visual_color = np.array(visual_color, dtype=np.float32)
         self._physics_color = np.array(physics_color, dtype=np.float32)
@@ -81,7 +85,7 @@ class ReconMeshOverlay:
     @classmethod
     def from_env(cls, env: "AgilityForgeEnv") -> "ReconMeshOverlay":
         ctx = env.scene.visualizer._context
-        return cls(ctx)
+        return cls(ctx, env=env)
 
     def cycle_visual_mode(self) -> MeshDisplayMode:
         self.visual_mode = _cycle_display_mode(self.visual_mode)
@@ -191,19 +195,21 @@ class ReconMeshOverlay:
             setattr(self, node_attr, None)
 
     def _refresh_node(self, which: str) -> None:
-        mode: MeshDisplayMode = getattr(self, f"{which}_mode")
-        mesh: trimesh.Trimesh | None = getattr(self, f"_{which}_mesh")
-        color = self._visual_color if which == "visual" else self._physics_color
+        profile_target = self._env
+        with teleop_profile(profile_target, "teleop_render_mesh_overlay_refresh"):
+            mode: MeshDisplayMode = getattr(self, f"{which}_mode")
+            mesh: trimesh.Trimesh | None = getattr(self, f"_{which}_mesh")
+            color = self._visual_color if which == "visual" else self._physics_color
 
-        self._remove_node(which)
-        if mode == MeshDisplayMode.OFF or mesh is None or len(mesh.vertices) < 4:
-            return
+            self._remove_node(which)
+            if mode == MeshDisplayMode.OFF or mesh is None or len(mesh.vertices) < 4:
+                return
 
-        material = self._material_for(color, mode)
-        display_mesh = mesh_for_genesis_viewer(mesh)
-        pr_mesh = self._pyrender.Mesh.from_trimesh(display_mesh, material=material, smooth=True)
-        node = self._ctx.add_node(pr_mesh)
-        setattr(self, f"_{which}_node", node)
+            material = self._material_for(color, mode)
+            display_mesh = mesh_for_genesis_viewer(mesh)
+            pr_mesh = self._pyrender.Mesh.from_trimesh(display_mesh, material=material, smooth=True)
+            node = self._ctx.add_node(pr_mesh)
+            setattr(self, f"_{which}_node", node)
 
 
 def update_mesh_overlay_display(

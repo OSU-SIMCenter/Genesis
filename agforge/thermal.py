@@ -3,6 +3,8 @@ import igl
 
 import genesis as gs
 
+from agforge.profiling_util import teleop_profile
+
 
 def get_steel_cp_numpy(temp: np.ndarray) -> np.ndarray:
     """Numpy vectorized computation of temperature-dependent specific heat for low-alloy steel."""
@@ -112,10 +114,13 @@ class InductionHeater:
             gs.logger.warning("InductionHeater: no surface mesh available, skipping skin-depth recompute.")
             return None
 
-        pos_tensor = self.entity.get_particles_pos()
-        pos_np = pos_tensor.cpu().numpy().reshape(-1, 3)
+        scene = self.solver.sim.scene
+        with teleop_profile(scene, "teleop_induction_pos_pull"):
+            pos_tensor = self.entity.get_particles_pos()
+            pos_np = pos_tensor.cpu().numpy().reshape(-1, 3)
 
-        distances, _, _, _ = igl.signed_distance(pos_np.astype(np.float64), verts, faces)
+        with teleop_profile(scene, "teleop_induction_igl_sdf"):
+            distances, _, _, _ = igl.signed_distance(pos_np.astype(np.float64), verts, faces)
         depth = np.abs(distances)
 
         # Guard against NaN/inf from degenerate triangles: treat as deep interior (no heating).
@@ -134,5 +139,6 @@ class InductionHeater:
         depth = self.compute_skin_depth()
         if depth is None:
             return False
-        self.solver.set_induction_depth(depth)
+        with teleop_profile(self.solver.sim.scene, "teleop_induction_depth_upload"):
+            self.solver.set_induction_depth(depth)
         return True

@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from agforge.profiling_util import teleop_profile
+
 if TYPE_CHECKING:
     from agforge.environment import AgilityForgeEnv
 
@@ -106,6 +108,7 @@ class TemperatureParticleRenderer:
 
         self._frame_pos: np.ndarray | None = None
         self._bucket_idx: np.ndarray | None = None
+        self._env = None
         self._original_update_mpm = ctx.update_mpm
         ctx.update_mpm = self._update_mpm_hook
 
@@ -146,7 +149,7 @@ class TemperatureParticleRenderer:
             self._render_scale = 1.0
         self._rebuild_all_bucket_meshes()
         if self._frame_pos is not None and self._bucket_idx is not None:
-            self._write_bucket_poses(self._frame_pos, self._bucket_idx)
+            self._write_bucket_poses(self._frame_pos, self._bucket_idx, env=self._env)
         return self._render_scale
 
     def _rebuild_all_bucket_meshes(self):
@@ -165,7 +168,7 @@ class TemperatureParticleRenderer:
     def _update_mpm_hook(self):
         if self._frame_pos is None or self._bucket_idx is None:
             return
-        self._write_bucket_poses(self._frame_pos, self._bucket_idx)
+        self._write_bucket_poses(self._frame_pos, self._bucket_idx, env=self._env)
 
     def _recreate_bucket_node(self, b: int, n_slots: int):
         from genesis.ext import pyrender
@@ -181,7 +184,7 @@ class TemperatureParticleRenderer:
         self._bucket_nodes[b] = self._ctx.add_node(pr_mesh)
         self._bucket_max[b] = n_slots
 
-    def _write_bucket_poses(self, positions: np.ndarray, bucket_idx: np.ndarray):
+    def _write_bucket_poses(self, positions: np.ndarray, bucket_idx: np.ndarray, env=None):
         positions = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
         bucket_idx = np.asarray(bucket_idx, dtype=np.int32).reshape(-1)
         n = min(positions.shape[0], bucket_idx.shape[0])
@@ -192,22 +195,23 @@ class TemperatureParticleRenderer:
             if needed > self._bucket_max[b]:
                 self._recreate_bucket_node(b, needed)
 
-        for b in range(self._n_buckets):
-            node = self._bucket_nodes[b]
-            if node is None:
-                continue
-            n_slots = self._bucket_max[b]
-            tfs = np.tile(np.eye(4), (n_slots, 1, 1))
-            tfs[:, :3, 3] = OFF_SCREEN
-            mask = bucket_idx[:n] == b
-            count = int(mask.sum())
-            if count > 0:
-                tfs[:count, :3, 3] = positions[:n][mask]
-            for prim in node.mesh.primitives:
-                prim.poses = tfs
-            buf_id = self._ctx._scene.get_buffer_id(node, "model")
-            if buf_id != -1:
-                self._ctx.jit.update_buffer(buf_id, tfs.transpose((0, 2, 1)))
+        with teleop_profile(env, "teleop_render_particle_bucket_write"):
+            for b in range(self._n_buckets):
+                node = self._bucket_nodes[b]
+                if node is None:
+                    continue
+                n_slots = self._bucket_max[b]
+                tfs = np.tile(np.eye(4), (n_slots, 1, 1))
+                tfs[:, :3, 3] = OFF_SCREEN
+                mask = bucket_idx[:n] == b
+                count = int(mask.sum())
+                if count > 0:
+                    tfs[:count, :3, 3] = positions[:n][mask]
+                for prim in node.mesh.primitives:
+                    prim.poses = tfs
+                buf_id = self._ctx._scene.get_buffer_id(node, "model")
+                if buf_id != -1:
+                    self._ctx.jit.update_buffer(buf_id, tfs.transpose((0, 2, 1)))
 
     def set_frame(
         self,
@@ -291,13 +295,15 @@ class TemperatureParticleRenderer:
 
     def sync_from_env(self, env: "AgilityForgeEnv"):
         """Read live particle positions and the configured scalar field from the simulation."""
-        pos = env.mpm_entity.get_particles_pos().detach().cpu().numpy().reshape(-1, 3)
-        scalars, vmin, vmax = self._scalar_field_from_env(env, pos)
-        if hasattr(env.mpm_entity, "get_particles_active"):
-            active = env.mpm_entity.get_particles_active(envs_idx=0).detach().cpu().numpy().reshape(-1).astype(bool)
-            if active.shape[0] == pos.shape[0]:
-                pos = pos[active]
-                scalars = scalars[active]
+        self._env = env
+        with teleop_profile(env, "teleop_render_particle_gpu_pull"):
+            pos = env.mpm_entity.get_particles_pos().detach().cpu().numpy().reshape(-1, 3)
+            scalars, vmin, vmax = self._scalar_field_from_env(env, pos)
+            if hasattr(env.mpm_entity, "get_particles_active"):
+                active = env.mpm_entity.get_particles_active(envs_idx=0).detach().cpu().numpy().reshape(-1).astype(bool)
+                if active.shape[0] == pos.shape[0]:
+                    pos = pos[active]
+                    scalars = scalars[active]
         self.set_frame(pos, scalars=scalars, vmin=vmin, vmax=vmax)
 
     @staticmethod

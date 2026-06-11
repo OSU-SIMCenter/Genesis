@@ -102,42 +102,42 @@ async def simulation_loop(websocket, state: StrikeController):
                 # 2. Reconstruction & IO (always send when should_send is True)
                 # Note: state.env.scene.profiling_options is accessible
                 with state._profile("teleop_io"):
-                    vertices, triangles, particles, vertices_temp = await state.update_and_get_recon_data()
-                    
-                    v_flat, v_count = _prepare_array(vertices, np.float32)
-                    
-                    # Safety net: If billet_base_x wasn't set from config (shouldn't happen),
-                    # fall back to deriving it from the first mesh vertices.
-                    if getattr(state, "input_mapper", None) and state.input_mapper.billet_base_x is None:
-                        if v_count > 0:
-                            state.input_mapper.billet_base_x = float(np.max(v_flat[0::3]))
-                            gs.logger.warning(f"billet_base_x fallback from mesh (maxX): {state.input_mapper.billet_base_x}")
-                            
-                    t_flat, t_count = _prepare_array(triangles, np.int32)
-                    p_flat, p_count = _prepare_array(particles, np.float32)
-                    temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
-                    # Force Unity to process the temp array on the first frame after a reset
-                    # so that it clears any stale deformed color buffers.
+                    with state._profile("teleop_io_recon_data"):
+                        vertices, triangles, particles, vertices_temp = await state.update_and_get_recon_data()
+
+                    with state._profile("teleop_io_gpu_to_cpu"):
+                        v_flat, v_count = _prepare_array(vertices, np.float32)
+
+                        if getattr(state, "input_mapper", None) and state.input_mapper.billet_base_x is None:
+                            if v_count > 0:
+                                state.input_mapper.billet_base_x = float(np.max(v_flat[0::3]))
+                                gs.logger.warning(f"billet_base_x fallback from mesh (maxX): {state.input_mapper.billet_base_x}")
+
+                        t_flat, t_count = _prepare_array(triangles, np.int32)
+                        p_flat, p_count = _prepare_array(particles, np.float32)
+                        temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
+
                     send_thermal_enabled = getattr(state, 'thermal_enabled', False) or getattr(state, 'pending_mesh_send', False)
-                    
-                    header = {
-                        "stage": state.strike_state.name,
-                        "is_pressing": state.strike_state != StrikeState.IDLE,
-                        "thermal_enabled": send_thermal_enabled,
-                        "checkpoint_count": len(state.checkpoints),
-                        "force": state.last_force_normalized,
-                        "counts": {
-                            "vertices": v_count,
-                            "faces": t_count,
-                            "particles": p_count,
-                            "temperatures": temp_count
+
+                    with state._profile("teleop_io_websocket_pack_send"):
+                        header = {
+                            "stage": state.strike_state.name,
+                            "is_pressing": state.strike_state != StrikeState.IDLE,
+                            "thermal_enabled": send_thermal_enabled,
+                            "checkpoint_count": len(state.checkpoints),
+                            "force": state.last_force_normalized,
+                            "counts": {
+                                "vertices": v_count,
+                                "faces": t_count,
+                                "particles": p_count,
+                                "temperatures": temp_count
+                            }
                         }
-                    }
-                    header_json = json.dumps(header).encode('utf-8')
-                    binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes() + temp_flat.tobytes()
-                    message = struct.pack('<I', len(header_json)) + header_json + binary_body
-                    
-                    await websocket.send(message)
+                        header_json = json.dumps(header).encode('utf-8')
+                        binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes() + temp_flat.tobytes()
+                        message = struct.pack('<I', len(header_json)) + header_json + binary_body
+
+                        await websocket.send(message)
             
             await asyncio.sleep(1/TARGET_FPS)
             
@@ -170,16 +170,17 @@ async def viewer_idle_loop(state: StrikeController):
             is_connected = getattr(state, 'is_client_connected', False)
             
             if not is_connected:
-                await state.process_pending_physics_rebuild()
-                if hasattr(state.env.scene, 'visualizer') and state.env.scene.visualizer:
-                     renderer = getattr(state, '_temp_particle_renderer', None)
-                     overlay = getattr(state, '_mesh_overlay', None)
-                     if overlay is not None:
-                         overlay.sync_from_controller(state)
-                     if renderer is not None:
-                         renderer.sync_from_env(state.env)
-                     vis = state.env.scene.visualizer
-                     vis.update(force=False, auto=True)
+                with state._profile("teleop_viewer_idle_tick"):
+                    await state.process_pending_physics_rebuild()
+                    if hasattr(state.env.scene, 'visualizer') and state.env.scene.visualizer:
+                        renderer = getattr(state, '_temp_particle_renderer', None)
+                        overlay = getattr(state, '_mesh_overlay', None)
+                        if overlay is not None:
+                            overlay.sync_from_controller(state)
+                        if renderer is not None:
+                            renderer.sync_from_env(state.env)
+                        vis = state.env.scene.visualizer
+                        vis.update(force=False, auto=True)
             
             await asyncio.sleep(0.02)
     except asyncio.CancelledError:
@@ -283,7 +284,7 @@ async def main():
     
     print("Building simulation environment...")
     cfg = TeleopOptions()
-    cfg.general.show_viewer = True
+    cfg.general.show_viewer = False
     
     # Enable MPM grid/boundary visualization
     cfg.vis.visualize_mpm_boundary = True

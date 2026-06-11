@@ -166,9 +166,10 @@ class StrikeController:
 
     def rebuild_physics_induction(self, upload_sdf: bool = True) -> bool:
         """Rebuild surface mesh; in unified mode one build serves visual + induction SDF."""
-        ok = self.physics_mesher.rebuild()
-        if upload_sdf and self.heater is not None:
-            self.heater.recompute_and_upload()
+        with self._profile("teleop_physics_rebuild"):
+            ok = self.physics_mesher.rebuild()
+            if upload_sdf and self.heater is not None:
+                self.heater.recompute_and_upload()
         if self._mesh_overlay is not None:
             self._mesh_overlay.sync_from_controller(self)
         if self._temp_particle_renderer is not None:
@@ -700,42 +701,43 @@ class StrikeController:
         with self._profile("teleop_thermal_telemetry"):
             if self.thermal_enabled and self._physics_step_counter % _telemetry_interval == 0:
                 try:
-                    temps_after_physics = self.env.mpm_entity.get_particles_temp()
-                    t = temps_after_physics.float()
-                    
-                    # Total thermal energy: E = Σ(m_real * Cp * T)
-                    particle_mass_scaled = self.env.scene.sim.mpm_solver.particles_info[0].mass
-                    particle_mass = particle_mass_scaled / self.env.scene.sim.mpm_solver._particle_volume_scale
-                    import torch
-                    from agforge.thermal import get_steel_cp_numpy
-                    cp_tensor = torch.tensor(get_steel_cp_numpy(t.cpu().numpy()), device=t.device)
-                    n_particles = t.numel()
-                    
-                    import torch
-                    all_dT_names = []
-                    all_dT_tensors = []
+                    with self._profile("teleop_telemetry_gpu_pull"):
+                        temps_after_physics = self.env.mpm_entity.get_particles_temp()
+                        t = temps_after_physics.float()
 
-                    # Per-mechanism dT telemetry (accumulated over substeps each macro-step).
-                    # Air convection and fixed-end bulk conduction use the same Robin exponential
-                    # form but are applied on disjoint cell sets (air-exposed vs cut-face).
-                    all_dT_names.extend([
-                        "Induction",
-                        "AirConv",
-                        "Radiation",
-                        "FixedEnd",
-                        "Diffusion",
-                        "Contact",
-                        "Adiabatic",
-                    ])
-                    all_dT_tensors.extend([
-                        self.env.mpm_entity.get_particles_dT_induction().float().squeeze(-1).view(-1),
-                        self.env.mpm_entity.get_particles_dT_conv().float().squeeze(-1).view(-1),
-                        self.env.mpm_entity.get_particles_dT_rad().float().squeeze(-1).view(-1),
-                        self.env.mpm_entity.get_particles_dT_bulk().float().squeeze(-1).view(-1),
-                        self.env.mpm_entity.get_particles_dT_diffusion().float().squeeze(-1).view(-1),
-                        self.env.mpm_entity.get_particles_dT_contact().float().squeeze(-1).view(-1),
-                        self.env.mpm_entity.get_particles_dT_adiabatic().float().squeeze(-1).view(-1),
-                    ])
+                        # Total thermal energy: E = Σ(m_real * Cp * T)
+                        particle_mass_scaled = self.env.scene.sim.mpm_solver.particles_info[0].mass
+                        particle_mass = particle_mass_scaled / self.env.scene.sim.mpm_solver._particle_volume_scale
+                        import torch
+                        from agforge.thermal import get_steel_cp_numpy
+                        cp_tensor = torch.tensor(get_steel_cp_numpy(t.cpu().numpy()), device=t.device)
+                        n_particles = t.numel()
+
+                        import torch
+                        all_dT_names = []
+                        all_dT_tensors = []
+
+                        # Per-mechanism dT telemetry (accumulated over substeps each macro-step).
+                        # Air convection and fixed-end bulk conduction use the same Robin exponential
+                        # form but are applied on disjoint cell sets (air-exposed vs cut-face).
+                        all_dT_names.extend([
+                            "Induction",
+                            "AirConv",
+                            "Radiation",
+                            "FixedEnd",
+                            "Diffusion",
+                            "Contact",
+                            "Adiabatic",
+                        ])
+                        all_dT_tensors.extend([
+                            self.env.mpm_entity.get_particles_dT_induction().float().squeeze(-1).view(-1),
+                            self.env.mpm_entity.get_particles_dT_conv().float().squeeze(-1).view(-1),
+                            self.env.mpm_entity.get_particles_dT_rad().float().squeeze(-1).view(-1),
+                            self.env.mpm_entity.get_particles_dT_bulk().float().squeeze(-1).view(-1),
+                            self.env.mpm_entity.get_particles_dT_diffusion().float().squeeze(-1).view(-1),
+                            self.env.mpm_entity.get_particles_dT_contact().float().squeeze(-1).view(-1),
+                            self.env.mpm_entity.get_particles_dT_adiabatic().float().squeeze(-1).view(-1),
+                        ])
 
                     def W_str(watts):
                         if abs(watts) > 1e6:
@@ -744,51 +746,52 @@ class StrikeController:
                             return f"{watts/1e3:+.1f}kW"
                         return f"{watts:+.0f}W"
 
-                    log_parts = []
-                    
-                    if len(all_dT_tensors) > 0:
-                        dTs = torch.stack(all_dT_tensors) # shape: [N_cats, N_particles]
-                        mask = dTs.abs() > 1e-6
-                        
-                        # 1. Parallel mathematical reductions
-                        n_heated = mask.sum(dim=1)
-                        energy_sums = (dTs * cp_tensor).sum(dim=1)
-                        
-                        safe_n = n_heated.clamp(min=1).float()
-                        means = (dTs * mask).sum(dim=1) / safe_n
-                        
-                        mins = dTs.amin(dim=1)
-                        maxes = dTs.amax(dim=1)
-                        pks = torch.where(means < 0, mins, maxes)
-                        
-                        # 2. Gather global temperature bounds (and energy sum)
-                        global_tensor = torch.stack([t.mean(), t.min(), t.max(), t.std(), (t * cp_tensor).sum()])
-                        
-                        # 3. Exactly ONE PCIe cross-bus sync point!
-                        all_stats = torch.cat([global_tensor, n_heated.float(), means, pks, energy_sums]).cpu().numpy()
-                        
-                        # 4. Telemetry string generation
-                        avg_t, min_t, max_t, std_t, sum_t = all_stats[:5]
-                        total_energy_kJ = (particle_mass * sum_t) / 1000.0
-                        
-                        log_parts.append(f"♨️ THERMAL │ Avg: {avg_t:.1f}K Min: {min_t:.1f}K Max: {max_t:.1f}K σ: {std_t:.1f}K │ E: {total_energy_kJ:.1f}kJ")
-                        
-                        num_cats = len(all_dT_names)
-                        dt_sim = self.env.scene.sim.dt
-                        
-                        n_arr = all_stats[5:5+num_cats]
-                        mean_arr = all_stats[5+num_cats:5+2*num_cats]
-                        pk_arr = all_stats[5+2*num_cats:5+3*num_cats]
-                        sum_arr = all_stats[5+3*num_cats:5+4*num_cats]
-                        
-                        for i, name in enumerate(all_dT_names):
-                            if n_arr[i] > 0:
-                                energy_W = (particle_mass * sum_arr[i]) / dt_sim
-                                # Format strings exactly as before
-                                log_parts.append(f"\n  {name}: {mean_arr[i]:+.2f}K avg, {pk_arr[i]:+.2f}K pk ({W_str(energy_W)})")
-                    
-                    if log_parts:
-                        gs.logger.info("".join(log_parts))
+                    with self._profile("teleop_telemetry_aggregate"):
+                        log_parts = []
+
+                        if len(all_dT_tensors) > 0:
+                            dTs = torch.stack(all_dT_tensors) # shape: [N_cats, N_particles]
+                            mask = dTs.abs() > 1e-6
+
+                            # 1. Parallel mathematical reductions
+                            n_heated = mask.sum(dim=1)
+                            energy_sums = (dTs * cp_tensor).sum(dim=1)
+
+                            safe_n = n_heated.clamp(min=1).float()
+                            means = (dTs * mask).sum(dim=1) / safe_n
+
+                            mins = dTs.amin(dim=1)
+                            maxes = dTs.amax(dim=1)
+                            pks = torch.where(means < 0, mins, maxes)
+
+                            # 2. Gather global temperature bounds (and energy sum)
+                            global_tensor = torch.stack([t.mean(), t.min(), t.max(), t.std(), (t * cp_tensor).sum()])
+
+                            # 3. Exactly ONE PCIe cross-bus sync point!
+                            all_stats = torch.cat([global_tensor, n_heated.float(), means, pks, energy_sums]).cpu().numpy()
+
+                            # 4. Telemetry string generation
+                            avg_t, min_t, max_t, std_t, sum_t = all_stats[:5]
+                            total_energy_kJ = (particle_mass * sum_t) / 1000.0
+
+                            log_parts.append(f"♨️ THERMAL │ Avg: {avg_t:.1f}K Min: {min_t:.1f}K Max: {max_t:.1f}K σ: {std_t:.1f}K │ E: {total_energy_kJ:.1f}kJ")
+
+                            num_cats = len(all_dT_names)
+                            dt_sim = self.env.scene.sim.dt
+
+                            n_arr = all_stats[5:5+num_cats]
+                            mean_arr = all_stats[5+num_cats:5+2*num_cats]
+                            pk_arr = all_stats[5+2*num_cats:5+3*num_cats]
+                            sum_arr = all_stats[5+3*num_cats:5+4*num_cats]
+
+                            for i, name in enumerate(all_dT_names):
+                                if n_arr[i] > 0:
+                                    energy_W = (particle_mass * sum_arr[i]) / dt_sim
+                                    # Format strings exactly as before
+                                    log_parts.append(f"\n  {name}: {mean_arr[i]:+.2f}K avg, {pk_arr[i]:+.2f}K pk ({W_str(energy_W)})")
+
+                        if log_parts:
+                            gs.logger.info("".join(log_parts))
                 except Exception as e:
                     gs.logger.warning(f"Thermal telemetry failed: {e}")
 
@@ -846,7 +849,8 @@ class StrikeController:
                 try:
                     if physics_failed:
                         raise SimulationStabilityError("Physics step threw an exception")
-                    self._check_stability()
+                    with self._profile("teleop_stability_check"):
+                        self._check_stability()
                 except SimulationStabilityError as e:
                     gs.logger.error(f"CRITICAL STABILITY FAILURE: {e}")
                     if safety and safety.auto_reset:
@@ -872,46 +876,51 @@ class StrikeController:
         if self.env.scene.visualizer:
             with self._profile("teleop_render"):
                 if self._mesh_overlay is not None:
-                    self._mesh_overlay.sync_from_controller(self)
+                    with self._profile("teleop_render_mesh_overlay_sync"):
+                        self._mesh_overlay.sync_from_controller(self)
                 if self._temp_particle_renderer is not None:
-                    self._temp_particle_renderer.sync_from_env(self.env)
-                self.env.scene.visualizer.update(force=False, auto=True)
+                    with self._profile("teleop_render_particle_sync"):
+                        self._temp_particle_renderer.sync_from_env(self.env)
+                with self._profile("teleop_render_visualizer_update"):
+                    self.env.scene.visualizer.update(force=False, auto=True)
 
         # 6. Record Data Frame (only if actively striking)
         if self.strike_state != StrikeState.IDLE:
             with self._profile("teleop_record"):
-                particles_pos = self.env.mpm_entity.get_particles_pos()
-                particles_vel = self.env.mpm_entity.get_particles_vel()
-                
-                # Check for thermal state - use entity API to read from correct substep
-                if hasattr(self.env.mpm_entity, 'get_particles_temp'):
-                    particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
-                    particles_F = self.env.mpm_entity.get_particles_F().cpu().numpy()
-                    if particles_F.ndim == 4:  # [B, N, 3, 3]
-                        particles_F = particles_F[0]
-                    particles_detF = np.linalg.det(particles_F).astype(np.float32)
-                else:
-                    particles_temp = np.zeros(particles_pos.shape[-2], dtype=np.float32)
-                    particles_detF = np.ones(particles_pos.shape[-2], dtype=np.float32)
-                    
-                force_L, force_R = self.robot.get_resistance_forces()
-                
-                # Get base particle volume for absolute volume calculations
-                p_vol = 0.0
-                if hasattr(self.env.scene.sim, 'mpm_solver') and hasattr(self.env.scene.sim.mpm_solver, 'particle_volume_real'):
-                    p_vol = self.env.scene.sim.mpm_solver.particle_volume_real
-                    
-                self.recorder.record_frame(
-                    particles_pos=particles_pos,
-                    particles_vel=particles_vel,
-                    particles_temp=particles_temp,
-                    particles_detF=particles_detF,
-                    particle_vol=p_vol,
-                    qpos=self.env.robot.entity.get_qpos(),
-                    force_L=force_L,
-                    force_R=force_R,
-                    dof_cmd=self._vel_cmd
-                )
+                with self._profile("teleop_record_gpu_pull"):
+                    particles_pos = self.env.mpm_entity.get_particles_pos()
+                    particles_vel = self.env.mpm_entity.get_particles_vel()
+
+                    # Check for thermal state - use entity API to read from correct substep
+                    if hasattr(self.env.mpm_entity, 'get_particles_temp'):
+                        particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
+                        particles_F = self.env.mpm_entity.get_particles_F().cpu().numpy()
+                        if particles_F.ndim == 4:  # [B, N, 3, 3]
+                            particles_F = particles_F[0]
+                        particles_detF = np.linalg.det(particles_F).astype(np.float32)
+                    else:
+                        particles_temp = np.zeros(particles_pos.shape[-2], dtype=np.float32)
+                        particles_detF = np.ones(particles_pos.shape[-2], dtype=np.float32)
+
+                    force_L, force_R = self.robot.get_resistance_forces()
+
+                    # Get base particle volume for absolute volume calculations
+                    p_vol = 0.0
+                    if hasattr(self.env.scene.sim, 'mpm_solver') and hasattr(self.env.scene.sim.mpm_solver, 'particle_volume_real'):
+                        p_vol = self.env.scene.sim.mpm_solver.particle_volume_real
+
+                with self._profile("teleop_record_append"):
+                    self.recorder.record_frame(
+                        particles_pos=particles_pos,
+                        particles_vel=particles_vel,
+                        particles_temp=particles_temp,
+                        particles_detF=particles_detF,
+                        particle_vol=p_vol,
+                        qpos=self.env.robot.entity.get_qpos(),
+                        force_L=force_L,
+                        force_R=force_R,
+                        dof_cmd=self._vel_cmd
+                    )
 
     def _profile(self, name):
         # Fix for Pydantic model access
@@ -958,64 +967,48 @@ class StrikeController:
             
             # Extract and spatial-interpolate thermal data to vertices
             if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
-                # Use entity API to read from the correct double-buffered substep frame.
-                # The raw field access (.temp.to_numpy()[0, :, 0]) reads from a hardcoded
-                # frame index which may be stale after undo/checkpoint restore.
-                particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
-                
-                import scipy.spatial
-                
-                # USE STATIC PARTICLES FOR MAPPING
-                # This ensures the KD-Tree perfectly maps the 1-to-1 structure between vertices
-                # and particles, even if the billet has been translated in IDLE mode.
-                mapping_parts_np = self.reconstructor._cached_particles
-                if mapping_parts_np is None:
-                    # Fallback if cache is missing
-                    mapping_parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
-                
-                if mapping_parts_np.shape[0] != particles_temp.shape[0]:
-                    active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0).cpu().numpy()
-                    particles_temp = particles_temp[active_mask]
-                
-                # --- VISUAL STATE OVERRIDE (display-only; physics is never modified) ---
-                # We fade the visual temperatures of the 11-21% clamp zone down to <=900K *before*
-                # the KD-Tree so the renderer keeps the dummy handle black at the truncation seam,
-                # without capping the actual physics engine. Toggleable for debugging: set
-                # cfg.thermal_visual_fade = False to send raw physical temperatures to Unity.
-                if getattr(self.env.cfg, 'thermal_visual_fade', True):
-                    L_v = self.env.cfg.robot.cylinder_height
-                    cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
-                    x_max_v = cylinder_center_x + (L_v / 2.0)
+                with self._profile("teleop_io_vertex_temp_prep"):
+                    # Use entity API to read from the correct double-buffered substep frame.
+                    particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
 
-                    x_clamp_v = x_max_v - 0.11 * L_v
-                    x_fade_v = x_max_v - 0.21 * L_v
+                    import scipy.spatial
 
-                    # Evaluate fade based on the STATIC mesh-generation coordinates, so the handle
-                    # is always correctly identified regardless of teleop translation.
-                    alpha_vis = np.clip((mapping_parts_np[:, 0] - x_fade_v) / (x_clamp_v - x_fade_v), 0.0, 1.0)
-                    target_vis = np.minimum(particles_temp, 900.0)
-                    particles_temp = particles_temp * (1.0 - alpha_vis) + target_vis * alpha_vis
-                
-                if isinstance(vertices_raw, torch.Tensor):
-                    verts_np = vertices_raw.cpu().numpy()
-                else:
-                    verts_np = vertices_raw
-                    
-                # Guard against degenerate mesh/particles
-                if mapping_parts_np.shape[0] >= 3 and verts_np.shape[0] > 0:
-                    tree = scipy.spatial.cKDTree(mapping_parts_np)
-                    dists, indices = tree.query(verts_np, k=3)
-                    
-                    # Inverse distance weighting
-                    dists = np.maximum(dists, 1e-6)  # Avoid div by zero
-                    weights = 1.0 / dists
-                    weight_sums = weights.sum(axis=1)
-                    neighbor_temps = particles_temp[indices]
-                    
-                    vertices_temp = (neighbor_temps * weights).sum(axis=1) / weight_sums
-                    vertices_temp = vertices_temp.astype(np.float32)
-                else:
-                    vertices_temp = np.zeros(verts_np.shape[0], dtype=np.float32)
+                    # USE STATIC PARTICLES FOR MAPPING
+                    mapping_parts_np = self.reconstructor._cached_particles
+                    if mapping_parts_np is None:
+                        mapping_parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
+
+                    if mapping_parts_np.shape[0] != particles_temp.shape[0]:
+                        active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0).cpu().numpy()
+                        particles_temp = particles_temp[active_mask]
+
+                    if getattr(self.env.cfg, 'thermal_visual_fade', True):
+                        L_v = self.env.cfg.robot.cylinder_height
+                        cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
+                        x_max_v = cylinder_center_x + (L_v / 2.0)
+                        x_clamp_v = x_max_v - 0.11 * L_v
+                        x_fade_v = x_max_v - 0.21 * L_v
+                        alpha_vis = np.clip((mapping_parts_np[:, 0] - x_fade_v) / (x_clamp_v - x_fade_v), 0.0, 1.0)
+                        target_vis = np.minimum(particles_temp, 900.0)
+                        particles_temp = particles_temp * (1.0 - alpha_vis) + target_vis * alpha_vis
+
+                    if isinstance(vertices_raw, torch.Tensor):
+                        verts_np = vertices_raw.cpu().numpy()
+                    else:
+                        verts_np = vertices_raw
+
+                with self._profile("teleop_io_kdtree_vertex_temps"):
+                    if mapping_parts_np.shape[0] >= 3 and verts_np.shape[0] > 0:
+                        tree = scipy.spatial.cKDTree(mapping_parts_np)
+                        dists, indices = tree.query(verts_np, k=3)
+                        dists = np.maximum(dists, 1e-6)
+                        weights = 1.0 / dists
+                        weight_sums = weights.sum(axis=1)
+                        neighbor_temps = particles_temp[indices]
+                        vertices_temp = (neighbor_temps * weights).sum(axis=1) / weight_sums
+                        vertices_temp = vertices_temp.astype(np.float32)
+                    else:
+                        vertices_temp = np.zeros(verts_np.shape[0], dtype=np.float32)
             else:
                 vertices_temp = np.zeros(vertices_raw.shape[0] if hasattr(vertices_raw, 'shape') else 0, dtype=np.float32)
             

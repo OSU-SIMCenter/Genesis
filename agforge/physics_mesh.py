@@ -16,6 +16,8 @@ import numpy as np
 import trimesh
 
 import genesis as gs
+
+from agforge.profiling_util import teleop_profile
 from agforge.reconstruction import (
     SurfaceReconstructor,
     build_splashsurf_mesh_from_env,
@@ -101,7 +103,8 @@ class InductionPhysicsMesher:
         mesh = self.visual_reconstructor.reconstructed_mesh
         if mesh is None or len(mesh.vertices) < 4:
             return False
-        self.physics_mesh = mesh.copy()
+        with teleop_profile(self.env, "teleop_unified_recon_mesh_copy"):
+            self.physics_mesh = mesh.copy()
         self.version = self.visual_reconstructor.mesh_version
         return True
 
@@ -126,21 +129,22 @@ class InductionPhysicsMesher:
 
         t0 = time.time()
         try:
-            if self.backend == PhysicsMeshBackend.HYBRID_LOW:
-                mesh = self._build_hybrid_low()
-            elif self.backend == PhysicsMeshBackend.HYBRID_HIGH:
-                mesh = self._build_hybrid_high()
-            else:
-                mesh = self._build_splashsurf()
+            with teleop_profile(self.env, "teleop_physics_mesh_rebuild"):
+                if self.backend == PhysicsMeshBackend.HYBRID_LOW:
+                    mesh = self._build_hybrid_low()
+                elif self.backend == PhysicsMeshBackend.HYBRID_HIGH:
+                    mesh = self._build_hybrid_high()
+                else:
+                    mesh = self._build_splashsurf()
 
-            if mesh is None or len(mesh.vertices) < 4 or len(mesh.faces) < 4:
-                gs.logger.warning(f"Physics mesh [{self.backend_label}] produced an empty mesh")
-                return False
+                if mesh is None or len(mesh.vertices) < 4 or len(mesh.faces) < 4:
+                    gs.logger.warning(f"Physics mesh [{self.backend_label}] produced an empty mesh")
+                    return False
 
-            self.physics_mesh = mesh
-            self.version += 1
-            if self.unified_mesh:
-                self._publish_to_visual(mesh)
+                self.physics_mesh = mesh
+                self.version += 1
+                if self.unified_mesh:
+                    self._publish_to_visual(mesh)
             dt_ms = (time.time() - t0) * 1000.0
             label = self.backend_label
             if self.unified_mesh:
