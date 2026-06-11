@@ -5,10 +5,11 @@ import trimesh.smoothing
 import quadrants as qd  # type: ignore
 import genesis as gs
 import genesis.utils.particle as pu
-import pyvista as pv
 import math
 from scipy.spatial import cKDTree
 from enum import Enum
+
+from agforge.mesh_extract import extract_isosurface_mesh
 
 # Compatibility Enum
 class SamplingMethod(Enum):
@@ -19,8 +20,9 @@ class SamplingMethod(Enum):
 
 @qd.data_oriented
 class SurfaceReconstructor:
-    def __init__(self, env, grid_res=128, backend='hybrid', physics_grid_res=96):
+    def __init__(self, env, grid_res=128, backend='hybrid', physics_grid_res=96, mc_backend="auto"):
         self.env = env
+        self.mc_backend = mc_backend
         self.reconstructed_mesh = trimesh.Trimesh()
         self.recon_enabled = True
         self.recon_frame_interval = 3  # Reconstruct every 3 frames
@@ -171,6 +173,55 @@ class SurfaceReconstructor:
     def subdivide_long_edges(self) -> bool:
         """No-op compatibility method."""
         return False
+
+    def _finalize_recon_mesh(
+        self,
+        mesh: trimesh.Trimesh,
+        *,
+        dx: float,
+        one_shot_physics: bool,
+        is_deforming: bool,
+        prev_verts_attr: str = "_prev_verts",
+    ) -> trimesh.Trimesh:
+        if mesh is None or len(mesh.vertices) == 0:
+            return trimesh.Trimesh()
+
+        verts = np.array(mesh.vertices, copy=True)
+        faces = np.array(mesh.faces, copy=True)
+
+        blend_factor = 0.0 if one_shot_physics else self.vertex_blend_factor
+        prev_verts = getattr(self, prev_verts_attr, None)
+        if blend_factor > 0 and prev_verts is not None and len(prev_verts) > 0:
+            try:
+                tree = cKDTree(prev_verts)
+                dists, indices = tree.query(verts)
+                valid_mask = dists < (dx * 2.0)
+                if valid_mask.any():
+                    blend = blend_factor
+                    verts[valid_mask] = (1.0 - blend) * verts[valid_mask] + blend * prev_verts[indices[valid_mask]]
+            except Exception as e:
+                gs.logger.debug(f"Reconstruction: Vertex blending failed: {e}")
+
+        if not one_shot_physics:
+            setattr(self, prev_verts_attr, verts.copy())
+
+        mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+
+        taubin_iters = 0 if one_shot_physics or is_deforming else 1
+        if len(mesh.vertices) > 0 and taubin_iters > 0:
+            try:
+                trimesh.smoothing.filter_taubin(mesh, iterations=taubin_iters)
+            except Exception:
+                try:
+                    trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=1)
+                except Exception as e:
+                    gs.logger.debug(f"Smoothing failed: {e}")
+
+            if np.isnan(mesh.vertices).any():
+                gs.logger.warning("Smoothing produced NaN vertices, using unsmoothed mesh")
+                mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+
+        return mesh
         
     def get_active_particle_cache(self):
         """Returns cached particles for visualization."""
@@ -581,83 +632,32 @@ class SurfaceReconstructor:
             if self.density_blur_sigma > 0:
                 self._blur_density_gpu()
 
-          with profile_block("hybrid_density_transfer"):
-            density_cpu = self.density.to_numpy()
-
-          with profile_block("hybrid_marching_cubes"):
-            # Percentile-Based Dynamic Thresholding
-            valid_densities = density_cpu[density_cpu > 1e-4]
-            if len(valid_densities) == 0:
-                gs.logger.warning("Reconstruction: No valid densities found! Mesh will be empty.")
-                return
-
-            thresh = float(np.percentile(valid_densities, 95)) * 0.3
-            gs.logger.debug(f"Reconstruction: max_density={density_cpu.max():.4f}, threshold={thresh:.4f}")
-
-            # Create PyVista grid (near zero-copy through VTK data adapters)
-            grid = pv.ImageData()
-            grid.dimensions = np.array(density_cpu.shape)
-            grid.spacing = (dx, dx, dx)
-            grid.origin = min_bound
-            grid.point_data["density"] = density_cpu.flatten(order="F")
-
-            contour = grid.contour(isosurfaces=[thresh], scalars="density", method='flying_edges', compute_normals=False)
-
-            if contour.n_points == 0:
-                self.reconstructed_mesh = trimesh.Trimesh()
-                self._prev_verts = None
-                return
+          mesh = extract_isosurface_mesh(
+              self.density,
+              min_bound=min_bound,
+              dx=float(dx),
+              grid_res=self.grid_res,
+              mc_backend=self.mc_backend,
+              profiler=profiler,
+              profile_prefix="hybrid",
+          )
+          if mesh is None:
+              gs.logger.warning("Reconstruction: No valid densities found! Mesh will be empty.")
+              self.reconstructed_mesh = trimesh.Trimesh()
+              self._prev_verts = None
+              return
 
           with profile_block("hybrid_post_process"):
-            verts = np.array(contour.points)
+              mesh = self._finalize_recon_mesh(
+                  mesh,
+                  dx=float(dx),
+                  one_shot_physics=one_shot_physics,
+                  is_deforming=is_deforming,
+                  prev_verts_attr="_prev_verts",
+              )
 
-            # Vertex Correspondence Blending (Post-MC Temporal Smoothing)
-            blend_factor = 0.0 if one_shot_physics else self.vertex_blend_factor
-            if blend_factor > 0 and self._prev_verts is not None and len(self._prev_verts) > 0:
-                try:
-                    tree = cKDTree(self._prev_verts)
-                    dists, indices = tree.query(verts)
-                    valid_mask = dists < (dx * 2.0)
-                    if valid_mask.any():
-                        blend = blend_factor
-                        verts[valid_mask] = (1.0 - blend) * verts[valid_mask] + blend * self._prev_verts[indices[valid_mask]]
-                except Exception as e:
-                    gs.logger.debug(f"Reconstruction: Vertex blending failed: {e}")
-
-            if not one_shot_physics:
-                self._prev_verts = verts.copy()
-
-            # Reverse winding order so normals point OUTWARD for Unity
-            faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
-            faces = faces[:, ::-1]
-
-            mesh = trimesh.Trimesh(
-                vertices=verts,
-                faces=faces,
-                vertex_normals=None,
-                process=False
-            )
-
-            # Taubin smoothing (live deforming / one-shot physics skip — MC at 96³ is already smooth)
-            taubin_iters = 0 if one_shot_physics or is_deforming else 1
-            if len(mesh.vertices) > 0 and taubin_iters > 0:
-                try:
-                    trimesh.smoothing.filter_taubin(mesh, iterations=taubin_iters)
-                except Exception:
-                    try:
-                        trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=1)
-                    except Exception as e:
-                        gs.logger.debug(f"Smoothing failed: {e}")
-
-                if np.isnan(mesh.vertices).any():
-                    gs.logger.warning("Smoothing produced NaN vertices, using unsmoothed mesh")
-                    mesh = trimesh.Trimesh(
-                        vertices=verts, faces=faces,
-                        process=False
-                    )
-
-            gs.logger.debug(f"Reconstruction: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
-            self.reconstructed_mesh = mesh
+          gs.logger.debug(f"Reconstruction: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
+          self.reconstructed_mesh = mesh
 
         except Exception as e:
             import traceback
@@ -760,68 +760,27 @@ class SurfaceReconstructor:
                 if self.physics_density_blur_sigma > 0:
                     self._blur_physics_density_gpu()
 
-            with profile_block("physics_hybrid_density_transfer"):
-                density_cpu = self.physics_density.to_numpy()
-
-            with profile_block("physics_hybrid_marching_cubes"):
-                valid_densities = density_cpu[density_cpu > 1e-4]
-                if len(valid_densities) == 0:
-                    gs.logger.warning("Physics reconstruction: no valid densities found.")
-                    return trimesh.Trimesh()
-
-                thresh = float(np.percentile(valid_densities, 95)) * 0.3
-                grid = pv.ImageData()
-                grid.dimensions = np.array(density_cpu.shape)
-                grid.spacing = (dx, dx, dx)
-                grid.origin = min_bound
-                grid.point_data["density"] = density_cpu.flatten(order="F")
-                contour = grid.contour(
-                    isosurfaces=[thresh],
-                    scalars="density",
-                    method="flying_edges",
-                    compute_normals=False,
-                )
-                if contour.n_points == 0:
-                    return trimesh.Trimesh()
+            mesh = extract_isosurface_mesh(
+                self.physics_density,
+                min_bound=min_bound,
+                dx=float(dx),
+                grid_res=self.physics_grid_res,
+                mc_backend=self.mc_backend,
+                profiler=profiler,
+                profile_prefix="physics_hybrid",
+            )
+            if mesh is None:
+                gs.logger.warning("Physics reconstruction: no valid densities found.")
+                return trimesh.Trimesh()
 
             with profile_block("physics_hybrid_post_process"):
-                verts = np.array(contour.points)
-
-                blend_factor = 0.0 if one_shot_physics else self.vertex_blend_factor
-                if blend_factor > 0 and self._prev_verts is not None and len(self._prev_verts) > 0:
-                    try:
-                        tree = cKDTree(self._prev_verts)
-                        dists, indices = tree.query(verts)
-                        valid_mask = dists < (dx * 2.0)
-                        if valid_mask.any():
-                            blend = blend_factor
-                            verts[valid_mask] = (
-                                (1.0 - blend) * verts[valid_mask]
-                                + blend * self._prev_verts[indices[valid_mask]]
-                            )
-                    except Exception as e:
-                        gs.logger.debug(f"Physics reconstruction: vertex blending failed: {e}")
-
-                if not one_shot_physics:
-                    self._prev_verts = verts.copy()
-
-                faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
-                faces = faces[:, ::-1]
-                mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-
-                taubin_iters = 0 if one_shot_physics or is_deforming else 1
-                if len(mesh.vertices) > 0 and taubin_iters > 0:
-                    try:
-                        trimesh.smoothing.filter_taubin(mesh, iterations=taubin_iters)
-                    except Exception:
-                        try:
-                            trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=1)
-                        except Exception as e:
-                            gs.logger.debug(f"Physics smoothing failed: {e}")
-                    if np.isnan(mesh.vertices).any():
-                        mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-
-                return mesh
+                return self._finalize_recon_mesh(
+                    mesh,
+                    dx=float(dx),
+                    one_shot_physics=one_shot_physics,
+                    is_deforming=is_deforming,
+                    prev_verts_attr="_prev_verts",
+                )
 
         except Exception as e:
             import traceback

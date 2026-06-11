@@ -82,6 +82,7 @@ extra-index-urls = ["https://download.pytorch.org/whl/cu130"]
 torch = "*"
 torchvision = "*"
 torchaudio = "*"
+warp-lang = ">=1.7"
 
 # Triton: GPU kernel compiler for torch.compile — can give 2-3x speedup
 # Linux-only (no Windows wheels exist)

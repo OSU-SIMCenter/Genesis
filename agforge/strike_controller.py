@@ -67,13 +67,14 @@ class StrikeController:
             grid_res=recon_cfg.grid_res,
             backend=recon_cfg.backend,
             physics_grid_res=recon_cfg.physics_mesh_grid_res,
+            mc_backend=getattr(recon_cfg, "mc_backend", "auto"),
         )
         if getattr(recon_cfg, "unified_mesh", True):
             # Single mesh build via physics_mesher; skip per-frame visual recon.
             self.reconstructor.recon_enabled = False
             gs.logger.info(
                 f"Unified surface mesh enabled ({recon_cfg.physics_mesh_backend}, "
-                f"grid={recon_cfg.physics_mesh_grid_res})"
+                f"grid={recon_cfg.physics_mesh_grid_res}, mc={getattr(recon_cfg, 'mc_backend', 'auto')})"
             )
         else:
             self.reconstructor.recon_enabled = recon_cfg.enabled

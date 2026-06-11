@@ -107,6 +107,8 @@ class ReconstructionOptions(Options):
     # Surface mesh for physics SDF (and visual when unified_mesh): hybrid_low | hybrid_high | splashsurf
     physics_mesh_backend: str = "hybrid_high"
     physics_mesh_grid_res: int = 96  # hybrid_high marching-cubes grid resolution
+    # Isosurface extractor: auto (CUDA→Warp, else PyVista), warp, or pyvista
+    mc_backend: str = "auto"
 
 class RobotOptions(Options):
     """Parameters for the robot arm in the MuJoCo XML file."""
