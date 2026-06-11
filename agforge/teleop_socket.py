@@ -170,8 +170,12 @@ async def viewer_idle_loop(state: StrikeController):
             is_connected = getattr(state, 'is_client_connected', False)
             
             if not is_connected:
+                await state.process_pending_physics_rebuild()
                 if hasattr(state.env.scene, 'visualizer') and state.env.scene.visualizer:
                      renderer = getattr(state, '_temp_particle_renderer', None)
+                     overlay = getattr(state, '_mesh_overlay', None)
+                     if overlay is not None:
+                         overlay.sync_from_controller(state)
                      if renderer is not None:
                          renderer.sync_from_env(state.env)
                      vis = state.env.scene.visualizer
@@ -288,16 +292,32 @@ async def main():
     env = build_env(cfg)
 
     from agforge.vis.temperature_particles import install_temperature_particle_renderer
+    from agforge.vis.mesh_overlay import install_mesh_overlay
+    from agforge.vis.status_overlay import install_viewer_status_plugin
+
+    install_viewer_status_plugin(env)
 
     temp_renderer = install_temperature_particle_renderer(
         env,
         temp_min=cfg.general.particle_temp_min,
         temp_max=cfg.general.particle_temp_max,
+        register_keybinds=False,
     )
     
     # Instantiate the new controller
     shared_state = StrikeController(env)
     shared_state._temp_particle_renderer = temp_renderer
+
+    mesh_overlay = install_mesh_overlay(env, shared_state, temp_renderer=temp_renderer)
+
+    if temp_renderer is not None:
+        from agforge.vis.temperature_particles import register_particle_color_keybinds
+        register_particle_color_keybinds(
+            env,
+            temp_renderer,
+            mesh_overlay=mesh_overlay,
+            physics_mesher=shared_state.physics_mesher,
+        )
     shared_state.robot.set_control_mode("TELEPORT")
     
     # Add dynamic attributes needed for socket loop
@@ -321,7 +341,11 @@ async def main():
 
     if temp_renderer is not None:
         temp_renderer.sync_from_env(env)
-    
+
+    from agforge.vis.temperature_particles import update_particle_color_display
+
+    update_particle_color_display(env, physics_mesher=shared_state.physics_mesher)
+
     # Reset profiler after warmup so only actual operation is profiled
     env.scene.profiling_options.profiler.reset()
 

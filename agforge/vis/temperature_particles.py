@@ -22,7 +22,7 @@ PARTICLE_COLOR_MODE_LABELS = {
     "temperature": "Temperature",
     "induction_depth": "SDF depth",
     # ASCII only — the viewer font lacks Greek/special glyphs (e.g. delta crashes on_draw).
-    "skin_weight": "Skin weight exp(-2d/d)",
+    "skin_weight": "Skin weight",
     "q_ind": "Heating rate q",
 }
 
@@ -341,42 +341,13 @@ def update_particle_color_display(
     *,
     flash: bool = False,
     renderer: TemperatureParticleRenderer | None = None,
+    mesh_overlay=None,
+    physics_mesher=None,
 ) -> None:
-    """Update window title and on-screen HUD with the active particle color mode."""
-    pr = _pyrender_viewer(env)
-    if pr is None:
-        return
+    """Update the minimal top-right status overlay (color mode + SDF mesh backend)."""
+    from agforge.vis.status_overlay import update_viewer_status
 
-    import numpy as np
-    from genesis.ext.pyrender.constants import TextAlign
-
-    mode = getattr(env.cfg.general, "particle_color_mode", "temperature")
-    label = PARTICLE_COLOR_MODE_LABELS.get(mode, mode)
-    size_label = renderer.render_scale_label() if renderer is not None else "normal"
-    hud = f"Particles: {label}  |  size: {size_label}  (G color, B size)"
-
-    base = pr.viewer_flags.get("_agforge_base_title")
-    if base is None:
-        base = pr.viewer_flags.get("window_title", "Genesis")
-        pr.viewer_flags["_agforge_base_title"] = base
-
-    title = f"{base} | {label}"
-    pr.viewer_flags["window_title"] = title
-    pr.set_caption(title)
-
-    pr.viewer_flags["caption"] = [
-        {
-            "text": hud,
-            "location": TextAlign.TOP_RIGHT,
-            "font_name": "OpenSans-Regular",
-            "font_pt": 16,
-            "color": np.array([0.85, 0.92, 1.0, 0.95]),
-            "scale": 1.0,
-        }
-    ]
-
-    if flash:
-        pr.set_message_text(f"Particle color: {label}")
+    update_viewer_status(env, physics_mesher=physics_mesher)
 
 
 def cycle_particle_color_mode(env: "AgilityForgeEnv", renderer: TemperatureParticleRenderer, step: int = 1) -> str:
@@ -393,7 +364,13 @@ def cycle_particle_color_mode(env: "AgilityForgeEnv", renderer: TemperatureParti
     return mode
 
 
-def register_particle_color_keybinds(env: "AgilityForgeEnv", renderer: TemperatureParticleRenderer | None) -> None:
+def register_particle_color_keybinds(
+    env: "AgilityForgeEnv",
+    renderer: TemperatureParticleRenderer | None,
+    *,
+    mesh_overlay=None,
+    physics_mesher=None,
+) -> None:
     """Bind G / Shift+G in the Genesis viewer to cycle particle color modes."""
     if renderer is None:
         return
@@ -408,8 +385,8 @@ def register_particle_color_keybinds(env: "AgilityForgeEnv", renderer: Temperatu
 
     def _show_mode(mode: str):
         label = PARTICLE_COLOR_MODE_LABELS.get(mode, mode)
-        update_particle_color_display(env, flash=True, renderer=renderer)
-        gs.logger.info(f"Particle color mode → {label} ({mode})")
+        update_particle_color_display(env, physics_mesher=physics_mesher)
+        gs.logger.info(f"Particle color mode: {label} ({mode})")
 
     def _refresh_viewer():
         if vis is not None:
@@ -426,20 +403,19 @@ def register_particle_color_keybinds(env: "AgilityForgeEnv", renderer: Temperatu
     def _toggle_size():
         scale = renderer.cycle_render_scale(env)
         label = renderer.render_scale_label()
-        update_particle_color_display(env, flash=True, renderer=renderer)
-        gs.logger.info(f"Particle render size → {label} (scale={scale:.2f})")
+        gs.logger.info(f"Particle render size: {label} (scale={scale:.2f})")
         _refresh_viewer()
 
     viewer.register_keybinds(
         Keybind(
-            "agforge_cycle_particle_color",
+            "cycle_color_mode",
             Key.G,
             key_action=KeyAction.PRESS,
             callback=_cycle_next,
             allow_overload=True,
         ),
         Keybind(
-            "agforge_cycle_particle_color_prev",
+            "prev_color_mode",
             Key.G,
             key_mods=(KeyMod.SHIFT,),
             key_action=KeyAction.PRESS,
@@ -447,7 +423,7 @@ def register_particle_color_keybinds(env: "AgilityForgeEnv", renderer: Temperatu
             allow_overload=True,
         ),
         Keybind(
-            "agforge_toggle_particle_size",
+            "toggle_particle_size",
             Key.B,
             key_action=KeyAction.PRESS,
             callback=_toggle_size,
@@ -455,11 +431,10 @@ def register_particle_color_keybinds(env: "AgilityForgeEnv", renderer: Temperatu
         ),
         overwrite=False,
     )
-    update_particle_color_display(env, renderer=renderer)
-    gs.logger.info(
-        "Particle viewer keybinds: [G] color, [Shift+G] prev color, [B] size "
-        f"(color modes: {', '.join(PARTICLE_COLOR_MODES)})"
-    )
+    from agforge.vis.status_overlay import _refresh_keybind_help
+
+    update_particle_color_display(env, physics_mesher=physics_mesher)
+    _refresh_keybind_help(env)
 
 
 def install_temperature_particle_renderer(
