@@ -100,6 +100,8 @@ class StrikeController:
         self._last_vel_cmd = torch.zeros(4, device=self.env.device)
         self._dofs_idx_local = torch.tensor([0, 1, 2, 3], device=self.env.device)
         self._force_next_apply = True
+        self._last_applied_qpos = None
+        self._last_apply_strike_state = None
 
         # Normalized force for Unity pressure gauge (0-1, where 1 = 150kN)
         self.last_force_normalized = 0.0
@@ -144,6 +146,14 @@ class StrikeController:
         self._unity_knn_indices = None
         self._unity_knn_weights = None
         self._unity_knn_fade_alpha = None
+
+    def _invalidate_applied_qpos_cache(self) -> None:
+        self._last_applied_qpos = None
+        self._last_apply_strike_state = None
+
+    def _mark_qpos_applied(self, qpos: torch.Tensor) -> None:
+        self._last_applied_qpos = qpos.clone()
+        self._last_apply_strike_state = self.strike_state
 
     def _unity_mesh_stamp(self) -> int:
         if self._uses_unified_surface_mesh():
@@ -293,6 +303,7 @@ class StrikeController:
             # Only clamp slider/hinge, grippers managed by logic if striking
             new_qpos[:, :2] = torch.clamp(new_qpos[:, :2], self.dof_limits[0][:2], self.dof_limits[1][:2])
             self.qpos = new_qpos
+            self._invalidate_applied_qpos_cache()
 
     async def get_qpos(self):
         async with self.lock:
@@ -327,6 +338,7 @@ class StrikeController:
             self.stabilization_steps = 0
             self.target_strain = force_param
             self.strike_step_count = 0
+            self._invalidate_applied_qpos_cache()
             self.robot.set_control_mode("VELOCITY_CONTROL")
             gs.logger.info(f"  Control mode -> VELOCITY_CONTROL")
             
@@ -381,8 +393,9 @@ class StrikeController:
                     # contacts = [L_hit, R_hit]
                     contacts_tensor = torch.stack([force_L > contact_threshold, force_R > contact_threshold])
                     
-                    new_contact_L = contacts_tensor[0].item()
-                    new_contact_R = contacts_tensor[1].item()
+                    with self._profile("logic_tensor_sync"):
+                        new_contact_L = contacts_tensor[0].item()
+                        new_contact_R = contacts_tensor[1].item()
 
                     if not self.contact_L and new_contact_L:
                         self.contact_L = True
@@ -405,12 +418,13 @@ class StrikeController:
                     if self.contact_L and self.contact_R:
                         self.strike_state = StrikeState.PRESSING
                         self.stage_start_time = time.time()
-                        
-                        pos_L = self.robot.left_gripper.get_pos()
-                        pos_R = self.robot.right_gripper.get_pos()
-                        # Keep as tensor for GPU strain calc
+
+                        with self._profile("logic_gripper_get_pos"):
+                            pos_L = self.robot.left_gripper.get_pos()
+                            pos_R = self.robot.right_gripper.get_pos()
                         self.contact_width_tensor = torch.norm(pos_L - pos_R)
-                        self.contact_width = self.contact_width_tensor.item() # Sync once for logging/logic
+                        with self._profile("logic_tensor_sync"):
+                            self.contact_width = self.contact_width_tensor.item()
                         
                         gs.logger.info(f"Strike -> PRESSING (width={self.contact_width:.4f}, steps={self.strike_step_count})")
                     
@@ -427,9 +441,9 @@ class StrikeController:
                         force_L, force_R = self.robot.get_resistance_forces()
                     self._update_force_gauge(force_L, force_R)
                 
-                    pos_L = self.robot.left_gripper.get_pos()
-                    pos_R = self.robot.right_gripper.get_pos()
-                    # GPU calculation
+                    with self._profile("logic_gripper_get_pos"):
+                        pos_L = self.robot.left_gripper.get_pos()
+                        pos_R = self.robot.right_gripper.get_pos()
                     current_width_tensor = torch.norm(pos_L - pos_R)
                     
                     if self.contact_width > 1e-6:
@@ -457,18 +471,20 @@ class StrikeController:
                     # Stack GPU conditions
                     stop_flags = torch.stack([cond_strain, cond_force])
                     
-                    # Single Sync: Check if any stop condition is met
-                    # We pull as int to see WHICH flag triggered if we wanted, or just any().item()
-                    stop_any = stop_flags.any().item() or is_timeout
-                    
+                    with self._profile("logic_tensor_sync"):
+                        stop_any = stop_flags.any().item() or is_timeout
+
                     if stop_any:
-                        # Determine reason (Now we can sync values for logging since we are stopping)
-                        if cond_strain.item(): stop_reason = "Target Strain"
-                        elif cond_force.item(): stop_reason = "Max Force"
-                        elif is_timeout: stop_reason = "Timeout"
-                        else: stop_reason = "Unknown"
-                        
-                        strain_val = current_strain_tensor.item()
+                        with self._profile("logic_tensor_sync"):
+                            if cond_strain.item():
+                                stop_reason = "Target Strain"
+                            elif cond_force.item():
+                                stop_reason = "Max Force"
+                            elif is_timeout:
+                                stop_reason = "Timeout"
+                            else:
+                                stop_reason = "Unknown"
+                            strain_val = current_strain_tensor.item()
                         gs.logger.info(f"Strike -> HOLDING ({stop_reason}, strain={strain_val:.4f}, steps={self.strike_step_count}, time={elapsed_time:.2f}s)")
                         self.strike_state = StrikeState.HOLDING
                         self.hold_steps_remaining = self.env.cfg.strike.hold_steps
@@ -550,12 +566,16 @@ class StrikeController:
                     # Batch check for release completion
                     # cond: abs(force) < threshold
                     is_free = (torch.abs(force_L) < contact_threshold) & (torch.abs(force_R) < contact_threshold)
-                    
-                    if is_free.item(): # 1 Sync
-                        # Calculate final stats
-                        pos_L = self.robot.left_gripper.get_pos()
-                        pos_R = self.robot.right_gripper.get_pos()
-                        final_width = torch.norm(pos_L - pos_R).item()
+
+                    with self._profile("logic_tensor_sync"):
+                        release_complete = is_free.item()
+
+                    if release_complete:
+                        with self._profile("logic_gripper_get_pos"):
+                            pos_L = self.robot.left_gripper.get_pos()
+                            pos_R = self.robot.right_gripper.get_pos()
+                        with self._profile("logic_tensor_sync"):
+                            final_width = torch.norm(pos_L - pos_R).item()
                         total_duration = time.time() - getattr(self, 'strike_start_time', self.stage_start_time)
                         
                         self._force_idle_reset()
@@ -630,7 +650,8 @@ class StrikeController:
          self.robot.set_control_mode("TELEPORT")
          self.qpos = current_qpos
          self.robot.apply_action(current_qpos)
-         
+         self._mark_qpos_applied(current_qpos)
+
          self.strike_state = StrikeState.IDLE
          self.contact_L = False
          self.contact_R = False
@@ -656,7 +677,8 @@ class StrikeController:
         - Render Update
         - Reconstruction (if needed)
         """
-        await self.process_pending_physics_rebuild()
+        with self._profile("teleop_process_physics_rebuild"):
+            await self.process_pending_physics_rebuild()
 
         # 1. Logic Update
         with self._profile("teleop_logic"):
@@ -669,8 +691,17 @@ class StrikeController:
         # 2. Apply Actions (if not handled by strike logic, handle idle holding)
         with self._profile("teleop_apply_action"):
             if self.strike_state == StrikeState.IDLE or self.strike_state == StrikeState.HOLDING:
-                qpos = await self.get_qpos()
-                self.robot.apply_action(qpos)
+                with self._profile("teleop_apply_action_get_qpos"):
+                    qpos = await self.get_qpos()
+                state_changed = self._last_apply_strike_state != self.strike_state
+                qpos_changed = (
+                    self._last_applied_qpos is None
+                    or self._last_applied_qpos.shape != qpos.shape
+                    or not torch.equal(qpos, self._last_applied_qpos)
+                )
+                if state_changed or qpos_changed:
+                    self.robot.apply_action(qpos)
+                    self._mark_qpos_applied(qpos)
 
         # 3. Clear Forces
         with self._profile("teleop_clear_forces"):
@@ -683,30 +714,32 @@ class StrikeController:
         if self.thermal_enabled:
             with self._profile("teleop_heating"):
                 if self.heater is None:
-                    from agforge.thermal import InductionHeater
-                    self.heater = InductionHeater(
-                        solver=self.env.scene.sim.mpm_solver,
-                        entity=self.env.mpm_entity,
-                        physics_mesher=self.physics_mesher,
-                        reconstructor=self.reconstructor,
-                    )
-                    # Precompute the initial physics mesh + skin-depth field before the first strike.
-                    self.rebuild_physics_induction()
+                    with self._profile("teleop_heating_init"):
+                        from agforge.thermal import InductionHeater
+                        self.heater = InductionHeater(
+                            solver=self.env.scene.sim.mpm_solver,
+                            entity=self.env.mpm_entity,
+                            physics_mesher=self.physics_mesher,
+                            reconstructor=self.reconstructor,
+                        )
+                        # Precompute the initial physics mesh + skin-depth field before the first strike.
+                        self.rebuild_physics_induction()
 
                 # Induction heat is deposited on the GPU inside the MPM P2G kernel. Here we
                 # only publish the per-frame coil uniforms (center rides the sliding arm).
                 # The coil is "powered" only when not striking.
-                current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else 0.0
-                dynamic_coil_x = current_slider_x + self.env.cfg.robot.coil_offset_x
-                coil_center = [dynamic_coil_x, 0.0, self.env.cfg.robot.cylinder_pos[2]]
-                self.env.scene.sim.mpm_solver.set_induction_params(
-                    center=coil_center,
-                    half_length=self.env.cfg.robot.coil_length / 2.0,
-                    radius=self.env.cfg.robot.coil_radius,
-                    q_peak=self.heating_power,
-                    skin_depth=self.skin_depth,
-                    active=(not _is_striking),
-                )
+                with self._profile("teleop_heating_set_params"):
+                    current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else 0.0
+                    dynamic_coil_x = current_slider_x + self.env.cfg.robot.coil_offset_x
+                    coil_center = [dynamic_coil_x, 0.0, self.env.cfg.robot.cylinder_pos[2]]
+                    self.env.scene.sim.mpm_solver.set_induction_params(
+                        center=coil_center,
+                        half_length=self.env.cfg.robot.coil_length / 2.0,
+                        radius=self.env.cfg.robot.coil_radius,
+                        q_peak=self.heating_power,
+                        skin_depth=self.skin_depth,
+                        active=(not _is_striking),
+                    )
         else:
             # Thermal Freezing: Disable natural diffusion by snapshotting temperatures before physics step
             if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
@@ -783,12 +816,10 @@ class StrikeController:
                         # Total thermal energy: E = Σ(m_real * Cp * T)
                         particle_mass_scaled = self.env.scene.sim.mpm_solver.particles_info[0].mass
                         particle_mass = particle_mass_scaled / self.env.scene.sim.mpm_solver._particle_volume_scale
-                        import torch
                         from agforge.thermal import get_steel_cp_numpy
                         cp_tensor = torch.tensor(get_steel_cp_numpy(t.cpu().numpy()), device=t.device)
                         n_particles = t.numel()
 
-                        import torch
                         all_dT_names = []
                         all_dT_tensors = []
 
@@ -1110,6 +1141,10 @@ class StrikeController:
                                 setattr(entity_state, eattr, ev.clone())
 
     def _save_checkpoint_impl(self):
+        with self._profile("teleop_checkpoint_save"):
+            self._save_checkpoint_impl_inner()
+
+    def _save_checkpoint_impl_inner(self):
         # Genesis SimState
         sim_state = self.env.scene.sim.get_state()
         sim_state.serializable() # Detach from autograd graph
@@ -1198,7 +1233,8 @@ class StrikeController:
             # Teleport ALL DOFs to the authoritative position.
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
-            
+            self._mark_qpos_applied(self.qpos)
+
             self._invalidate_unity_vertex_temp_cache()
             if self._uses_unified_surface_mesh():
                 self.reconstructor.reset()
@@ -1421,7 +1457,8 @@ class StrikeController:
                 
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
-            
+            self._mark_qpos_applied(self.qpos)
+
             # --- CRITICAL FIX: Flush Ghost State ---
             # Run several frames of physics to fully resolve the teleportation
             # and flush out any residual collision/coupler forces from the broadphase.

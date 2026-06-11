@@ -253,6 +253,7 @@ async def handle_client(websocket, state: StrikeController, path=None):
                          # Force the robot to this exact position NOW before the state
                          # transitions to APPROACHING (which skips the normal apply_action path)
                          state.robot.apply_action(qpos)
+                         state._mark_qpos_applied(qpos)
 
                          # PROCEED WITH STRIKE
                          raw_force = packet.get("force", 0.05)  # Default 0.05 -> 0.5 strain after scaling

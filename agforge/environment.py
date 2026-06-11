@@ -10,6 +10,7 @@ from agforge.options import (
     GENERATED_ROBOT_XML_PATH,
 )
 from agforge.materials import JohnsonCookPlasticity
+from agforge.profiling_util import teleop_profile
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -82,12 +83,16 @@ class AgilityForgeManipulator:
     def apply_action(self, action: torch.Tensor, dofs_idx_local=None):
         """Applies an action based on the current control mode."""
         if self.control_mode == "PD_CONTROL":
-            self.entity.control_dofs_position(position=action, dofs_idx_local=dofs_idx_local)
+            with teleop_profile(self.scene, "teleop_apply_action_control"):
+                self.entity.control_dofs_position(position=action, dofs_idx_local=dofs_idx_local)
         elif self.control_mode == "TELEPORT":
-            self.entity.control_dofs_position(position=action, dofs_idx_local=dofs_idx_local)
-            self.entity.set_dofs_position(action, dofs_idx_local=dofs_idx_local)
+            with teleop_profile(self.scene, "teleop_apply_action_control"):
+                self.entity.control_dofs_position(position=action, dofs_idx_local=dofs_idx_local)
+            with teleop_profile(self.scene, "teleop_apply_action_set_pos"):
+                self.entity.set_dofs_position(action, dofs_idx_local=dofs_idx_local)
         elif self.control_mode == "VELOCITY_CONTROL":
-            self.apply_velocity(velocity=action, dofs_idx_local=dofs_idx_local)
+            with teleop_profile(self.scene, "teleop_apply_action_control"):
+                self.apply_velocity(velocity=action, dofs_idx_local=dofs_idx_local)
 
     def apply_velocity(self, velocity: torch.Tensor, dofs_idx_local=None):
         """
@@ -104,7 +109,8 @@ class AgilityForgeManipulator:
             torch.Tensor: Shape (n_envs, 2, 3) where dim 1 is [Left, Right]
         """
         # (n_envs, n_links, 3)
-        net_forces = self.entity.get_links_net_contact_force()
+        with teleop_profile(self.scene, "teleop_logic_resistance_rigid_pull"):
+            net_forces = self.entity.get_links_net_contact_force()
         # Select gripper links
         # Assuming single env for now or preserving batch dim
         if net_forces.dim() == 2: # (n_links, 3) - happens if n_envs=0 or something weird, but likely (n_envs, n_links, 3)
@@ -119,7 +125,8 @@ class AgilityForgeManipulator:
         
         # Add MPM forces if available (now from RigidEntity native API)
         try:
-            mpm_forces = self.entity.get_links_mpm_force()
+            with teleop_profile(self.scene, "teleop_logic_resistance_mpm_pull"):
+                mpm_forces = self.entity.get_links_mpm_force()
             # mpm_forces shape: (n_envs, n_links, 3) or (n_links, 3)
             if mpm_forces.dim() == 2:
                  mpm_stack = torch.stack([mpm_forces[self.left_gripper_idx], mpm_forces[self.right_gripper_idx]], dim=0).unsqueeze(0)
@@ -162,33 +169,25 @@ class AgilityForgeManipulator:
         Returns:
             tuple[torch.Tensor, torch.Tensor]: (Force_L, Force_R) resistance forces for each gripper
         """
-        # Get orientation of clamp_bar (parent of grippers)
-        # quat is (n_envs, 4) or (4,)
-        quat = self.ee_link.get_quat() 
-        if quat.dim() == 1: quat = quat.unsqueeze(0)
+        with teleop_profile(self.scene, "teleop_logic_resistance_ee_quat"):
+            # Get orientation of clamp_bar (parent of grippers)
+            quat = self.ee_link.get_quat()
+            if quat.dim() == 1:
+                quat = quat.unsqueeze(0)
 
-        # Local squeeze directions (Pushing IN) - use pre-allocated tensors
-        # Left slides +Y: (0, 1, 0)
-        # Right slides -Y: (0, -1, 0)
-        local_squeeze_L = self._squeeze_dir_L.expand(quat.shape[0], 3)
-        local_squeeze_R = self._squeeze_dir_R.expand(quat.shape[0], 3)
-        
-        # Global squeeze directions
-        global_squeeze_L = self._rotate_vector_by_quat(local_squeeze_L, quat)
-        global_squeeze_R = self._rotate_vector_by_quat(local_squeeze_R, quat)
-        
-        # Get Contact Forces (F_contact)
-        # shape: (n_envs, 2, 3)
-        contact_forces = self.get_gripper_net_contact_force()
-        force_L = contact_forces[:, 0, :]
-        force_R = contact_forces[:, 1, :]
-        
-        # Resistance is Component of Force opposing Motion
-        # F_resist = Dot(F_contact, -v_squeeze)
-        #          = - Dot(F_contact, v_squeeze)
-        
-        resist_L = -torch.sum(force_L * global_squeeze_L, dim=-1)
-        resist_R = -torch.sum(force_R * global_squeeze_R, dim=-1)
+            local_squeeze_L = self._squeeze_dir_L.expand(quat.shape[0], 3)
+            local_squeeze_R = self._squeeze_dir_R.expand(quat.shape[0], 3)
+            global_squeeze_L = self._rotate_vector_by_quat(local_squeeze_L, quat)
+            global_squeeze_R = self._rotate_vector_by_quat(local_squeeze_R, quat)
+
+        with teleop_profile(self.scene, "teleop_logic_resistance_contact_pull"):
+            contact_forces = self.get_gripper_net_contact_force()
+
+        with teleop_profile(self.scene, "teleop_logic_resistance_project"):
+            force_L = contact_forces[:, 0, :]
+            force_R = contact_forces[:, 1, :]
+            resist_L = -torch.sum(force_L * global_squeeze_L, dim=-1)
+            resist_R = -torch.sum(force_R * global_squeeze_R, dim=-1)
         
         # Return tuple of tensors for single environment (compatibility with teleop_socket)
         # Assuming batch size 1 for teleop
