@@ -115,7 +115,7 @@ class RobotOptions(Options):
     coil_length: float = 0.037
     # Effective solenoid radius = multiplier × billet radius. For close-coupled forging
     # coils the bore is typically ~110–125% of workpiece OD (ASM / induction heating practice).
-    coil_radius_multiplier: float = 1.2
+    coil_radius_multiplier: float = 2.0
     coil_radius: Optional[float] = None  # computed in model_post_init
     coup_softness: float = 5e-4
 
