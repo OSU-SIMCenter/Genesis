@@ -385,7 +385,7 @@ class SafetyOptions(Options):
     
     check_nan: bool = True
     auto_reset: bool = True
-    check_interval: int = 1 # Decrease to 1 to catch exact frame of failure
+    check_interval: int = 5  # Idle-only: check every N physics steps (strikes always check each step)
 
 class AdaptiveControlConfig(Options):
     """Configuration for adaptive control gains."""

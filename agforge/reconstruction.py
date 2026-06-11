@@ -638,8 +638,8 @@ class SurfaceReconstructor:
                 process=False
             )
 
-            # Taubin smoothing (skipped for one-shot physics meshes)
-            taubin_iters = 0 if one_shot_physics else 1
+            # Taubin smoothing (live deforming / one-shot physics skip — MC at 96³ is already smooth)
+            taubin_iters = 0 if one_shot_physics or is_deforming else 1
             if len(mesh.vertices) > 0 and taubin_iters > 0:
                 try:
                     trimesh.smoothing.filter_taubin(mesh, iterations=taubin_iters)
@@ -809,7 +809,7 @@ class SurfaceReconstructor:
                 faces = faces[:, ::-1]
                 mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
 
-                taubin_iters = 0 if one_shot_physics else 1
+                taubin_iters = 0 if one_shot_physics or is_deforming else 1
                 if len(mesh.vertices) > 0 and taubin_iters > 0:
                     try:
                         trimesh.smoothing.filter_taubin(mesh, iterations=taubin_iters)

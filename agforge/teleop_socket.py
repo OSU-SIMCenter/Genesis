@@ -102,8 +102,12 @@ async def simulation_loop(websocket, state: StrikeController):
                 # 2. Reconstruction & IO (always send when should_send is True)
                 # Note: state.env.scene.profiling_options is accessible
                 with state._profile("teleop_io"):
+                    send_thermal_enabled = getattr(state, 'thermal_enabled', False) or getattr(state, 'pending_mesh_send', False)
+
                     with state._profile("teleop_io_recon_data"):
-                        vertices, triangles, particles, vertices_temp = await state.update_and_get_recon_data()
+                        vertices, triangles, particles, vertices_temp = await state.update_and_get_recon_data(
+                            include_vertex_temps=send_thermal_enabled,
+                        )
 
                     with state._profile("teleop_io_gpu_to_cpu"):
                         v_flat, v_count = _prepare_array(vertices, np.float32)
@@ -116,8 +120,6 @@ async def simulation_loop(websocket, state: StrikeController):
                         t_flat, t_count = _prepare_array(triangles, np.int32)
                         p_flat, p_count = _prepare_array(particles, np.float32)
                         temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
-
-                    send_thermal_enabled = getattr(state, 'thermal_enabled', False) or getattr(state, 'pending_mesh_send', False)
 
                     with state._profile("teleop_io_websocket_pack_send"):
                         header = {

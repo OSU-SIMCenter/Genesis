@@ -916,6 +916,11 @@ class StrikeController:
             elif self._stability_grace_steps > 0:
                 self._stability_grace_steps -= 1
                 needs_check = False
+            elif not safety or not getattr(safety, "enabled", True):
+                needs_check = False
+            elif self.strike_state == StrikeState.IDLE:
+                interval = max(1, int(getattr(safety, "check_interval", 1)))
+                needs_check = (self._physics_step_counter % interval) == 0
             else:
                 needs_check = True
 
@@ -1004,8 +1009,10 @@ class StrikeController:
             return self.env.scene.profiling_options.profiler.time(name)
         return contextlib.suppress()
 
-    async def update_and_get_recon_data(self):
+    async def update_and_get_recon_data(self, include_vertex_temps: bool | None = None):
         """Updates reconstruction and returns data for visualization/IO."""
+        if include_vertex_temps is None:
+            include_vertex_temps = bool(getattr(self, "thermal_enabled", False))
         with self._profile("teleop_recon"):
             allowed_stages = (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE)
             should_reconstruct = self.strike_state in allowed_stages
@@ -1040,7 +1047,11 @@ class StrikeController:
             # Winding reversal is now handled by Unity after axis conversion
             
             # Extract and spatial-interpolate thermal data to vertices
-            if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
+            if (
+                include_vertex_temps
+                and hasattr(self.env.scene.sim.mpm_solver, 'particles')
+                and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp')
+            ):
                 with self._profile("teleop_io_vertex_temp_prep"):
                     particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
 
@@ -1231,7 +1242,7 @@ class StrikeController:
         without stalling the simulation pipeline.
         """
         safety = getattr(self.env.cfg, 'safety', None)
-        if not safety:
+        if not safety or not getattr(safety, "enabled", True):
             return
 
         vels = self.env.mpm_entity.get_particles_vel()
