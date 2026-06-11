@@ -101,6 +101,7 @@ class ProfilingOptions(Options):
             induction_pos_pull: bool = True
             io_recon_data: bool = True
             io_vertex_temp_prep: bool = True
+            io_kdtree_build: bool = True
             io_kdtree_vertex_temps: bool = True
             io_gpu_to_cpu: bool = True
             io_websocket_pack_send: bool = True

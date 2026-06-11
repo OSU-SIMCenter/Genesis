@@ -134,6 +134,80 @@ class StrikeController:
         self._diag_last_sim_time = 0.0
         self._diag_last_step = 0
 
+        # Cached kNN bind for Unity vertex temperatures (rebuilt on mesh_version change).
+        self._invalidate_unity_vertex_temp_cache()
+
+    def _invalidate_unity_vertex_temp_cache(self) -> None:
+        self._unity_knn_mesh_version = -1
+        self._unity_knn_n_verts = 0
+        self._unity_knn_indices = None
+        self._unity_knn_weights = None
+        self._unity_knn_fade_alpha = None
+
+    def _unity_mesh_stamp(self) -> int:
+        if self._uses_unified_surface_mesh():
+            return int(getattr(self.physics_mesher, "version", 0))
+        return int(getattr(self.reconstructor, "mesh_version", 0))
+
+    def _ensure_unity_vertex_temp_cache(self, mapping_parts_np: np.ndarray, verts_np: np.ndarray) -> None:
+        mesh_stamp = self._unity_mesh_stamp()
+        n_verts = int(verts_np.shape[0])
+        if (
+            self._unity_knn_indices is not None
+            and self._unity_knn_mesh_version == mesh_stamp
+            and self._unity_knn_n_verts == n_verts
+        ):
+            return
+
+        from scipy.spatial import cKDTree
+
+        with self._profile("teleop_io_kdtree_build"):
+            tree = cKDTree(mapping_parts_np)
+            dists, indices = tree.query(verts_np, k=3)
+            dists = np.maximum(dists, 1e-6)
+            weights = 1.0 / dists
+            weights_norm = weights / weights.sum(axis=1, keepdims=True)
+
+        self._unity_knn_indices = np.asarray(indices, dtype=np.int32)
+        self._unity_knn_weights = np.asarray(weights_norm, dtype=np.float32)
+        self._unity_knn_mesh_version = mesh_stamp
+        self._unity_knn_n_verts = n_verts
+
+        if getattr(self.env.cfg, "thermal_visual_fade", True):
+            L_v = self.env.cfg.robot.cylinder_height
+            cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
+            x_max_v = cylinder_center_x + (L_v / 2.0)
+            x_clamp_v = x_max_v - 0.11 * L_v
+            x_fade_v = x_max_v - 0.21 * L_v
+            self._unity_knn_fade_alpha = np.clip(
+                (mapping_parts_np[:, 0] - x_fade_v) / (x_clamp_v - x_fade_v),
+                0.0,
+                1.0,
+            ).astype(np.float32)
+        else:
+            self._unity_knn_fade_alpha = None
+
+    def _map_particle_temps_to_vertices(
+        self,
+        particles_temp: np.ndarray,
+        mapping_parts_np: np.ndarray,
+        verts_np: np.ndarray,
+    ) -> np.ndarray:
+        if mapping_parts_np.shape[0] < 3 or verts_np.shape[0] == 0:
+            return np.zeros(verts_np.shape[0], dtype=np.float32)
+
+        self._ensure_unity_vertex_temp_cache(mapping_parts_np, verts_np)
+
+        temps = particles_temp
+        if self._unity_knn_fade_alpha is not None:
+            target_vis = np.minimum(temps, 900.0)
+            temps = temps * (1.0 - self._unity_knn_fade_alpha) + target_vis * self._unity_knn_fade_alpha
+
+        with self._profile("teleop_io_kdtree_vertex_temps"):
+            neighbor_temps = temps[self._unity_knn_indices]
+            vertices_temp = (neighbor_temps * self._unity_knn_weights).sum(axis=1)
+            return vertices_temp.astype(np.float32)
+
     def _uses_unified_surface_mesh(self) -> bool:
         return bool(getattr(self.env.cfg.reconstruction, "unified_mesh", True))
 
@@ -968,12 +1042,8 @@ class StrikeController:
             # Extract and spatial-interpolate thermal data to vertices
             if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
                 with self._profile("teleop_io_vertex_temp_prep"):
-                    # Use entity API to read from the correct double-buffered substep frame.
                     particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
 
-                    import scipy.spatial
-
-                    # USE STATIC PARTICLES FOR MAPPING
                     mapping_parts_np = self.reconstructor._cached_particles
                     if mapping_parts_np is None:
                         mapping_parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
@@ -982,33 +1052,14 @@ class StrikeController:
                         active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0).cpu().numpy()
                         particles_temp = particles_temp[active_mask]
 
-                    if getattr(self.env.cfg, 'thermal_visual_fade', True):
-                        L_v = self.env.cfg.robot.cylinder_height
-                        cylinder_center_x = self.env.cfg.robot.cylinder_pos[0]
-                        x_max_v = cylinder_center_x + (L_v / 2.0)
-                        x_clamp_v = x_max_v - 0.11 * L_v
-                        x_fade_v = x_max_v - 0.21 * L_v
-                        alpha_vis = np.clip((mapping_parts_np[:, 0] - x_fade_v) / (x_clamp_v - x_fade_v), 0.0, 1.0)
-                        target_vis = np.minimum(particles_temp, 900.0)
-                        particles_temp = particles_temp * (1.0 - alpha_vis) + target_vis * alpha_vis
-
                     if isinstance(vertices_raw, torch.Tensor):
                         verts_np = vertices_raw.cpu().numpy()
                     else:
-                        verts_np = vertices_raw
+                        verts_np = np.asarray(vertices_raw)
 
-                with self._profile("teleop_io_kdtree_vertex_temps"):
-                    if mapping_parts_np.shape[0] >= 3 and verts_np.shape[0] > 0:
-                        tree = scipy.spatial.cKDTree(mapping_parts_np)
-                        dists, indices = tree.query(verts_np, k=3)
-                        dists = np.maximum(dists, 1e-6)
-                        weights = 1.0 / dists
-                        weight_sums = weights.sum(axis=1)
-                        neighbor_temps = particles_temp[indices]
-                        vertices_temp = (neighbor_temps * weights).sum(axis=1) / weight_sums
-                        vertices_temp = vertices_temp.astype(np.float32)
-                    else:
-                        vertices_temp = np.zeros(verts_np.shape[0], dtype=np.float32)
+                vertices_temp = self._map_particle_temps_to_vertices(
+                    particles_temp, mapping_parts_np, verts_np
+                )
             else:
                 vertices_temp = np.zeros(vertices_raw.shape[0] if hasattr(vertices_raw, 'shape') else 0, dtype=np.float32)
             
@@ -1136,6 +1187,7 @@ class StrikeController:
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
             
+            self._invalidate_unity_vertex_temp_cache()
             if self._uses_unified_surface_mesh():
                 self.reconstructor.reset()
             elif 'recon_state' in ckpt:
@@ -1369,6 +1421,7 @@ class StrikeController:
                     self.env.scene.sim.coupler.clear_link_coupling_forces()
 
             self.reconstructor.reset()
+            self._invalidate_unity_vertex_temp_cache()
             gs.logger.info("Initializing surface reconstruction...")
             recon_cfg = self.env.cfg.reconstruction
             if getattr(recon_cfg, "unified_mesh", True):
