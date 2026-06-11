@@ -1396,9 +1396,13 @@ class Viewer(pyglet.window.Window):
         if not self._enable_help_text:
             return
 
+        def _keybind_key_label(kb):
+            parts = [str(mod) for mod in kb.key_mods] if kb.key_mods else []
+            parts.append(str(kb.key))
+            return "+".join(parts)
+
         self._key_instr_texts = self._instr_texts[0] + [
-            # f"{'[' + get_keycode_string(kb.key_code):>{7}}]: " + kb.name.replace("_", " ")
-            f"{'[' + str(kb.key):>{7}}]: " + kb.name.replace("_", " ")
+            f"{'[' + _keybind_key_label(kb):>{12}}]: " + kb.name.replace("_", " ")
             for kb in self._keybindings.keybinds
             if kb.name != HELP_TEXT_KEYBIND_NAME
         ]
