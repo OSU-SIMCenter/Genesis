@@ -68,7 +68,15 @@ class StrikeController:
             backend=recon_cfg.backend,
             physics_grid_res=recon_cfg.physics_mesh_grid_res,
         )
-        self.reconstructor.recon_enabled = recon_cfg.enabled
+        if getattr(recon_cfg, "unified_mesh", True):
+            # Single mesh build via physics_mesher; skip per-frame visual recon.
+            self.reconstructor.recon_enabled = False
+            gs.logger.info(
+                f"Unified surface mesh enabled ({recon_cfg.physics_mesh_backend}, "
+                f"grid={recon_cfg.physics_mesh_grid_res})"
+            )
+        else:
+            self.reconstructor.recon_enabled = recon_cfg.enabled
         # Note: Reconstruction init mostly happens on demand or at start
 
         self.physics_mesher = InductionPhysicsMesher(env, self.reconstructor, env.cfg)
@@ -126,6 +134,13 @@ class StrikeController:
         self._diag_last_sim_time = 0.0
         self._diag_last_step = 0
 
+    def _uses_unified_surface_mesh(self) -> bool:
+        return bool(getattr(self.env.cfg.reconstruction, "unified_mesh", True))
+
+    def _needs_surface_rebuild(self) -> bool:
+        """Whether geometry changed enough to rebuild the cached surface mesh."""
+        return self._uses_unified_surface_mesh() or self.thermal_enabled
+
     def request_physics_rebuild(self, upload_sdf: bool = True) -> None:
         """Queue a physics mesh rebuild on the asyncio main thread."""
         self._pending_physics_rebuild = True
@@ -150,7 +165,7 @@ class StrikeController:
             return self.rebuild_physics_induction(upload_sdf=upload_sdf)
 
     def rebuild_physics_induction(self, upload_sdf: bool = True) -> bool:
-        """Rebuild the induction SDF mesh, optionally upload skin depths, refresh overlays."""
+        """Rebuild surface mesh; in unified mode one build serves visual + induction SDF."""
         ok = self.physics_mesher.rebuild()
         if upload_sdf and self.heater is not None:
             self.heater.recompute_and_upload()
@@ -490,10 +505,10 @@ class StrikeController:
                         # Flag to ensure updated mesh is sent to client
                         self.pending_mesh_send = True
 
-                        # Rebuild the physics mesh and induction skin-depth field from the
-                        # post-strike geometry so heating tracks the newly forged surface.
-                        if self.thermal_enabled:
-                            self.rebuild_physics_induction()
+                        # Rebuild surface mesh (unified visual+physics) and SDF after strike.
+                        if self._needs_surface_rebuild():
+                            upload_sdf = self.thermal_enabled and self.heater is not None
+                            self.rebuild_physics_induction(upload_sdf=upload_sdf)
                         return
 
             # --- HOLDING STAGE ---
@@ -847,6 +862,12 @@ class StrikeController:
                     else:
                         raise
 
+        # 4c. Live unified surface mesh during strikes (high-res MC, same cadence as legacy visual recon).
+        _live_stages = (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE)
+        if self._uses_unified_surface_mesh() and self.strike_state in _live_stages:
+            with self._profile("teleop_unified_recon"):
+                self.physics_mesher.update_live(should_reconstruct=True, is_deforming=True)
+
         # 5. Render Update
         if self.env.scene.visualizer:
             with self._profile("teleop_render"):
@@ -905,10 +926,14 @@ class StrikeController:
         with self._profile("teleop_recon"):
             allowed_stages = (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE)
             should_reconstruct = self.strike_state in allowed_stages
-            
-            if should_reconstruct:
+
+            if should_reconstruct and not self._uses_unified_surface_mesh():
                 with self._profile("teleop_recon_update"):
                     self.reconstructor.update(should_reconstruct, is_deforming=True)
+            elif should_reconstruct and self._uses_unified_surface_mesh():
+                # Mesh already updated in step_simulation via physics_mesher.update_live().
+                pass
+            if should_reconstruct:
                 with self._profile("teleop_recon_get_particles"):
                     particles = self.reconstructor.get_active_particle_cache()
                     if particles is None:
@@ -1118,19 +1143,22 @@ class StrikeController:
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
             
-            if 'recon_state' in ckpt:
+            if self._uses_unified_surface_mesh():
+                self.reconstructor.reset()
+            elif 'recon_state' in ckpt:
                 self.reconstructor.set_state(ckpt['recon_state'])
             else:
                 self.reconstructor.reset()
                 self.reconstructor.create_reconstructed_mesh()
-                
+
             self.thermal_enabled = ckpt.get('thermal_enabled', False)
             self.heating_power = ckpt.get('heating_power', 2000.0)
             self.skin_depth = ckpt.get('skin_depth', 0.02)
 
-            # Particle positions changed on restore — rebuild physics mesh + skin-depth field.
-            if self.thermal_enabled:
-                self.rebuild_physics_induction()
+            # Particle positions changed on restore — rebuild surface mesh (+ SDF if heating).
+            if self._needs_surface_rebuild():
+                upload_sdf = self.thermal_enabled and self.heater is not None
+                self.rebuild_physics_induction(upload_sdf=upload_sdf)
 
             # Trigger mesh data send to client (without physics step)
             self.pending_mesh_send = True
@@ -1349,15 +1377,20 @@ class StrikeController:
 
             self.reconstructor.reset()
             gs.logger.info("Initializing surface reconstruction...")
-            self.reconstructor.create_reconstructed_mesh()
-
-            # Build physics/SDF mesh at startup (and after reset) so viewer overlays work
-            # before the first strike or before thermal is enabled.
-            if self.physics_mesher.rebuild():
-                gs.logger.info(
-                    f"Physics mesh ready [{self.physics_mesher.backend_label}]: "
-                    f"{len(self.physics_mesher.physics_mesh.vertices)} verts"
-                )
+            recon_cfg = self.env.cfg.reconstruction
+            if getattr(recon_cfg, "unified_mesh", True):
+                if self.physics_mesher.rebuild():
+                    gs.logger.info(
+                        f"Surface mesh ready [{self.physics_mesher.backend_label}]: "
+                        f"{len(self.physics_mesher.physics_mesh.vertices)} verts"
+                    )
+            else:
+                self.reconstructor.create_reconstructed_mesh()
+                if self.physics_mesher.rebuild():
+                    gs.logger.info(
+                        f"Physics mesh ready [{self.physics_mesher.backend_label}]: "
+                        f"{len(self.physics_mesher.physics_mesh.vertices)} verts"
+                    )
             if self._mesh_overlay is not None:
                 self._mesh_overlay.sync_from_controller(self)
 

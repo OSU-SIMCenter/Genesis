@@ -1,7 +1,10 @@
 """One-shot surface meshes for induction SDF / skin-depth computation.
 
-Separate from the real-time visual reconstructor: built once per geometry change
-(init, post-strike, restore, or when the user swaps the physics backend in the viewer).
+When ``reconstruction.unified_mesh`` is True (default), a single build here also
+publishes to the visual reconstructor so Unity/viewer overlays avoid a second pass.
+
+When unified_mesh is False, this remains separate from the real-time visual
+reconstructor (grid_res=64, temporal blending during strikes).
 """
 
 from __future__ import annotations
@@ -51,6 +54,10 @@ class InductionPhysicsMesher:
         self.version = 0
 
     @property
+    def unified_mesh(self) -> bool:
+        return bool(getattr(self.cfg.reconstruction, "unified_mesh", True))
+
+    @property
     def backend_label(self) -> str:
         return PHYSICS_MESH_BACKEND_LABELS.get(self.backend.value, self.backend.value)
 
@@ -80,10 +87,38 @@ class InductionPhysicsMesher:
         return self.visual_reconstructor.reconstructed_mesh.copy()
 
     def _build_hybrid_high(self) -> trimesh.Trimesh:
-        return self.visual_reconstructor.create_physics_reconstructed_mesh()
+        return self.visual_reconstructor.create_physics_reconstructed_mesh(
+            is_deforming=False,
+            one_shot_physics=True,
+        )
+
+    def update_live(self, should_reconstruct: bool = True, is_deforming: bool = True) -> bool:
+        """Live unified mesh during strikes (same cadence as legacy visual recon)."""
+        if not self.unified_mesh:
+            return False
+        if not self.visual_reconstructor.update_unified(should_reconstruct, is_deforming):
+            return False
+        mesh = self.visual_reconstructor.reconstructed_mesh
+        if mesh is None or len(mesh.vertices) < 4:
+            return False
+        self.physics_mesh = mesh.copy()
+        self.version = self.visual_reconstructor.mesh_version
+        return True
 
     def _build_splashsurf(self) -> trimesh.Trimesh:
         return build_splashsurf_mesh_from_env(self.env)
+
+    def _publish_to_visual(self, mesh: trimesh.Trimesh) -> None:
+        """Copy the physics mesh into the visual reconstructor (unified_mesh mode)."""
+        recon = self.visual_reconstructor
+        recon.reconstructed_mesh = mesh.copy()
+        recon.mesh_version += 1
+        recon.density_initialized = False
+        recon._prev_verts = None
+        if hasattr(recon, "reconstructed_vertices_tensor"):
+            recon.reconstructed_vertices_tensor = None
+        # Refresh particle cache used for Unity vertex temperature mapping.
+        recon._get_active_particles(use_cache=False)
 
     def rebuild(self, backend: str | PhysicsMeshBackend | None = None) -> bool:
         if backend is not None:
@@ -104,11 +139,20 @@ class InductionPhysicsMesher:
 
             self.physics_mesh = mesh
             self.version += 1
+            if self.unified_mesh:
+                self._publish_to_visual(mesh)
             dt_ms = (time.time() - t0) * 1000.0
-            gs.logger.info(
-                f"Physics mesh [{self.backend_label}]: "
-                f"{len(mesh.vertices)} verts, {len(mesh.faces)} faces ({dt_ms:.0f} ms)"
-            )
+            label = self.backend_label
+            if self.unified_mesh:
+                gs.logger.info(
+                    f"Surface mesh [{label}] (visual + physics): "
+                    f"{len(mesh.vertices)} verts, {len(mesh.faces)} faces ({dt_ms:.0f} ms)"
+                )
+            else:
+                gs.logger.info(
+                    f"Physics mesh [{label}]: "
+                    f"{len(mesh.vertices)} verts, {len(mesh.faces)} faces ({dt_ms:.0f} ms)"
+                )
             return True
         except Exception as e:
             gs.logger.warning(f"Physics mesh rebuild failed ({self.backend.value}): {e}")

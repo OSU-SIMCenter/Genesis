@@ -105,6 +105,8 @@ class SurfaceReconstructor:
         physics_weights /= physics_weights.sum()
         self._physics_blur_weights = qd.field(dtype=float, shape=(physics_ksize,))
         self._physics_blur_weights.from_numpy(physics_weights)
+        self.physics_density_initialized = False
+        self._physics_prev_grid_origin = None
 
     def get_state(self):
         return {
@@ -134,6 +136,10 @@ class SurfaceReconstructor:
         if hasattr(self, 'reconstructed_vertices_tensor'):
             self.reconstructed_vertices_tensor = None
         self.prev_density.fill(0)
+        if hasattr(self, "physics_prev_density"):
+            self.physics_prev_density.fill(0)
+        self.physics_density_initialized = False
+        self._physics_prev_grid_origin = None
 
     def reset(self):
         self.reconstructed_mesh = trimesh.Trimesh()
@@ -150,6 +156,8 @@ class SurfaceReconstructor:
         self.prev_density.fill(0)
         if hasattr(self, "physics_prev_density"):
             self.physics_prev_density.fill(0)
+        self.physics_density_initialized = False
+        self._physics_prev_grid_origin = None
 
     # --- Compatibility Interface ---
     def init_skinning(self):
@@ -415,6 +423,28 @@ class SurfaceReconstructor:
         self._blur_physics_pass_z(r)
         self._copy_physics_blur_to_density()
 
+    @qd.kernel
+    def _blend_physics_density_temporal(self, alpha: float):
+        for I in qd.grouped(self.physics_density):
+            blended_val = alpha * self.physics_density[I] + (1.0 - alpha) * self.physics_prev_density[I]
+            self.physics_density[I] = blended_val
+            self.physics_prev_density[I] = blended_val
+
+    def update_unified(self, should_reconstruct: bool, is_deforming: bool = False) -> bool:
+        """Live unified mesh update at physics_grid_res (same cadence as visual recon)."""
+        self.frame_counter += 1
+        if not should_reconstruct and (self.frame_counter % self.recon_frame_interval != 0):
+            return False
+        mesh = self.create_physics_reconstructed_mesh(
+            is_deforming=is_deforming,
+            one_shot_physics=False,
+        )
+        if mesh is None or len(mesh.vertices) < 4:
+            return False
+        self.reconstructed_mesh = mesh
+        self.mesh_version += 1
+        return True
+
     def update(self, should_reconstruct: bool, is_deforming: bool = False):
         if not self.recon_enabled:
             return
@@ -634,8 +664,12 @@ class SurfaceReconstructor:
             gs.logger.warning(f"Reconstruction failed: {e}")
             traceback.print_exc()
 
-    def create_physics_reconstructed_mesh(self) -> trimesh.Trimesh:
-        """GPU one-shot mesh at physics_grid_res for induction SDF (does not touch visual mesh)."""
+    def create_physics_reconstructed_mesh(
+        self,
+        is_deforming: bool = False,
+        one_shot_physics: bool = True,
+    ) -> trimesh.Trimesh:
+        """GPU mesh at physics_grid_res (unified visual + induction SDF when configured)."""
         import contextlib
 
         profiler = getattr(self.env.scene.profiling_options, "profiler", None)
@@ -663,10 +697,16 @@ class SurfaceReconstructor:
                     return trimesh.Trimesh()
 
                 active_particles = particles_pos[particles_active]
-                if active_particles.shape[0] == 0:
+                n_active_particles = active_particles.shape[0]
+                if n_active_particles == 0:
                     return trimesh.Trimesh()
 
-            dx = self.influence_radius / self._grid_coverage_ratio
+                self._cached_particles = active_particles.cpu().numpy()
+
+            if self._fixed_dx is None:
+                self._fixed_dx = self.influence_radius / self._grid_coverage_ratio
+            dx = self._fixed_dx
+
             raw_min = active_particles.min(dim=0).values.cpu().numpy()
             raw_max = active_particles.max(dim=0).values.cpu().numpy()
             padding = self.influence_radius * 2.0
@@ -684,6 +724,12 @@ class SurfaceReconstructor:
                 dx = max_extent / (self.physics_grid_res - 1)
                 min_bound = np.floor(raw_min / dx) * dx
 
+            grid_origin = min_bound.copy()
+            if self._physics_prev_grid_origin is not None:
+                if not np.allclose(grid_origin, self._physics_prev_grid_origin, atol=dx * 0.01):
+                    self.physics_density_initialized = False
+            self._physics_prev_grid_origin = grid_origin
+
             lower_bound_qd = qd.Vector([min_bound[0], min_bound[1], min_bound[2]])
 
             with profile_block("physics_hybrid_density_kernel"):
@@ -696,6 +742,21 @@ class SurfaceReconstructor:
                     float(dx),
                     float(self.influence_radius),
                 )
+
+                if one_shot_physics:
+                    alpha = 1.0
+                elif not self.physics_density_initialized:
+                    alpha = 1.0
+                elif is_deforming:
+                    alpha = 0.8
+                else:
+                    alpha = 0.2
+
+                if one_shot_physics:
+                    self.physics_density_initialized = False
+                self._blend_physics_density_temporal(alpha)
+                self.physics_density_initialized = True
+
                 if self.physics_density_blur_sigma > 0:
                     self._blur_physics_density_gpu()
 
@@ -725,9 +786,42 @@ class SurfaceReconstructor:
 
             with profile_block("physics_hybrid_post_process"):
                 verts = np.array(contour.points)
+
+                blend_factor = 0.0 if one_shot_physics else self.vertex_blend_factor
+                if blend_factor > 0 and self._prev_verts is not None and len(self._prev_verts) > 0:
+                    try:
+                        tree = cKDTree(self._prev_verts)
+                        dists, indices = tree.query(verts)
+                        valid_mask = dists < (dx * 2.0)
+                        if valid_mask.any():
+                            blend = blend_factor
+                            verts[valid_mask] = (
+                                (1.0 - blend) * verts[valid_mask]
+                                + blend * self._prev_verts[indices[valid_mask]]
+                            )
+                    except Exception as e:
+                        gs.logger.debug(f"Physics reconstruction: vertex blending failed: {e}")
+
+                if not one_shot_physics:
+                    self._prev_verts = verts.copy()
+
                 faces = np.array(contour.faces).reshape(-1, 4)[:, 1:4]
                 faces = faces[:, ::-1]
-                return trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+                mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+
+                taubin_iters = 0 if one_shot_physics else 1
+                if len(mesh.vertices) > 0 and taubin_iters > 0:
+                    try:
+                        trimesh.smoothing.filter_taubin(mesh, iterations=taubin_iters)
+                    except Exception:
+                        try:
+                            trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=1)
+                        except Exception as e:
+                            gs.logger.debug(f"Physics smoothing failed: {e}")
+                    if np.isnan(mesh.vertices).any():
+                        mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+
+                return mesh
 
         except Exception as e:
             import traceback
