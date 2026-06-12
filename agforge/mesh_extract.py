@@ -128,6 +128,8 @@ def _extract_warp(
     dx: float,
     threshold: float,
     grid_res: int,
+    profiler=None,
+    profile_prefix: str = "hybrid",
 ) -> trimesh.Trimesh | None:
     import torch
     import warp as wp
@@ -157,20 +159,22 @@ def _extract_warp(
         mc = MarchingCubes(grid_res, grid_res, grid_res)
         _mc_contexts[cache_key] = mc
 
-    verts_wp, indices_wp = MarchingCubes.extract_surface_marching_cubes(
-        density_wp,
-        threshold=float(threshold),
-        domain_bounds_lower_corner=lower,
-        domain_bounds_upper_corner=upper,
-    )
+    with _profile(profiler, f"{profile_prefix}_marching_cubes_kernel"):
+        verts_wp, indices_wp = MarchingCubes.extract_surface_marching_cubes(
+            density_wp,
+            threshold=float(threshold),
+            domain_bounds_lower_corner=lower,
+            domain_bounds_upper_corner=upper,
+        )
 
     if verts_wp is None or indices_wp is None or len(verts_wp) == 0:
         return None
 
-    verts = verts_wp.numpy()
-    # Warp outputs the same winding as PyVista after the VTK→Unity flip in _extract_pyvista.
-    # Do not reverse again or normals invert in Unity / Genesis viewer.
-    faces = indices_wp.numpy().reshape(-1, 3)
+    with _profile(profiler, f"{profile_prefix}_mesh_download"):
+        verts = verts_wp.numpy()
+        # Warp outputs the same winding as PyVista after the VTK→Unity flip in _extract_pyvista.
+        # Do not reverse again or normals invert in Unity / Genesis viewer.
+        faces = indices_wp.numpy().reshape(-1, 3)
     return trimesh.Trimesh(vertices=verts, faces=faces, process=False)
 
 
@@ -210,8 +214,15 @@ def extract_isosurface_mesh(
             mesh = _extract_pyvista(density_cpu, min_bound, dx, threshold)
         else:
             try:
-                with _profile(profiler, f"{profile_prefix}_mesh_download"):
-                    mesh = _extract_warp(density_field, min_bound, dx, threshold, grid_res)
+                mesh = _extract_warp(
+                    density_field,
+                    min_bound,
+                    dx,
+                    threshold,
+                    grid_res,
+                    profiler=profiler,
+                    profile_prefix=profile_prefix,
+                )
             except Exception as exc:
                 gs.logger.warning(f"Warp marching cubes failed ({exc}); falling back to PyVista.")
                 with _profile(profiler, f"{profile_prefix}_density_transfer"):

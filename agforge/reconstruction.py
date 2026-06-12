@@ -182,25 +182,37 @@ class SurfaceReconstructor:
         one_shot_physics: bool,
         is_deforming: bool,
         prev_verts_attr: str = "_prev_verts",
+        profile_prefix: str = "hybrid",
     ) -> trimesh.Trimesh:
+        import contextlib
+
+        profiler = getattr(self.env.scene.profiling_options, "profiler", None)
+
+        def profile_block(name):
+            if profiler:
+                return profiler.time(name)
+            return contextlib.nullcontext()
+
         if mesh is None or len(mesh.vertices) == 0:
             return trimesh.Trimesh()
 
-        verts = np.array(mesh.vertices, copy=True)
-        faces = np.array(mesh.faces, copy=True)
+        with profile_block(f"{profile_prefix}_finalize_copy"):
+            verts = np.array(mesh.vertices, copy=True)
+            faces = np.array(mesh.faces, copy=True)
 
         blend_factor = 0.0 if one_shot_physics else self.vertex_blend_factor
         prev_verts = getattr(self, prev_verts_attr, None)
         if blend_factor > 0 and prev_verts is not None and len(prev_verts) > 0:
-            try:
-                tree = cKDTree(prev_verts)
-                dists, indices = tree.query(verts)
-                valid_mask = dists < (dx * 2.0)
-                if valid_mask.any():
-                    blend = blend_factor
-                    verts[valid_mask] = (1.0 - blend) * verts[valid_mask] + blend * prev_verts[indices[valid_mask]]
-            except Exception as e:
-                gs.logger.debug(f"Reconstruction: Vertex blending failed: {e}")
+            with profile_block(f"{profile_prefix}_finalize_vertex_blend"):
+                try:
+                    tree = cKDTree(prev_verts)
+                    dists, indices = tree.query(verts)
+                    valid_mask = dists < (dx * 2.0)
+                    if valid_mask.any():
+                        blend = blend_factor
+                        verts[valid_mask] = (1.0 - blend) * verts[valid_mask] + blend * prev_verts[indices[valid_mask]]
+                except Exception as e:
+                    gs.logger.debug(f"Reconstruction: Vertex blending failed: {e}")
 
         if not one_shot_physics:
             setattr(self, prev_verts_attr, verts.copy())
@@ -209,17 +221,18 @@ class SurfaceReconstructor:
 
         taubin_iters = 0 if one_shot_physics or is_deforming else 1
         if len(mesh.vertices) > 0 and taubin_iters > 0:
-            try:
-                trimesh.smoothing.filter_taubin(mesh, iterations=taubin_iters)
-            except Exception:
+            with profile_block(f"{profile_prefix}_finalize_taubin"):
                 try:
-                    trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=1)
-                except Exception as e:
-                    gs.logger.debug(f"Smoothing failed: {e}")
+                    trimesh.smoothing.filter_taubin(mesh, iterations=taubin_iters)
+                except Exception:
+                    try:
+                        trimesh.smoothing.filter_laplacian(mesh, lamb=0.5, iterations=1)
+                    except Exception as e:
+                        gs.logger.debug(f"Smoothing failed: {e}")
 
-            if np.isnan(mesh.vertices).any():
-                gs.logger.warning("Smoothing produced NaN vertices, using unsmoothed mesh")
-                mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+                if np.isnan(mesh.vertices).any():
+                    gs.logger.warning("Smoothing produced NaN vertices, using unsmoothed mesh")
+                    mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
 
         return mesh
         
@@ -707,28 +720,29 @@ class SurfaceReconstructor:
                 self._fixed_dx = self.influence_radius / self._grid_coverage_ratio
             dx = self._fixed_dx
 
-            raw_min = active_particles.min(dim=0).values.cpu().numpy()
-            raw_max = active_particles.max(dim=0).values.cpu().numpy()
-            padding = self.influence_radius * 2.0
-            raw_min -= padding
-            raw_max += padding
-            min_bound = np.floor(raw_min / dx) * dx
-            max_bound = np.ceil(raw_max / dx) * dx
-
-            extent = max_bound - min_bound
-            max_extent = float(np.max(extent))
-            if max_extent < 1e-4:
-                max_extent = 1.0
-            required_cells = int(np.ceil(max_extent / dx)) + 1
-            if required_cells > self.physics_grid_res:
-                dx = max_extent / (self.physics_grid_res - 1)
+            with profile_block("physics_hybrid_bounds_compute"):
+                raw_min = active_particles.min(dim=0).values.cpu().numpy()
+                raw_max = active_particles.max(dim=0).values.cpu().numpy()
+                padding = self.influence_radius * 2.0
+                raw_min -= padding
+                raw_max += padding
                 min_bound = np.floor(raw_min / dx) * dx
+                max_bound = np.ceil(raw_max / dx) * dx
 
-            grid_origin = min_bound.copy()
-            if self._physics_prev_grid_origin is not None:
-                if not np.allclose(grid_origin, self._physics_prev_grid_origin, atol=dx * 0.01):
-                    self.physics_density_initialized = False
-            self._physics_prev_grid_origin = grid_origin
+                extent = max_bound - min_bound
+                max_extent = float(np.max(extent))
+                if max_extent < 1e-4:
+                    max_extent = 1.0
+                required_cells = int(np.ceil(max_extent / dx)) + 1
+                if required_cells > self.physics_grid_res:
+                    dx = max_extent / (self.physics_grid_res - 1)
+                    min_bound = np.floor(raw_min / dx) * dx
+
+                grid_origin = min_bound.copy()
+                if self._physics_prev_grid_origin is not None:
+                    if not np.allclose(grid_origin, self._physics_prev_grid_origin, atol=dx * 0.01):
+                        self.physics_density_initialized = False
+                self._physics_prev_grid_origin = grid_origin
 
             lower_bound_qd = qd.Vector([min_bound[0], min_bound[1], min_bound[2]])
 
@@ -780,6 +794,7 @@ class SurfaceReconstructor:
                     one_shot_physics=one_shot_physics,
                     is_deforming=is_deforming,
                     prev_verts_attr="_prev_verts",
+                    profile_prefix="physics_hybrid",
                 )
 
         except Exception as e:

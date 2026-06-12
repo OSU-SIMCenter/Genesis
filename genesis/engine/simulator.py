@@ -334,7 +334,8 @@ class Simulator(RBC):
     def substep(self, f):
         profiler = self.scene.profiling_options.profiler
         config = self.scene.profiling_options.configs.simulator
-        self._coupler.preprocess(f)
+        with profiler.time("coupler_preprocess") if config.coupler_preprocess else contextlib.suppress():
+            self._coupler.preprocess(f)
         with profiler.time("substep_pre_couple") if config.substep_pre_couple else contextlib.suppress():
             self.substep_pre_coupling(f)
         with profiler.time("couple") if config.couple else contextlib.suppress():

@@ -53,6 +53,9 @@ class AgilityForgeManipulator:
         # Pre-allocated tensors for resistance force calculation (Issue #16 optimization)
         self._squeeze_dir_L = torch.tensor([0.0, 1.0, 0.0], device=self.device)
         self._squeeze_dir_R = torch.tensor([0.0, -1.0, 0.0], device=self.device)
+        self._resistance_quat_cache: torch.Tensor | None = None
+        self._global_squeeze_L_cache: torch.Tensor | None = None
+        self._global_squeeze_R_cache: torch.Tensor | None = None
 
     def set_pd_gains(self):
         """Sets the Proportional-Derivative controller gains for the robot's joints."""
@@ -170,15 +173,26 @@ class AgilityForgeManipulator:
             tuple[torch.Tensor, torch.Tensor]: (Force_L, Force_R) resistance forces for each gripper
         """
         with teleop_profile(self.scene, "teleop_logic_resistance_ee_quat"):
-            # Get orientation of clamp_bar (parent of grippers)
             quat = self.ee_link.get_quat()
             if quat.dim() == 1:
                 quat = quat.unsqueeze(0)
 
-            local_squeeze_L = self._squeeze_dir_L.expand(quat.shape[0], 3)
-            local_squeeze_R = self._squeeze_dir_R.expand(quat.shape[0], 3)
-            global_squeeze_L = self._rotate_vector_by_quat(local_squeeze_L, quat)
-            global_squeeze_R = self._rotate_vector_by_quat(local_squeeze_R, quat)
+            if (
+                self._resistance_quat_cache is not None
+                and self._global_squeeze_L_cache is not None
+                and self._global_squeeze_R_cache is not None
+                and torch.equal(quat, self._resistance_quat_cache)
+            ):
+                global_squeeze_L = self._global_squeeze_L_cache
+                global_squeeze_R = self._global_squeeze_R_cache
+            else:
+                local_squeeze_L = self._squeeze_dir_L.expand(quat.shape[0], 3)
+                local_squeeze_R = self._squeeze_dir_R.expand(quat.shape[0], 3)
+                global_squeeze_L = self._rotate_vector_by_quat(local_squeeze_L, quat)
+                global_squeeze_R = self._rotate_vector_by_quat(local_squeeze_R, quat)
+                self._resistance_quat_cache = quat
+                self._global_squeeze_L_cache = global_squeeze_L
+                self._global_squeeze_R_cache = global_squeeze_R
 
         with teleop_profile(self.scene, "teleop_logic_resistance_contact_pull"):
             contact_forces = self.get_gripper_net_contact_force()

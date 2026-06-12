@@ -87,7 +87,8 @@ async def simulation_loop(websocket, state: StrikeController):
             should_send = should_step or pending_send
             
             if not should_send:
-                await asyncio.sleep(0.001)
+                with state._profile("teleop_frame_pacing_sleep"):
+                    await asyncio.sleep(0.001)
                 continue
             
             # Root of the hierarchy for this frame/step
@@ -122,26 +123,29 @@ async def simulation_loop(websocket, state: StrikeController):
                         temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
 
                     with state._profile("teleop_io_websocket_pack_send"):
-                        header = {
-                            "stage": state.strike_state.name,
-                            "is_pressing": state.strike_state != StrikeState.IDLE,
-                            "thermal_enabled": send_thermal_enabled,
-                            "checkpoint_count": len(state.checkpoints),
-                            "force": state.last_force_normalized,
-                            "counts": {
-                                "vertices": v_count,
-                                "faces": t_count,
-                                "particles": p_count,
-                                "temperatures": temp_count
+                        with state._profile("teleop_io_websocket_pack"):
+                            header = {
+                                "stage": state.strike_state.name,
+                                "is_pressing": state.strike_state != StrikeState.IDLE,
+                                "thermal_enabled": send_thermal_enabled,
+                                "checkpoint_count": len(state.checkpoints),
+                                "force": state.last_force_normalized,
+                                "counts": {
+                                    "vertices": v_count,
+                                    "faces": t_count,
+                                    "particles": p_count,
+                                    "temperatures": temp_count
+                                }
                             }
-                        }
-                        header_json = json.dumps(header).encode('utf-8')
-                        binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes() + temp_flat.tobytes()
-                        message = struct.pack('<I', len(header_json)) + header_json + binary_body
+                            header_json = json.dumps(header).encode('utf-8')
+                            binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes() + temp_flat.tobytes()
+                            message = struct.pack('<I', len(header_json)) + header_json + binary_body
 
-                        await websocket.send(message)
+                        with state._profile("teleop_io_websocket_send"):
+                            await websocket.send(message)
             
-            await asyncio.sleep(1/TARGET_FPS)
+            with state._profile("teleop_frame_pacing_sleep"):
+                await asyncio.sleep(1/TARGET_FPS)
             
             # Cleanup flags
             if hasattr(state, 'new_input_received'):

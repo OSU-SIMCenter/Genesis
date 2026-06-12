@@ -1,3 +1,5 @@
+import zlib
+
 import numpy as np
 import igl
 
@@ -66,6 +68,17 @@ class InductionHeater:
         self.reconstructor = reconstructor
         self.static_verts = static_verts
         self.static_faces = static_faces
+        self._sdf_mesh_key: tuple | None = None
+        self._cached_depth: np.ndarray | None = None
+
+    @staticmethod
+    def _mesh_fingerprint(verts: np.ndarray, faces: np.ndarray) -> tuple:
+        return (
+            int(verts.shape[0]),
+            int(faces.shape[0]),
+            int(zlib.adler32(verts.tobytes())),
+            int(zlib.adler32(faces.tobytes())),
+        )
 
     def _acquire_surface_mesh(self):
         """Return (verts, faces) of the current billet surface, or (None, None)."""
@@ -115,12 +128,16 @@ class InductionHeater:
             return None
 
         scene = self.solver.sim.scene
+        mesh_key = self._mesh_fingerprint(verts, faces)
+        if self._sdf_mesh_key == mesh_key and self._cached_depth is not None:
+            return self._cached_depth.copy()
+
         with teleop_profile(scene, "teleop_induction_pos_pull"):
             pos_tensor = self.entity.get_particles_pos()
-            pos_np = pos_tensor.cpu().numpy().reshape(-1, 3)
+            pos_np = np.asarray(pos_tensor.detach().cpu().numpy().reshape(-1, 3), dtype=np.float64)
 
         with teleop_profile(scene, "teleop_induction_igl_sdf"):
-            distances, _, _, _ = igl.signed_distance(pos_np.astype(np.float64), verts, faces)
+            distances, _, _, _ = igl.signed_distance(pos_np, verts, faces)
         depth = np.abs(distances)
 
         # Guard against NaN/inf from degenerate triangles: treat as deep interior (no heating).
@@ -129,6 +146,8 @@ class InductionHeater:
             gs.logger.warning(f"InductionHeater: {int(bad.sum())} particles got NaN/inf SDF distance, treating as interior.")
             depth[bad] = 1.0e9
 
+        self._sdf_mesh_key = mesh_key
+        self._cached_depth = depth
         return depth
 
     def recompute_and_upload(self):

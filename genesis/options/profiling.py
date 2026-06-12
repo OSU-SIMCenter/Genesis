@@ -43,6 +43,7 @@ class ProfilingOptions(Options):
             substep_pre_couple: bool = True
             substep: bool = True
             couple: bool = True
+            coupler_preprocess: bool = True
             couple_mpm_grid_op: bool = True
             couple_thermal_diffusion: bool = True
             substep_post_couple: bool = True
@@ -119,6 +120,18 @@ class ProfilingOptions(Options):
             io_kdtree_vertex_temps: bool = True
             io_gpu_to_cpu: bool = True
             io_websocket_pack_send: bool = True
+            io_websocket_pack: bool = True
+            io_websocket_send: bool = True
+            frame_pacing_sleep: bool = True
+            recon_faces_copy: bool = True
+            recon_transform_particles: bool = True
+            recon_transform_vertices: bool = True
+            io_kdtree_map: bool = True
+            thermal_freeze_clone: bool = True
+            record_resistance_pull: bool = True
+            record_det_f: bool = True
+            logic_force_gauge: bool = True
+            physics_rebuild_overlay_sync: bool = True
             render_mesh_overlay_sync: bool = True
             render_mesh_overlay_refresh: bool = True
             render_particle_sync: bool = True

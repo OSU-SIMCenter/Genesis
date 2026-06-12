@@ -103,8 +103,8 @@ class InductionPhysicsMesher:
         mesh = self.visual_reconstructor.reconstructed_mesh
         if mesh is None or len(mesh.vertices) < 4:
             return False
-        with teleop_profile(self.env, "teleop_unified_recon_mesh_copy"):
-            self.physics_mesh = mesh.copy()
+        # Reconstructor already owns this mesh; avoid O(V+F) deep copy each recon frame.
+        self.physics_mesh = mesh
         self.version = self.visual_reconstructor.mesh_version
         return True
 

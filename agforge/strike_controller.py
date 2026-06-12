@@ -173,7 +173,7 @@ class StrikeController:
         from scipy.spatial import cKDTree
 
         with self._profile("teleop_io_kdtree_build"):
-            tree = cKDTree(mapping_parts_np)
+            tree = cKDTree(mapping_parts_np, leafsize=32)
             dists, indices = tree.query(verts_np, k=3)
             dists = np.maximum(dists, 1e-6)
             weights = 1.0 / dists
@@ -255,13 +255,14 @@ class StrikeController:
             ok = self.physics_mesher.rebuild()
             if upload_sdf and self.heater is not None:
                 self.heater.recompute_and_upload()
-        if self._mesh_overlay is not None:
-            self._mesh_overlay.sync_from_controller(self)
-        if self._temp_particle_renderer is not None:
-            self._temp_particle_renderer.sync_from_env(self.env)
-        from agforge.vis.temperature_particles import update_particle_color_display
+        with self._profile("teleop_physics_rebuild_overlay_sync"):
+            if self._mesh_overlay is not None:
+                self._mesh_overlay.sync_from_controller(self)
+            if self._temp_particle_renderer is not None:
+                self._temp_particle_renderer.sync_from_env(self.env)
+            from agforge.vis.temperature_particles import update_particle_color_display
 
-        update_particle_color_display(self.env, physics_mesher=self.physics_mesher)
+            update_particle_color_display(self.env, physics_mesher=self.physics_mesher)
         return ok
 
     def cycle_physics_mesh_backend(self) -> str:
@@ -660,12 +661,13 @@ class StrikeController:
     def _update_force_gauge(self, force_L, force_R):
         """Update normalized force for Unity pressure gauge: avg(|F_L|, |F_R|) / max, clamped to [0, 1].
         During PRESSING, force can only increase (monotonic ramp-up) for a stable gauge reading."""
-        avg_abs = (torch.abs(force_L) + torch.abs(force_R)) * 0.5
-        new_val = min(1.0, avg_abs.item() / self._force_gauge_max)
-        if self.strike_state in (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE):
-            self.last_force_normalized = max(self.last_force_normalized, new_val)
-        else:
-            self.last_force_normalized = new_val
+        with self._profile("logic_force_gauge"):
+            avg_abs = (torch.abs(force_L) + torch.abs(force_R)) * 0.5
+            new_val = min(1.0, avg_abs.item() / self._force_gauge_max)
+            if self.strike_state in (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE):
+                self.last_force_normalized = max(self.last_force_normalized, new_val)
+            else:
+                self.last_force_normalized = new_val
 
     async def step_simulation(self):
         """
@@ -743,7 +745,8 @@ class StrikeController:
         else:
             # Thermal Freezing: Disable natural diffusion by snapshotting temperatures before physics step
             if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
-                frozen_temps_tensor = self.env.mpm_entity.get_particles_temp().clone()
+                with self._profile("teleop_thermal_freeze_clone"):
+                    frozen_temps_tensor = self.env.mpm_entity.get_particles_temp().clone()
 
         # 4. Physics Step
         physics_failed = False
@@ -1005,15 +1008,17 @@ class StrikeController:
                     # Check for thermal state - use entity API to read from correct substep
                     if hasattr(self.env.mpm_entity, 'get_particles_temp'):
                         particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
-                        particles_F = self.env.mpm_entity.get_particles_F().cpu().numpy()
+                        particles_F = self.env.mpm_entity.get_particles_F()
                         if particles_F.ndim == 4:  # [B, N, 3, 3]
                             particles_F = particles_F[0]
-                        particles_detF = np.linalg.det(particles_F).astype(np.float32)
+                        with self._profile("teleop_record_det_f"):
+                            particles_detF = torch.linalg.det(particles_F).detach().cpu().numpy().astype(np.float32)
                     else:
                         particles_temp = np.zeros(particles_pos.shape[-2], dtype=np.float32)
                         particles_detF = np.ones(particles_pos.shape[-2], dtype=np.float32)
 
-                    force_L, force_R = self.robot.get_resistance_forces()
+                    with self._profile("teleop_record_resistance_pull"):
+                        force_L, force_R = self.robot.get_resistance_forces()
 
                     # Get base particle volume for absolute volume calculations
                     p_vol = 0.0
@@ -1064,7 +1069,7 @@ class StrikeController:
                 with self._profile("teleop_recon_get_particles"):
                     particles = self.env.mpm_entity.get_particles_pos(envs_idx=0).squeeze(0)
 
-            with self._profile("teleop_recon_transform"):
+            with self._profile("teleop_recon_transform_particles"):
                 points = self._apply_transformation(particles)
                 
                 # OPTIMIZATION: Use GPU tensor for vertices if available
@@ -1073,9 +1078,11 @@ class StrikeController:
                 else:
                      vertices_raw = self.reconstructor.reconstructed_mesh.vertices
                      
+            with self._profile("teleop_recon_transform_vertices"):
                 vertices = self._apply_transformation(vertices_raw)
             
-            triangles = self.reconstructor.reconstructed_mesh.faces.copy()
+            with self._profile("teleop_recon_faces_copy"):
+                triangles = self.reconstructor.reconstructed_mesh.faces.copy()
             # Winding reversal is now handled by Unity after axis conversion
             
             # Extract and spatial-interpolate thermal data to vertices
@@ -1085,24 +1092,30 @@ class StrikeController:
                 and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp')
             ):
                 with self._profile("teleop_io_vertex_temp_prep"):
-                    particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
+                    particles_temp_tensor = self.env.mpm_entity.get_particles_temp().reshape(-1)
 
                     mapping_parts_np = self.reconstructor._cached_particles
                     if mapping_parts_np is None:
-                        mapping_parts_np = particles.cpu().numpy().squeeze() if isinstance(particles, torch.Tensor) else np.asarray(particles).squeeze()
+                        if isinstance(particles, torch.Tensor):
+                            mapping_parts_np = particles.detach().cpu().numpy().squeeze()
+                        else:
+                            mapping_parts_np = np.asarray(particles).squeeze()
 
-                    if mapping_parts_np.shape[0] != particles_temp.shape[0]:
-                        active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0).cpu().numpy()
-                        particles_temp = particles_temp[active_mask]
+                    if mapping_parts_np.shape[0] != particles_temp_tensor.shape[0]:
+                        active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
+                        particles_temp = particles_temp_tensor[active_mask].detach().cpu().numpy()
+                    else:
+                        particles_temp = particles_temp_tensor.detach().cpu().numpy()
 
                     if isinstance(vertices_raw, torch.Tensor):
-                        verts_np = vertices_raw.cpu().numpy()
+                        verts_np = vertices_raw.detach().cpu().numpy()
                     else:
                         verts_np = np.asarray(vertices_raw)
 
-                vertices_temp = self._map_particle_temps_to_vertices(
-                    particles_temp, mapping_parts_np, verts_np
-                )
+                with self._profile("teleop_io_kdtree_map"):
+                    vertices_temp = self._map_particle_temps_to_vertices(
+                        particles_temp, mapping_parts_np, verts_np
+                    )
             else:
                 vertices_temp = np.zeros(vertices_raw.shape[0] if hasattr(vertices_raw, 'shape') else 0, dtype=np.float32)
             
