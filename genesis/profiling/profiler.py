@@ -297,32 +297,33 @@ class Profiler:
         total_time = sum_root_children
         
         def collect(node: Profiler._AggNode):
-            # Traverse children first
             for child in node.children.values():
                 collect(child)
 
-            # Check if it's a leaf (no children)
-            if not node.children:
-                if node.name not in flat_stats:
-                    flat_stats[node.name] = self._AggNode(node.name)
-                
-                target = flat_stats[node.name]
-                # For leaves, total time is entirely self time effectively
-                target.total += node.total
-                target.self_time += node.self_time
-                target.count += node.count
+            # Aggregate self-time from every profiled node (not just leaves).
+            # Parent blocks like teleop_frame_pacing_sleep have no children but
+            # previously inflated [Unprofiled] when grouped under (Others).
+            if node.name == "root" or node.self_time <= 0:
+                return
+
+            if node.name not in flat_stats:
+                flat_stats[node.name] = self._AggNode(node.name)
+
+            target = flat_stats[node.name]
+            target.total += node.self_time
+            target.self_time += node.self_time
+            target.count += node.count
         
         # Collect from children of root
         for child in root_agg.children.values():
             collect(child)
             
-        # Sort by Total Time (which is same as Self Time for leaves) descending
         items = list(flat_stats.values())
         items.sort(key=lambda x: x.total, reverse=True)
         
-        # Calculate Unprofiled (Glue code in parents - NOT idle time)
-        sum_leaves = sum(x.total for x in items)
-        unprofiled_time = total_time - sum_leaves
+        # Remaining glue: profiled tree time not attributed to any section self-time
+        sum_self = sum(x.self_time for x in items)
+        unprofiled_time = max(0.0, total_time - sum_self)
         
         if unprofiled_time > 0 and total_time > 0:
             unprof_node = self._AggNode(" [Unprofiled (Glue Code)] ")
@@ -341,7 +342,7 @@ class Profiler:
                 items.append(unprof_node)
 
         value_getter = lambda x: x.total
-        title = "Profile Results (Hot Spots - Leaf Nodes Only)"
+        title = "Profile Results (Hot Spots - Self Time)"
             
         print(f"\n--- {title} ---")
         if use_rich:

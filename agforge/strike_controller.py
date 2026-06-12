@@ -1,6 +1,8 @@
 import asyncio
 import time
 import enum
+import zlib
+
 import torch
 import numpy as np
 import genesis as gs
@@ -137,15 +139,20 @@ class StrikeController:
         self._diag_last_sim_time = 0.0
         self._diag_last_step = 0
 
-        # Cached kNN bind for Unity vertex temperatures (rebuilt on mesh_version change).
+        # Cached kNN bind for Unity vertex temperatures (SciPy cKDTree; rebuilt on geometry change).
         self._invalidate_unity_vertex_temp_cache()
 
     def _invalidate_unity_vertex_temp_cache(self) -> None:
-        self._unity_knn_mesh_version = -1
-        self._unity_knn_n_verts = 0
+        self._unity_knn_fingerprint_cache = None
+        self._unity_knn_quick_stamp = None
         self._unity_knn_indices = None
         self._unity_knn_weights = None
         self._unity_knn_fade_alpha = None
+
+    def _unity_mesh_stamp(self) -> int:
+        if self._uses_unified_surface_mesh():
+            return int(getattr(self.physics_mesher, "version", 0))
+        return int(getattr(self.reconstructor, "mesh_version", 0))
 
     def _invalidate_applied_qpos_cache(self) -> None:
         self._last_applied_qpos = None
@@ -155,34 +162,51 @@ class StrikeController:
         self._last_applied_qpos = qpos.clone()
         self._last_apply_strike_state = self.strike_state
 
-    def _unity_mesh_stamp(self) -> int:
-        if self._uses_unified_surface_mesh():
-            return int(getattr(self.physics_mesher, "version", 0))
-        return int(getattr(self.reconstructor, "mesh_version", 0))
+    @staticmethod
+    def _unity_knn_fingerprint(mapping_parts_np: np.ndarray, verts_np: np.ndarray) -> tuple:
+        return (
+            int(mapping_parts_np.shape[0]),
+            int(verts_np.shape[0]),
+            int(zlib.adler32(np.ascontiguousarray(verts_np, dtype=np.float32).tobytes())),
+            int(zlib.adler32(np.ascontiguousarray(mapping_parts_np, dtype=np.float32).tobytes())),
+        )
 
     def _ensure_unity_vertex_temp_cache(self, mapping_parts_np: np.ndarray, verts_np: np.ndarray) -> None:
-        mesh_stamp = self._unity_mesh_stamp()
-        n_verts = int(verts_np.shape[0])
+        quick_stamp = (
+            self._unity_mesh_stamp(),
+            int(mapping_parts_np.shape[0]),
+            int(verts_np.shape[0]),
+        )
         if (
-            self._unity_knn_indices is not None
-            and self._unity_knn_mesh_version == mesh_stamp
-            and self._unity_knn_n_verts == n_verts
+            self._unity_knn_quick_stamp == quick_stamp
+            and self._unity_knn_fingerprint_cache is not None
+            and self._unity_knn_indices is not None
         ):
             return
 
-        from scipy.spatial import cKDTree
+        fingerprint = self._unity_knn_fingerprint(mapping_parts_np, verts_np)
+        if self._unity_knn_fingerprint_cache == fingerprint:
+            self._unity_knn_quick_stamp = quick_stamp
+            return
+
+        k = min(3, int(mapping_parts_np.shape[0]))
 
         with self._profile("teleop_io_kdtree_build"):
+            from scipy.spatial import cKDTree
+
             tree = cKDTree(mapping_parts_np, leafsize=32)
-            dists, indices = tree.query(verts_np, k=3)
+            dists, indices = tree.query(verts_np, k=k)
+            if k == 1:
+                dists = dists[:, np.newaxis]
+                indices = indices[:, np.newaxis]
             dists = np.maximum(dists, 1e-6)
             weights = 1.0 / dists
             weights_norm = weights / weights.sum(axis=1, keepdims=True)
+            self._unity_knn_indices = np.asarray(indices, dtype=np.int32)
+            self._unity_knn_weights = np.asarray(weights_norm, dtype=np.float32)
 
-        self._unity_knn_indices = np.asarray(indices, dtype=np.int32)
-        self._unity_knn_weights = np.asarray(weights_norm, dtype=np.float32)
-        self._unity_knn_mesh_version = mesh_stamp
-        self._unity_knn_n_verts = n_verts
+        self._unity_knn_fingerprint_cache = fingerprint
+        self._unity_knn_quick_stamp = quick_stamp
 
         if getattr(self.env.cfg, "thermal_visual_fade", True):
             L_v = self.env.cfg.robot.cylinder_height
@@ -200,7 +224,7 @@ class StrikeController:
 
     def _map_particle_temps_to_vertices(
         self,
-        particles_temp: np.ndarray,
+        particles_temp: np.ndarray | torch.Tensor,
         mapping_parts_np: np.ndarray,
         verts_np: np.ndarray,
     ) -> np.ndarray:
@@ -209,12 +233,15 @@ class StrikeController:
 
         self._ensure_unity_vertex_temp_cache(mapping_parts_np, verts_np)
 
-        temps = particles_temp
-        if self._unity_knn_fade_alpha is not None:
-            target_vis = np.minimum(temps, 900.0)
-            temps = temps * (1.0 - self._unity_knn_fade_alpha) + target_vis * self._unity_knn_fade_alpha
-
         with self._profile("teleop_io_kdtree_vertex_temps"):
+            if isinstance(particles_temp, torch.Tensor):
+                temps = particles_temp.reshape(-1).detach().cpu().numpy()
+            else:
+                temps = particles_temp
+            if self._unity_knn_fade_alpha is not None:
+                target_vis = np.minimum(temps, 900.0)
+                temps = temps * (1.0 - self._unity_knn_fade_alpha) + target_vis * self._unity_knn_fade_alpha
+
             neighbor_temps = temps[self._unity_knn_indices]
             vertices_temp = (neighbor_temps * self._unity_knn_weights).sum(axis=1)
             return vertices_temp.astype(np.float32)
@@ -1103,9 +1130,9 @@ class StrikeController:
 
                     if mapping_parts_np.shape[0] != particles_temp_tensor.shape[0]:
                         active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
-                        particles_temp = particles_temp_tensor[active_mask].detach().cpu().numpy()
+                        particles_temp = particles_temp_tensor[active_mask]
                     else:
-                        particles_temp = particles_temp_tensor.detach().cpu().numpy()
+                        particles_temp = particles_temp_tensor
 
                     if isinstance(vertices_raw, torch.Tensor):
                         verts_np = vertices_raw.detach().cpu().numpy()
