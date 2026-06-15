@@ -20,9 +20,14 @@ import webbrowser
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Set, FrozenSet
 from functools import wraps
 from pathlib import Path
+
+# Sections excluded from active-compute % denominators (intentional pacing, not work).
+EXCLUDED_FROM_ACTIVE_PCT: FrozenSet[str] = frozenset({
+    "teleop_frame_pacing_sleep",
+})
 
 # ─────────────────────────────────────────────────────────────
 # DATA STRUCTURES
@@ -218,12 +223,83 @@ class Profiler:
             
         return root_agg
 
-    def _process_children_for_display(self, node: '_AggNode', min_pct: float, grand_total: float):
+    def _collect_excluded_stats(self, root_agg: "_AggNode") -> Dict[str, float]:
+        """Sum total time for sections excluded from active-compute reporting."""
+        excluded: Dict[str, float] = {}
+
+        def walk(node: "_AggNode") -> None:
+            if node.name in EXCLUDED_FROM_ACTIVE_PCT:
+                excluded[node.name] = excluded.get(node.name, 0.0) + node.total
+                return
+            for child in node.children.values():
+                walk(child)
+
+        for child in root_agg.children.values():
+            walk(child)
+        return excluded
+
+    def _wall_and_active_totals(self, root_agg: "_AggNode") -> tuple[float, float, Dict[str, float]]:
+        elapsed_ns = time.perf_counter_ns() - self._profiler_start_time
+        wall_time = elapsed_ns / 1_000_000_000
+        excluded_stats = self._collect_excluded_stats(root_agg)
+        excluded_time = sum(excluded_stats.values())
+        profiled_time = sum(c.total for c in root_agg.children.values())
+        active_time = max(0.0, profiled_time - excluded_time)
+        return wall_time, active_time, excluded_stats
+
+    def _print_excluded_footer(
+        self,
+        console,
+        use_rich: bool,
+        wall_time: float,
+        active_time: float,
+        excluded_stats: Dict[str, float],
+        idle_time: float,
+    ) -> None:
+        for name in sorted(excluded_stats):
+            excluded_ms = excluded_stats[name] * 1000
+            wall_pct = (excluded_stats[name] / wall_time * 100) if wall_time > 0 else 0.0
+            label = f" [Excluded: {name}]"
+            line = f"{label:<30} (excluded)  {excluded_ms:>9.1f}ms  ({wall_pct:.1f}% wall)"
+            if use_rich:
+                console.print(f"[dim italic]{line}[/]", highlight=False)
+            else:
+                print(line)
+
+        if active_time > 0.001:
+            active_ms = active_time * 1000
+            wall_pct = (active_time / wall_time * 100) if wall_time > 0 else 0.0
+            line = f" [Active Compute Time]        (denominator) {active_ms:>9.1f}ms  ({wall_pct:.1f}% wall)"
+            if use_rich:
+                console.print(f"[dim]{line}[/]", highlight=False)
+            else:
+                print(line)
+
+        if idle_time > 0.001:
+            idle_ms = idle_time * 1000
+            if use_rich:
+                console.print(
+                    f"[dim italic] [Idle/Inactive Time]         (excluded)  {idle_ms:>9.1f}ms[/]",
+                    highlight=False,
+                )
+            else:
+                print(f" [Idle/Inactive Time]         (excluded)  {idle_ms:>9.1f}ms")
+
+    def _process_children_for_display(
+        self,
+        node: "_AggNode",
+        min_pct: float,
+        grand_total: float,
+        exclude_names: Optional[Set[str]] = None,
+    ):
         """
         Sorts children and groups small ones into 'Others'.
         Returns list of nodes to display.
         """
-        sorted_children = sorted(node.children.values(), key=lambda c: c.total, reverse=True)
+        children = node.children.values()
+        if exclude_names:
+            children = [c for c in children if c.name not in exclude_names]
+        sorted_children = sorted(children, key=lambda c: c.total, reverse=True)
         
         if min_pct <= 0 or grand_total <= 0:
             return sorted_children
@@ -286,15 +362,11 @@ class Profiler:
         flat_stats: Dict[str, Profiler._AggNode] = {}
         
         root_agg = self._aggregate_tree()
-        
-        # Calculate idle time (time outside any profiled block)
-        elapsed_ns = time.perf_counter_ns() - self._profiler_start_time
-        elapsed_time = elapsed_ns / 1_000_000_000  # Convert to seconds
-        sum_root_children = sum(c.total for c in root_agg.children.values())
-        idle_time = elapsed_time - sum_root_children
-        
-        # Use sum of root children as the "active" total for percentages
-        total_time = sum_root_children
+
+        wall_time, active_time, excluded_stats = self._wall_and_active_totals(root_agg)
+        profiled_time = sum(c.total for c in root_agg.children.values())
+        idle_time = wall_time - profiled_time
+        total_time = active_time
         
         def collect(node: Profiler._AggNode):
             for child in node.children.values():
@@ -318,7 +390,10 @@ class Profiler:
         for child in root_agg.children.values():
             collect(child)
             
-        items = list(flat_stats.values())
+        items = [
+            node for node in flat_stats.values()
+            if node.name not in EXCLUDED_FROM_ACTIVE_PCT
+        ]
         items.sort(key=lambda x: x.total, reverse=True)
         
         # Remaining glue: profiled tree time not attributed to any section self-time
@@ -342,7 +417,7 @@ class Profiler:
                 items.append(unprof_node)
 
         value_getter = lambda x: x.total
-        title = "Profile Results (Hot Spots - Self Time)"
+        title = "Profile Results (Hot Spots - Self Time, Active Compute)"
             
         print(f"\n--- {title} ---")
         if use_rich:
@@ -425,16 +500,9 @@ class Profiler:
                       f"{others.total*1000:>9.1f}ms {others_pct:>7.1f}%   {bar_str}")
         
         print("---------------------------------------------------------------------------------------------------------")
-        
-        # Print idle time at the very bottom (excluded from % calculations)
-        if idle_time > 0.001:  # Only show if > 1ms
-            idle_ms = idle_time * 1000
-            if use_rich:
-                console.print(f"[dim italic] [Idle/Inactive Time]         (excluded)  {idle_ms:>9.1f}ms[/]", 
-                      highlight=False)
-            else:
-                print(f" [Idle/Inactive Time]         (excluded)  {idle_ms:>9.1f}ms")
-        
+
+        self._print_excluded_footer(console, use_rich, wall_time, active_time, excluded_stats, idle_time)
+
         print("")
 
     def print_tree(self, min_pct=0.0):
@@ -445,9 +513,12 @@ class Profiler:
         console, use_rich = self._get_console()
 
         root_agg = self._aggregate_tree()
-        total_time = root_agg.total
-        
-        print("\n--- Profile Tree (Aggregated) ---")
+        wall_time, active_time, excluded_stats = self._wall_and_active_totals(root_agg)
+        profiled_time = sum(c.total for c in root_agg.children.values())
+        idle_time = wall_time - profiled_time
+        total_time = active_time
+
+        print("\n--- Profile Tree (Aggregated, Active Compute) ---")
         
         # Consistent color cycle by depth
         colors = ["bold cyan", "green", "yellow", "magenta", "blue"]
@@ -505,8 +576,10 @@ class Profiler:
                 print(f"{bar_prefix}    {bar_str}")
             
             # Prepare children
-            children = self._process_children_for_display(node, min_pct, total_time)
-            
+            children = self._process_children_for_display(
+                node, min_pct, total_time, exclude_names=EXCLUDED_FROM_ACTIVE_PCT
+            )
+
             # New prefix for children
             if use_rich:
                 # We need clean string for prefix logic, stripped of colors
@@ -518,11 +591,15 @@ class Profiler:
                 walk(child, child_prefix, i == len(children) - 1, depth + 1)
 
         # Children of root
-        children = self._process_children_for_display(root_agg, min_pct, total_time)
+        children = self._process_children_for_display(
+            root_agg, min_pct, total_time, exclude_names=EXCLUDED_FROM_ACTIVE_PCT
+        )
         for i, child in enumerate(children):
             walk(child, "", i == len(children) - 1, 0)
-            
-        print("---------------------------------\n")
+
+        print("---------------------------------")
+        self._print_excluded_footer(console, use_rich, wall_time, active_time, excluded_stats, idle_time)
+        print("")
 
     def rich_table(self, min_pct=0.0):
         """Rich library table view (Aggregated)."""
@@ -536,10 +613,14 @@ class Profiler:
             return
 
         self.stop()
+        console = Console()
         root_agg = self._aggregate_tree()
-        total_time = root_agg.total
-        
-        table = Table(title=f"Profile Results (Aggregated, >{min_pct}%)")
+        wall_time, active_time, excluded_stats = self._wall_and_active_totals(root_agg)
+        profiled_time = sum(c.total for c in root_agg.children.values())
+        idle_time = wall_time - profiled_time
+        total_time = active_time
+
+        table = Table(title=f"Profile Results (Active Compute, >{min_pct}%)")
         table.add_column("Section", style="cyan")
         table.add_column("Calls", justify="right")
         table.add_column("Total", justify="right")
@@ -584,15 +665,21 @@ class Profiler:
                 f"[{color_only}]{bar}[/]" 
             )
             
-            children_to_show = self._process_children_for_display(node, min_pct, total_time)
+            children_to_show = self._process_children_for_display(
+                node, min_pct, total_time, exclude_names=EXCLUDED_FROM_ACTIVE_PCT
+            )
             for child in children_to_show:
                 build_table(child, depth + 1)
 
-        children = self._process_children_for_display(root_agg, min_pct, total_time)
+        children = self._process_children_for_display(
+            root_agg, min_pct, total_time, exclude_names=EXCLUDED_FROM_ACTIVE_PCT
+        )
         for child in children:
             build_table(child, 0)
-        
-        Console().print(table)
+
+        console.print(table)
+        self._print_excluded_footer(console, True, wall_time, active_time, excluded_stats, idle_time)
+        print("")
 
     # ─────────────────────────────────────────────────────────────
     # BROWSER VISUALIZATION (Auto-open)
