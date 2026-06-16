@@ -455,6 +455,84 @@ class MPMEntity(ParticleEntity):
             depths = depths[0]
         return poss, actives, temps, depths
 
+    def get_particles_stability_bundle(self, envs_idx=None):
+        """Fetch pos and vel in one solver kernel pass for stability checks."""
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        poss = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
+        vels = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
+        self.solver._kernel_get_particles_stability_bundle(
+            self._sim.cur_substep_local,
+            self._particle_start,
+            self.n_particles,
+            envs_idx,
+            poss,
+            vels,
+        )
+        if self._scene.n_envs == 0:
+            poss = poss[0]
+            vels = vels[0]
+        return poss, vels
+
+    def get_particles_record_bundle(self, envs_idx=None):
+        """Fetch pos, vel, temp, and F in one solver kernel pass for recording."""
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        poss = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
+        vels = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
+        temps = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        Fs = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3, 3))
+        self.solver._kernel_get_particles_record_bundle(
+            self._sim.cur_substep_local,
+            self._particle_start,
+            self.n_particles,
+            envs_idx,
+            poss,
+            vels,
+            temps,
+            Fs,
+        )
+        if self._scene.n_envs == 0:
+            poss = poss[0]
+            vels = vels[0]
+            temps = temps[0]
+            Fs = Fs[0]
+        return poss, vels, temps, Fs
+
+    def get_particles_thermal_telemetry_bundle(self, envs_idx=None):
+        """Fetch temp and all per-mechanism dT fields in one solver kernel pass."""
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        temps = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        dT_induction = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        dT_conv = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        dT_rad = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        dT_bulk = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        dT_diffusion = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        dT_contact = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        dT_adiabatic = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        self.solver._kernel_get_particles_thermal_telemetry_bundle(
+            self._sim.cur_substep_local,
+            self._particle_start,
+            self.n_particles,
+            envs_idx,
+            temps,
+            dT_induction,
+            dT_conv,
+            dT_rad,
+            dT_bulk,
+            dT_diffusion,
+            dT_contact,
+            dT_adiabatic,
+        )
+        if self._scene.n_envs == 0:
+            temps = temps[0]
+            dT_induction = dT_induction[0]
+            dT_conv = dT_conv[0]
+            dT_rad = dT_rad[0]
+            dT_bulk = dT_bulk[0]
+            dT_diffusion = dT_diffusion[0]
+            dT_contact = dT_contact[0]
+            dT_adiabatic = dT_adiabatic[0]
+        return temps, dT_induction, dT_conv, dT_rad, dT_bulk, dT_diffusion, dT_contact, dT_adiabatic
+
     @gs.assert_built
     def set_particles_temp(self, temps, particles_idx_local=None, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)

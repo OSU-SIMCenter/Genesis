@@ -1499,6 +1499,80 @@ class BaseMPMSolver(Solver):
             actives[i_b_, i_p_] = self.particles_ng[f, i_p, i_b].active
 
     @qd.kernel
+    def _kernel_get_particles_stability_bundle(
+        self,
+        f: qd.i32,
+        particle_start: qd.i32,
+        n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(),
+        poss: qd.types.ndarray(),
+        vels: qd.types.ndarray(),
+    ):
+        """Single-pass read of pos and vel for stability checks."""
+        for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+            i_p = i_p_ + particle_start
+            i_b = envs_idx[i_b_]
+            for i in qd.static(range(3)):
+                poss[i_b_, i_p_, i] = self.particles[f, i_p, i_b].pos[i]
+                vels[i_b_, i_p_, i] = self.particles[f, i_p, i_b].vel[i]
+
+    @qd.kernel
+    def _kernel_get_particles_record_bundle(
+        self,
+        f: qd.i32,
+        particle_start: qd.i32,
+        n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(),
+        poss: qd.types.ndarray(),
+        vels: qd.types.ndarray(),
+        temps: qd.types.ndarray(),
+        Fs: qd.types.ndarray(),
+    ):
+        """Single-pass read of pos, vel, temp, and F for strike recording."""
+        for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+            i_p = i_p_ + particle_start
+            i_b = envs_idx[i_b_]
+            for i in qd.static(range(3)):
+                poss[i_b_, i_p_, i] = self.particles[f, i_p, i_b].pos[i]
+                vels[i_b_, i_p_, i] = self.particles[f, i_p, i_b].vel[i]
+            if qd.static(self._enable_thermal):
+                temps[i_b_, i_p_] = self.particles[f, i_p, i_b].temp
+            for i in qd.static(range(3)):
+                for j in qd.static(range(3)):
+                    Fs[i_b_, i_p_, i, j] = self.particles[f, i_p, i_b].F[i, j]
+
+    @qd.kernel
+    def _kernel_get_particles_thermal_telemetry_bundle(
+        self,
+        f: qd.i32,
+        particle_start: qd.i32,
+        n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(),
+        temps: qd.types.ndarray(),
+        dT_induction: qd.types.ndarray(),
+        dT_conv: qd.types.ndarray(),
+        dT_rad: qd.types.ndarray(),
+        dT_bulk: qd.types.ndarray(),
+        dT_diffusion: qd.types.ndarray(),
+        dT_contact: qd.types.ndarray(),
+        dT_adiabatic: qd.types.ndarray(),
+    ):
+        """Single-pass read of temp and per-mechanism dT accumulators for logging."""
+        if qd.static(self._enable_thermal):
+            for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+                i_p = i_p_ + particle_start
+                i_b = envs_idx[i_b_]
+                p = self.particles[f, i_p, i_b]
+                temps[i_b_, i_p_] = p.temp
+                dT_induction[i_b_, i_p_] = p.dT_induction
+                dT_conv[i_b_, i_p_] = p.dT_conv
+                dT_rad[i_b_, i_p_] = p.dT_rad
+                dT_bulk[i_b_, i_p_] = p.dT_bulk
+                dT_diffusion[i_b_, i_p_] = p.dT_diffusion
+                dT_contact[i_b_, i_p_] = p.dT_contact
+                dT_adiabatic[i_b_, i_p_] = p.dT_adiabatic
+
+    @qd.kernel
     def _kernel_get_particles_render_bundle(
         self,
         f: qd.i32,

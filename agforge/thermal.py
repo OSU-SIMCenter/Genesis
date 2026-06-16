@@ -1,6 +1,7 @@
 import zlib
 
 import numpy as np
+import torch
 import igl
 
 import genesis as gs
@@ -23,6 +24,25 @@ def get_steel_cp_numpy(temp: np.ndarray) -> np.ndarray:
     mask_low = (temp > 293.15) & (temp < 700.0)
     if np.any(mask_low):
         u = (temp[mask_low] - 293.15) / 406.85
+        cp[mask_low] = 450.0 + u * 130.0
+
+    return cp
+
+
+def get_steel_cp_torch(temp: torch.Tensor) -> torch.Tensor:
+    """Torch vectorized computation of temperature-dependent specific heat for low-alloy steel."""
+    t = temp.reshape(-1).float()
+    cp = torch.full_like(t, 450.0)
+    cp = torch.where(t >= 1000.0, torch.full_like(t, 750.0), cp)
+
+    mask_mid = (t >= 700.0) & (t < 1000.0)
+    if mask_mid.any():
+        u = (t[mask_mid] - 700.0) / 300.0
+        cp[mask_mid] = 580.0 + u * 70.0
+
+    mask_low = (t > 293.15) & (t < 700.0)
+    if mask_low.any():
+        u = (t[mask_low] - 293.15) / 406.85
         cp[mask_low] = 450.0 + u * 130.0
 
     return cp

@@ -869,29 +869,44 @@ class StrikeController:
             # ---------------------------
 
         # --- Thermal Telemetry ---
-        # Log every 5th frame during strikes, and every 10th frame during idle/heating
-        _telemetry_interval = 5 if _is_striking else 10
+        # Log every 10th frame during strikes, and every 20th frame during idle/heating
+        _telemetry_interval = 10 if _is_striking else 20
         with self._profile("teleop_thermal_telemetry"):
             if self.thermal_enabled and self._physics_step_counter % _telemetry_interval == 0:
                 try:
                     with self._profile("teleop_telemetry_gpu_pull"):
-                        temps_after_physics = self.env.mpm_entity.get_particles_temp()
+                        entity = self.env.mpm_entity
+                        if hasattr(entity, "get_particles_thermal_telemetry_bundle"):
+                            (
+                                temps_after_physics,
+                                dT_induction,
+                                dT_conv,
+                                dT_rad,
+                                dT_bulk,
+                                dT_diffusion,
+                                dT_contact,
+                                dT_adiabatic,
+                            ) = entity.get_particles_thermal_telemetry_bundle()
+                        else:
+                            temps_after_physics = entity.get_particles_temp()
+                            dT_induction = entity.get_particles_dT_induction()
+                            dT_conv = entity.get_particles_dT_conv()
+                            dT_rad = entity.get_particles_dT_rad()
+                            dT_bulk = entity.get_particles_dT_bulk()
+                            dT_diffusion = entity.get_particles_dT_diffusion()
+                            dT_contact = entity.get_particles_dT_contact()
+                            dT_adiabatic = entity.get_particles_dT_adiabatic()
+
                         t = temps_after_physics.float()
 
                         # Total thermal energy: E = Σ(m_real * Cp * T)
                         particle_mass_scaled = self.env.scene.sim.mpm_solver.particles_info[0].mass
                         particle_mass = particle_mass_scaled / self.env.scene.sim.mpm_solver._particle_volume_scale
-                        from agforge.thermal import get_steel_cp_numpy
-                        cp_tensor = torch.tensor(get_steel_cp_numpy(t.cpu().numpy()), device=t.device)
-                        n_particles = t.numel()
+                        from agforge.thermal import get_steel_cp_torch
 
-                        all_dT_names = []
-                        all_dT_tensors = []
+                        cp_tensor = get_steel_cp_torch(t)
 
-                        # Per-mechanism dT telemetry (accumulated over substeps each macro-step).
-                        # Air convection and fixed-end bulk conduction use the same Robin exponential
-                        # form but are applied on disjoint cell sets (air-exposed vs cut-face).
-                        all_dT_names.extend([
+                        all_dT_names = [
                             "Induction",
                             "AirConv",
                             "Radiation",
@@ -899,16 +914,16 @@ class StrikeController:
                             "Diffusion",
                             "Contact",
                             "Adiabatic",
-                        ])
-                        all_dT_tensors.extend([
-                            self.env.mpm_entity.get_particles_dT_induction().float().squeeze(-1).view(-1),
-                            self.env.mpm_entity.get_particles_dT_conv().float().squeeze(-1).view(-1),
-                            self.env.mpm_entity.get_particles_dT_rad().float().squeeze(-1).view(-1),
-                            self.env.mpm_entity.get_particles_dT_bulk().float().squeeze(-1).view(-1),
-                            self.env.mpm_entity.get_particles_dT_diffusion().float().squeeze(-1).view(-1),
-                            self.env.mpm_entity.get_particles_dT_contact().float().squeeze(-1).view(-1),
-                            self.env.mpm_entity.get_particles_dT_adiabatic().float().squeeze(-1).view(-1),
-                        ])
+                        ]
+                        all_dT_tensors = [
+                            dT_induction.float().reshape(-1),
+                            dT_conv.float().reshape(-1),
+                            dT_rad.float().reshape(-1),
+                            dT_bulk.float().reshape(-1),
+                            dT_diffusion.float().reshape(-1),
+                            dT_contact.float().reshape(-1),
+                            dT_adiabatic.float().reshape(-1),
+                        ]
 
                     def W_str(watts):
                         if abs(watts) > 1e6:
@@ -1067,18 +1082,32 @@ class StrikeController:
         if self.strike_state != StrikeState.IDLE:
             with self._profile("teleop_record"):
                 with self._profile("teleop_record_gpu_pull"):
-                    particles_pos = self.env.mpm_entity.get_particles_pos()
-                    particles_vel = self.env.mpm_entity.get_particles_vel()
-
-                    # Check for thermal state - use entity API to read from correct substep
-                    if hasattr(self.env.mpm_entity, 'get_particles_temp'):
-                        particles_temp = self.env.mpm_entity.get_particles_temp().cpu().numpy().reshape(-1)
-                        particles_F = self.env.mpm_entity.get_particles_F()
-                        if particles_F.ndim == 4:  # [B, N, 3, 3]
+                    entity = self.env.mpm_entity
+                    if hasattr(entity, "get_particles_record_bundle"):
+                        particles_pos, particles_vel, particles_temp_t, particles_F = entity.get_particles_record_bundle()
+                        if particles_F.ndim == 4:
+                            particles_F = particles_F[0]
+                        particles_temp = particles_temp_t.detach().cpu().numpy().reshape(-1)
+                        with self._profile("teleop_record_det_f"):
+                            particles_detF = (
+                                torch.linalg.det(particles_F.reshape(-1, 3, 3))
+                                .detach()
+                                .cpu()
+                                .numpy()
+                                .astype(np.float32)
+                            )
+                    elif hasattr(entity, "get_particles_temp"):
+                        particles_pos = entity.get_particles_pos()
+                        particles_vel = entity.get_particles_vel()
+                        particles_temp = entity.get_particles_temp().cpu().numpy().reshape(-1)
+                        particles_F = entity.get_particles_F()
+                        if particles_F.ndim == 4:
                             particles_F = particles_F[0]
                         with self._profile("teleop_record_det_f"):
                             particles_detF = torch.linalg.det(particles_F).detach().cpu().numpy().astype(np.float32)
                     else:
+                        particles_pos = entity.get_particles_pos()
+                        particles_vel = entity.get_particles_vel()
                         particles_temp = np.zeros(particles_pos.shape[-2], dtype=np.float32)
                         particles_detF = np.ones(particles_pos.shape[-2], dtype=np.float32)
 
@@ -1363,8 +1392,12 @@ class StrikeController:
         if not safety or not getattr(safety, "enabled", True):
             return
 
-        vels = self.env.mpm_entity.get_particles_vel()
-        pos = self.env.mpm_entity.get_particles_pos()
+        entity = self.env.mpm_entity
+        if hasattr(entity, "get_particles_stability_bundle"):
+            pos, vels = entity.get_particles_stability_bundle()
+        else:
+            vels = entity.get_particles_vel()
+            pos = entity.get_particles_pos()
         
         # Pull temperatures if available
         temp = None
