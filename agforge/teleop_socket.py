@@ -169,25 +169,30 @@ async def simulation_loop(websocket, state: StrikeController):
         gs.logger.debug("Simulation loop finished")
 
 async def viewer_idle_loop(state: StrikeController):
-    """Keeps the viewer responsive when no client is connected."""
+    """Keeps the viewer responsive when no client is connected.
+
+    Full particle/overlay GPU sync runs from ``step_simulation`` while Unity is
+    connected. When disconnected, only process queued physics rebuilds (which
+    refresh the overlay themselves) and throttle cheap ``visualizer.update``
+    calls for camera/UI — no per-tick GPU particle pulls.
+    """
+    viewer_refresh_interval_s = 0.2  # 5 Hz — enough for mouse/camera, not sim data
+
     try:
         while True:
-            # Helper dynamic attribute
             is_connected = getattr(state, 'is_client_connected', False)
-            
+
             if not is_connected:
                 with state._profile("teleop_viewer_idle_tick"):
                     await state.process_pending_physics_rebuild()
-                    if hasattr(state.env.scene, 'visualizer') and state.env.scene.visualizer:
-                        renderer = getattr(state, '_temp_particle_renderer', None)
-                        overlay = getattr(state, '_mesh_overlay', None)
-                        if overlay is not None:
-                            overlay.sync_from_controller(state)
-                        if renderer is not None:
-                            renderer.sync_from_env(state.env)
-                        vis = state.env.scene.visualizer
-                        vis.update(force=False, auto=True)
-            
+                    vis = getattr(state.env.scene, 'visualizer', None)
+                    if vis:
+                        now = time.monotonic()
+                        last = getattr(state, '_viewer_idle_last_refresh', 0.0)
+                        if now - last >= viewer_refresh_interval_s:
+                            state._viewer_idle_last_refresh = now
+                            vis.update(force=False, auto=True)
+
             await asyncio.sleep(0.02)
     except asyncio.CancelledError:
         pass

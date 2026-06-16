@@ -81,6 +81,7 @@ class ProfilingOptions(Options):
             recon_rebind: bool = True
             recon_transform: bool = True
             render: bool = True
+            pre_render_drain: bool = True
             apply_action: bool = True
             apply_action_get_qpos: bool = True
             apply_action_control: bool = True

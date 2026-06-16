@@ -431,6 +431,30 @@ class MPMEntity(ParticleEntity):
             actives = actives[0]
         return actives
 
+    def get_particles_render_bundle(self, envs_idx=None):
+        """Fetch pos, active, temp, and induction depth in one solver kernel pass."""
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        poss = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
+        actives = self._sanitize_particles_tensor(None, gs.tc_bool, None, envs_idx)
+        temps = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        depths = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        self.solver._kernel_get_particles_render_bundle(
+            self._sim.cur_substep_local,
+            self._particle_start,
+            self.n_particles,
+            envs_idx,
+            poss,
+            actives,
+            temps,
+            depths,
+        )
+        if self._scene.n_envs == 0:
+            poss = poss[0]
+            actives = actives[0]
+            temps = temps[0]
+            depths = depths[0]
+        return poss, actives, temps, depths
+
     @gs.assert_built
     def set_particles_temp(self, temps, particles_idx_local=None, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)

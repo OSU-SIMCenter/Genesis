@@ -1499,6 +1499,29 @@ class BaseMPMSolver(Solver):
             actives[i_b_, i_p_] = self.particles_ng[f, i_p, i_b].active
 
     @qd.kernel
+    def _kernel_get_particles_render_bundle(
+        self,
+        f: qd.i32,
+        particle_start: qd.i32,
+        n_particles: qd.i32,
+        envs_idx: qd.types.ndarray(),
+        poss: qd.types.ndarray(),
+        actives: qd.types.ndarray(),
+        temps: qd.types.ndarray(),
+        depths: qd.types.ndarray(),
+    ):
+        """Single-pass read of pos, active, temp, and induction depth for viewer sync."""
+        for i_p_, i_b_ in qd.ndrange(n_particles, envs_idx.shape[0]):
+            i_p = i_p_ + particle_start
+            i_b = envs_idx[i_b_]
+            for i in qd.static(range(3)):
+                poss[i_b_, i_p_, i] = self.particles[f, i_p, i_b].pos[i]
+            actives[i_b_, i_p_] = self.particles_ng[f, i_p, i_b].active
+            if qd.static(self._enable_thermal):
+                temps[i_b_, i_p_] = self.particles[f, i_p, i_b].temp
+                depths[i_b_, i_p_] = self.induction_depth[i_p, i_b]
+
+    @qd.kernel
     def _kernel_set_particles_actu(
         self,
         f: qd.i32,

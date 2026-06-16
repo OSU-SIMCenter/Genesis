@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 
 from agforge.profiling_util import teleop_profile
 
@@ -236,7 +237,14 @@ class TemperatureParticleRenderer:
                 hi = self._temp_max if vmax is None else vmax
                 self._bucket_idx = _scalars_to_bucket_indices(values, lo, hi, self._n_buckets)
 
-    def _scalar_field_from_env(self, env: "AgilityForgeEnv", pos: np.ndarray) -> tuple[np.ndarray, float, float]:
+    def _scalar_field_from_env(
+        self,
+        env: "AgilityForgeEnv",
+        pos: np.ndarray,
+        *,
+        temps: np.ndarray | None = None,
+        depths: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, float, float]:
         from agforge.thermal_field import particle_q_ind, skin_weight
 
         cfg = env.cfg
@@ -244,10 +252,12 @@ class TemperatureParticleRenderer:
         solver = env.scene.sim.mpm_solver
 
         if mode == "temperature":
-            temps = env.mpm_entity.get_particles_temp().detach().cpu().numpy().reshape(-1)
+            if temps is None:
+                temps = env.mpm_entity.get_particles_temp().detach().cpu().numpy().reshape(-1)
             return temps, cfg.general.particle_temp_min, cfg.general.particle_temp_max
 
-        depths = env.mpm_entity.get_particles_induction_depth().detach().cpu().numpy().reshape(-1)
+        if depths is None:
+            depths = env.mpm_entity.get_particles_induction_depth().detach().cpu().numpy().reshape(-1)
         skin_depth = float(cfg.skin_depth)
 
         if mode == "induction_depth":
@@ -290,20 +300,57 @@ class TemperatureParticleRenderer:
             vmax = float(np.percentile(q, 99.5)) if q.size else 1.0
             return q, 0.0, max(vmax, 1e-12)
 
-        temps = env.mpm_entity.get_particles_temp().detach().cpu().numpy().reshape(-1)
+        if temps is None:
+            temps = env.mpm_entity.get_particles_temp().detach().cpu().numpy().reshape(-1)
         return temps, cfg.general.particle_temp_min, cfg.general.particle_temp_max
+
+    @staticmethod
+    def _pull_render_bundle_to_numpy(entity) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """One kernel launch + one GPU->CPU transfer for viewer particle sync."""
+        pos_t, active_t, temps_t, depths_t = entity.get_particles_render_bundle()
+        pos_t = pos_t.reshape(-1, 3)
+        n = pos_t.shape[0]
+        bundle = torch.cat(
+            (
+                pos_t,
+                temps_t.reshape(n, 1),
+                depths_t.reshape(n, 1),
+                active_t.reshape(n, 1).to(dtype=torch.float32),
+            ),
+            dim=1,
+        )
+        arr = bundle.detach().cpu().numpy()
+        pos = arr[:, :3]
+        temps = arr[:, 3]
+        depths = arr[:, 4]
+        active = arr[:, 5].astype(bool)
+        return pos, active, temps, depths
 
     def sync_from_env(self, env: "AgilityForgeEnv"):
         """Read live particle positions and the configured scalar field from the simulation."""
         self._env = env
         with teleop_profile(env, "teleop_render_particle_gpu_pull"):
-            pos = env.mpm_entity.get_particles_pos().detach().cpu().numpy().reshape(-1, 3)
-            scalars, vmin, vmax = self._scalar_field_from_env(env, pos)
-            if hasattr(env.mpm_entity, "get_particles_active"):
-                active = env.mpm_entity.get_particles_active(envs_idx=0).detach().cpu().numpy().reshape(-1).astype(bool)
-                if active.shape[0] == pos.shape[0]:
-                    pos = pos[active]
-                    scalars = scalars[active]
+            entity = env.mpm_entity
+            if hasattr(entity, "get_particles_render_bundle"):
+                pos, active, temps, depths = self._pull_render_bundle_to_numpy(entity)
+            else:
+                pos = entity.get_particles_pos().detach().cpu().numpy().reshape(-1, 3)
+                temps = None
+                depths = None
+                if hasattr(entity, "get_particles_active"):
+                    active = entity.get_particles_active(envs_idx=0).detach().cpu().numpy().reshape(-1).astype(bool)
+                else:
+                    active = np.ones(pos.shape[0], dtype=bool)
+
+            scalars, vmin, vmax = self._scalar_field_from_env(
+                env,
+                pos,
+                temps=temps,
+                depths=depths,
+            )
+            if active.shape[0] == pos.shape[0]:
+                pos = pos[active]
+                scalars = scalars[active]
         self.set_frame(pos, scalars=scalars, vmin=vmin, vmax=vmax)
 
     @staticmethod

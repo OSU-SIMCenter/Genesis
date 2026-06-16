@@ -238,13 +238,34 @@ class Profiler:
             walk(child)
         return excluded
 
+    def _sum_non_excluded_self_time(self, root_agg: "_AggNode") -> float:
+        """Sum self-time for all profiled sections except excluded pacing sleep."""
+        total = 0.0
+
+        def walk(node: "_AggNode") -> None:
+            nonlocal total
+            if node.name in EXCLUDED_FROM_ACTIVE_PCT:
+                return
+            if node.name != "root":
+                total += node.self_time
+            for child in node.children.values():
+                walk(child)
+
+        for child in root_agg.children.values():
+            walk(child)
+        return total
+
     def _wall_and_active_totals(self, root_agg: "_AggNode") -> tuple[float, float, Dict[str, float]]:
         elapsed_ns = time.perf_counter_ns() - self._profiler_start_time
         wall_time = elapsed_ns / 1_000_000_000
         excluded_stats = self._collect_excluded_stats(root_agg)
-        excluded_time = sum(excluded_stats.values())
-        profiled_time = sum(c.total for c in root_agg.children.values())
-        active_time = max(0.0, profiled_time - excluded_time)
+
+        # Use non-excluded self-time as the active-compute denominator.
+        # Do NOT subtract excluded node.total from sum(root children.total): excluded
+        # sections are usually nested (e.g. pacing under teleop_step), while root
+        # children only count top-level markers. With interleaved asyncio tasks that
+        # mismatch can make active_time == 0 and collapse all % to zero.
+        active_time = self._sum_non_excluded_self_time(root_agg)
         return wall_time, active_time, excluded_stats
 
     def _print_excluded_footer(

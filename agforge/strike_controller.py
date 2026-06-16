@@ -1015,6 +1015,9 @@ class StrikeController:
 
         # 5. Render Update
         if self.env.scene.visualizer:
+            import quadrants as qd  # type: ignore
+            with self._profile("teleop_pre_render_drain"):
+                qd.sync()
             with self._profile("teleop_render"):
                 if self._mesh_overlay is not None:
                     with self._profile("teleop_render_mesh_overlay_sync"):
