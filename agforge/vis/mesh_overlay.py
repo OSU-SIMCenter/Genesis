@@ -41,10 +41,21 @@ def mesh_for_genesis_viewer(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     Reconstruction stores Unity-oriented winding (faces reversed from MC output).
     Genesis/pyrender needs the opposite convention.
     """
+    return _display_mesh_from_source(mesh)
+
+
+def _display_mesh_from_source(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Single viewer-oriented copy with flipped winding and warmed normals."""
     out = mesh.copy()
     if len(out.faces) > 0:
         out.faces = out.faces[:, ::-1]
+        # Compute once per mesh version; pyrender smooth path copies these arrays.
+        _ = out.vertex_normals
     return out
+
+
+def _topology_key(mesh: trimesh.Trimesh) -> tuple[int, int]:
+    return len(mesh.vertices), len(mesh.faces)
 
 
 def _cycle_display_mode(current: MeshDisplayMode) -> MeshDisplayMode:
@@ -81,6 +92,8 @@ class ReconMeshOverlay:
         self._physics_mesh: trimesh.Trimesh | None = None
         self._visual_stamp: int = -1
         self._physics_stamp: int = -1
+        self._visual_topology: tuple[int, int] | None = None
+        self._physics_topology: tuple[int, int] | None = None
 
     @classmethod
     def from_env(cls, env: "AgilityForgeEnv") -> "ReconMeshOverlay":
@@ -89,12 +102,12 @@ class ReconMeshOverlay:
 
     def cycle_visual_mode(self) -> MeshDisplayMode:
         self.visual_mode = _cycle_display_mode(self.visual_mode)
-        self._refresh_node("visual")
+        self._refresh_node("visual", allow_inplace=False)
         return self.visual_mode
 
     def cycle_physics_mode(self) -> MeshDisplayMode:
         self.physics_mode = _cycle_display_mode(self.physics_mode)
-        self._refresh_node("physics")
+        self._refresh_node("physics", allow_inplace=False)
         return self.physics_mode
 
     def cycle_unified_display(self) -> MeshDisplayMode:
@@ -102,7 +115,7 @@ class ReconMeshOverlay:
         self.visual_mode = _cycle_display_mode(self.visual_mode)
         self.physics_mode = MeshDisplayMode.OFF
         self._remove_node("physics")
-        self._refresh_node("visual")
+        self._refresh_node("visual", allow_inplace=False)
         return self.visual_mode
 
     def sync_meshes(
@@ -119,9 +132,12 @@ class ReconMeshOverlay:
             visual_changed = True
             self._visual_stamp = -1 if visual_stamp is None else int(visual_stamp)
             self._visual_mesh = (
-                visual_mesh.copy()
+                _display_mesh_from_source(visual_mesh)
                 if visual_mesh is not None and len(visual_mesh.vertices) >= 4
                 else None
+            )
+            self._visual_topology = (
+                _topology_key(self._visual_mesh) if self._visual_mesh is not None else None
             )
 
         if physics_stamp is not None and physics_stamp == self._physics_stamp:
@@ -130,15 +146,18 @@ class ReconMeshOverlay:
             physics_changed = True
             self._physics_stamp = -1 if physics_stamp is None else int(physics_stamp)
             self._physics_mesh = (
-                physics_mesh.copy()
+                _display_mesh_from_source(physics_mesh)
                 if physics_mesh is not None and len(physics_mesh.vertices) >= 4
                 else None
             )
+            self._physics_topology = (
+                _topology_key(self._physics_mesh) if self._physics_mesh is not None else None
+            )
 
         if visual_changed:
-            self._refresh_node("visual")
+            self._refresh_node("visual", allow_inplace=True)
         if physics_changed:
-            self._refresh_node("physics")
+            self._refresh_node("physics", allow_inplace=True)
 
     def _sync_unified_mesh(self, mesh: trimesh.Trimesh | None, stamp: int) -> None:
         """Single overlay in unified mode (one color, no visual/physics double-draw)."""
@@ -148,11 +167,15 @@ class ReconMeshOverlay:
         self._visual_stamp = int(stamp)
         self._physics_stamp = int(stamp)
         self._visual_mesh = (
-            mesh.copy() if mesh is not None and len(mesh.vertices) >= 4 else None
+            _display_mesh_from_source(mesh) if mesh is not None and len(mesh.vertices) >= 4 else None
+        )
+        self._visual_topology = (
+            _topology_key(self._visual_mesh) if self._visual_mesh is not None else None
         )
         self._physics_mesh = None
+        self._physics_topology = None
         self._remove_node("physics")
-        self._refresh_node("visual")
+        self._refresh_node("visual", allow_inplace=True)
 
     def sync_from_controller(self, controller) -> None:
         unified = bool(getattr(controller.env.cfg.reconstruction, "unified_mesh", True))
@@ -193,23 +216,47 @@ class ReconMeshOverlay:
         if node is not None:
             self._ctx.remove_node(node)
             setattr(self, node_attr, None)
+        setattr(self, f"_{which}_topology", None)
 
-    def _refresh_node(self, which: str) -> None:
+    def _try_update_node_geometry(self, which: str, mesh: trimesh.Trimesh) -> bool:
+        """Update GPU vertex/normal buffers when topology is unchanged."""
+        node = getattr(self, f"_{which}_node")
+        topology = getattr(self, f"_{which}_topology")
+        if node is None or topology is None or topology != _topology_key(mesh):
+            return False
+
+        primitive = node.mesh.primitives[0]
+        if len(mesh.vertices) != len(primitive.positions):
+            return False
+
+        scene = self._ctx._scene
+        update_data = scene.reorder_vertices(node, mesh.vertices.astype(np.float32))
+        self._ctx.jit.update_buffer(scene.get_buffer_id(node, "pos"), update_data)
+        normal_data = self._ctx.jit.update_normal(node, update_data)
+        if normal_data is not None:
+            self._ctx.jit.update_buffer(scene.get_buffer_id(node, "normal"), normal_data)
+        return True
+
+    def _refresh_node(self, which: str, *, allow_inplace: bool = False) -> None:
         profile_target = self._env
         with teleop_profile(profile_target, "teleop_render_mesh_overlay_refresh"):
             mode: MeshDisplayMode = getattr(self, f"{which}_mode")
             mesh: trimesh.Trimesh | None = getattr(self, f"_{which}_mesh")
             color = self._visual_color if which == "visual" else self._physics_color
 
-            self._remove_node(which)
             if mode == MeshDisplayMode.OFF or mesh is None or len(mesh.vertices) < 4:
+                self._remove_node(which)
                 return
 
+            if allow_inplace and self._try_update_node_geometry(which, mesh):
+                return
+
+            self._remove_node(which)
             material = self._material_for(color, mode)
-            display_mesh = mesh_for_genesis_viewer(mesh)
-            pr_mesh = self._pyrender.Mesh.from_trimesh(display_mesh, material=material, smooth=True)
+            pr_mesh = self._pyrender.Mesh.from_trimesh(mesh, material=material, smooth=True)
             node = self._ctx.add_node(pr_mesh)
             setattr(self, f"_{which}_node", node)
+            setattr(self, f"_{which}_topology", _topology_key(mesh))
 
 
 def update_mesh_overlay_display(
