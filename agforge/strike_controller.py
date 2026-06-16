@@ -113,6 +113,8 @@ class StrikeController:
         self.thermal_enabled = False
         self.heating_power = self.env.cfg.heating_power
         self.skin_depth = self.env.cfg.skin_depth
+        self._cached_slider_x: float | None = None
+        self._last_induction_key: tuple | None = None
         self.heater = None
         self._temp_particle_renderer = None
 
@@ -157,6 +159,45 @@ class StrikeController:
     def _invalidate_applied_qpos_cache(self) -> None:
         self._last_applied_qpos = None
         self._last_apply_strike_state = None
+        self._invalidate_induction_params_cache()
+
+    def _invalidate_induction_params_cache(self) -> None:
+        self._cached_slider_x = None
+        self._last_induction_key = None
+
+    def _slider_x_for_induction(self) -> float:
+        if self._cached_slider_x is not None:
+            return self._cached_slider_x
+        if self.qpos is None:
+            return 0.0
+        self._cached_slider_x = float(self.qpos[0, 0].item())
+        return self._cached_slider_x
+
+    def _maybe_set_induction_params(self, *, active: bool) -> None:
+        cfg_robot = self.env.cfg.robot
+        slider_x = self._slider_x_for_induction()
+        key = (
+            slider_x,
+            float(self.heating_power),
+            float(self.skin_depth),
+            bool(active),
+            float(cfg_robot.coil_length) / 2.0,
+            float(cfg_robot.coil_radius),
+            float(cfg_robot.coil_offset_x),
+            float(cfg_robot.cylinder_pos[2]),
+        )
+        if key == self._last_induction_key:
+            return
+        coil_center = [slider_x + cfg_robot.coil_offset_x, 0.0, cfg_robot.cylinder_pos[2]]
+        self.env.scene.sim.mpm_solver.set_induction_params(
+            center=coil_center,
+            half_length=key[4],
+            radius=key[5],
+            q_peak=key[1],
+            skin_depth=key[2],
+            active=key[3],
+        )
+        self._last_induction_key = key
 
     def _mark_qpos_applied(self, qpos: torch.Tensor) -> None:
         self._last_applied_qpos = qpos.clone()
@@ -679,6 +720,8 @@ class StrikeController:
          self.qpos = current_qpos
          self.robot.apply_action(current_qpos)
          self._mark_qpos_applied(current_qpos)
+         self._cached_slider_x = float(current_qpos[0, 0].item())
+         self._last_induction_key = None
 
          self.strike_state = StrikeState.IDLE
          self.contact_L = False
@@ -731,6 +774,8 @@ class StrikeController:
                 if state_changed or qpos_changed:
                     self.robot.apply_action(qpos)
                     self._mark_qpos_applied(qpos)
+                    self._cached_slider_x = float(qpos[0, 0].item())
+                    self._last_induction_key = None
 
         # 3. Clear Forces
         with self._profile("teleop_clear_forces"):
@@ -758,17 +803,7 @@ class StrikeController:
                 # only publish the per-frame coil uniforms (center rides the sliding arm).
                 # The coil is "powered" only when not striking.
                 with self._profile("teleop_heating_set_params"):
-                    current_slider_x = self.qpos[0, 0].item() if self.qpos is not None else 0.0
-                    dynamic_coil_x = current_slider_x + self.env.cfg.robot.coil_offset_x
-                    coil_center = [dynamic_coil_x, 0.0, self.env.cfg.robot.cylinder_pos[2]]
-                    self.env.scene.sim.mpm_solver.set_induction_params(
-                        center=coil_center,
-                        half_length=self.env.cfg.robot.coil_length / 2.0,
-                        radius=self.env.cfg.robot.coil_radius,
-                        q_peak=self.heating_power,
-                        skin_depth=self.skin_depth,
-                        active=(not _is_striking),
-                    )
+                    self._maybe_set_induction_params(active=not _is_striking)
         else:
             # Thermal Freezing: Disable natural diffusion by snapshotting temperatures before physics step
             if hasattr(self.env.scene.sim.mpm_solver, 'particles') and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp'):
@@ -1277,6 +1312,8 @@ class StrikeController:
             self.robot.set_control_mode("TELEPORT")
             self.robot.apply_action(self.qpos)
             self._mark_qpos_applied(self.qpos)
+            self._cached_slider_x = float(self.qpos[0, 0].item())
+            self._last_induction_key = None
 
             self._invalidate_unity_vertex_temp_cache()
             if self._uses_unified_surface_mesh():
@@ -1290,6 +1327,7 @@ class StrikeController:
             self.thermal_enabled = ckpt.get('thermal_enabled', False)
             self.heating_power = ckpt.get('heating_power', 2000.0)
             self.skin_depth = ckpt.get('skin_depth', 0.02)
+            self._invalidate_induction_params_cache()
 
             # Particle positions changed on restore — rebuild surface mesh (+ SDF if heating).
             if self._needs_surface_rebuild():
