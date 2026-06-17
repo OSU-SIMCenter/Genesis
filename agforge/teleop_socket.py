@@ -8,6 +8,7 @@ import struct
 import math
 import time
 import os
+import argparse
 
 import websockets
 import logging
@@ -47,8 +48,82 @@ def _log_opengl_info(env, cfg: TeleopOptions) -> None:
     if any(tag in rlower for tag in ("llvmpipe", "softpipe", "software", "swiftshader")):
         gs.logger.warning(
             "Software OpenGL detected — viewer rendering will be slow. "
-            "On WSL2+WSLg: update Windows GPU drivers; if auto picks a slow backend, "
-            "try cfg.performance.opengl_platform = 'glx'."
+            "On WSL2+WSLg: update Windows GPU drivers; run "
+            "`pixi run python agforge/scripts/check_opengl.py`; "
+            "or try --opengl glx / cfg.performance.opengl_platform = 'glx'. "
+            "For data collection without a local viewer, use --headless."
+        )
+
+
+def _apply_wsl_opengl_default(cfg: TeleopOptions) -> None:
+    """Prefer GLX on WSL before Genesis viewer init when not explicitly configured."""
+    perf = cfg.performance
+    if perf.opengl_platform:
+        return
+    if not getattr(perf, "wsl_prefer_glx", True):
+        return
+    if not os.environ.get("WSL_DISTRO_NAME"):
+        return
+    if os.environ.get("PYOPENGL_PLATFORM"):
+        return
+    perf.opengl_platform = "glx"
+    gs.logger.info("WSL detected: defaulting opengl_platform to 'glx' (override with --opengl or cfg).")
+
+
+def _parse_teleop_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="AgForge teleop websocket server")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Disable the Genesis viewer window (Unity websocket IO only; fastest for data collection).",
+    )
+    parser.add_argument(
+        "--opengl",
+        choices=("glx", "egl", "osmesa", "native"),
+        default=None,
+        help="Force PYOPENGL_PLATFORM before viewer init.",
+    )
+    parser.add_argument(
+        "--viewer-fps",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Cap viewer redraw rate (default: cfg.performance.target_viewer_fps).",
+    )
+    parser.add_argument(
+        "--viewer-res-scale",
+        type=float,
+        default=None,
+        metavar="S",
+        help="Viewer resolution scale in (0, 1] (default: cfg.performance.viewer_res_scale).",
+    )
+    parser.add_argument(
+        "--no-wsl-glx-default",
+        action="store_true",
+        help="Do not auto-select GLX on WSL when --opengl is unset.",
+    )
+    return parser.parse_args()
+
+
+def _apply_cli_overrides(cfg: TeleopOptions, args: argparse.Namespace) -> None:
+    if args.headless:
+        cfg.general.show_viewer = False
+    if args.no_wsl_glx_default:
+        cfg.performance.wsl_prefer_glx = False
+    if args.opengl:
+        cfg.performance.opengl_platform = args.opengl
+    if args.viewer_fps is not None:
+        fps = int(args.viewer_fps)
+        cfg.performance.target_viewer_fps = fps
+        cfg.viewer.max_FPS = fps
+        cfg.viewer.refresh_rate = fps
+    if args.viewer_res_scale is not None:
+        scale = float(args.viewer_res_scale)
+        cfg.performance.viewer_res_scale = scale
+        w, h = cfg.viewer.res if cfg.viewer.res is not None else (1280, 720)
+        cfg.viewer.res = (
+            max(320, int(w * scale)),
+            max(240, int(h * scale)),
         )
 
 # Configuration constants (defaults; overridden by TeleopOptions.performance)
@@ -324,11 +399,14 @@ async def handle_client(websocket, state: StrikeController, path=None):
 
 async def main():
     sys.stdout.reconfigure(line_buffering=True)
+    args = _parse_teleop_args()
     
     print("Building simulation environment...")
     cfg = TeleopOptions()
+    _apply_cli_overrides(cfg, args)
+    _apply_wsl_opengl_default(cfg)
 
-    # Optional OpenGL backend override. Leave unset so Genesis tries native→egl→glx→osmesa.
+    # Optional OpenGL backend override. Leave unset so Genesis tries platform fallbacks.
     # Forcing "egl" on WSL often fails (no EGL device); WSLg/X11 usually needs "glx" or auto.
     if cfg.performance.opengl_platform:
         os.environ["PYOPENGL_PLATFORM"] = str(cfg.performance.opengl_platform)
@@ -392,9 +470,12 @@ async def main():
 
     _log_opengl_info(env, cfg)
 
-    from agforge.vis.temperature_particles import update_particle_color_display
+    if cfg.general.show_viewer:
+        from agforge.vis.temperature_particles import update_particle_color_display
 
-    update_particle_color_display(env, physics_mesher=shared_state.physics_mesher)
+        update_particle_color_display(env, physics_mesher=shared_state.physics_mesher)
+    else:
+        gs.logger.info("Headless teleop: Genesis viewer disabled (Unity websocket IO only).")
 
     # Reset profiler after warmup so only actual operation is profiled
     env.scene.profiling_options.profiler.reset()

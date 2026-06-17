@@ -403,8 +403,10 @@ class TeleopPerformanceOptions(Options):
     target_viewer_fps: int = 30
     # Scale viewer resolution (1.0 = full; 0.75 → 960×540 from 1280×720).
     viewer_res_scale: float = 1.0
-    # Force OpenGL backend: "egl", "glx", or "osmesa". None = Genesis auto-fallback (best on WSL).
+    # Force OpenGL backend: "egl", "glx", or "osmesa". None = Genesis auto-fallback.
+    # On WSL, unset + wsl_prefer_glx=True sets "glx" before viewer init.
     opengl_platform: Optional[str] = None
+    wsl_prefer_glx: bool = True
 
     # Unity IO: vertex temperature kNN map every N websocket frames (idle, no heating).
     vertex_temp_io_interval: int = 3

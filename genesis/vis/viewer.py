@@ -79,8 +79,11 @@ class Viewer(RBC):
             if sys.platform == "win32":
                 all_opengl_platforms = ("wgl",)  # same as "native"
             elif sys.platform == "linux":
-                # "native" is platform-specific ("egl" or "glx")
-                all_opengl_platforms = ("native", "egl", "glx", "osmesa")
+                # WSLg usually needs GLX for GPU passthrough; "native" often lands on llvmpipe.
+                if os.environ.get("WSL_DISTRO_NAME"):
+                    all_opengl_platforms = ("glx", "native", "egl", "osmesa")
+                else:
+                    all_opengl_platforms = ("native", "egl", "glx", "osmesa")
             else:
                 all_opengl_platforms = ("native",)
         else:
@@ -116,11 +119,29 @@ class Viewer(RBC):
                         self._pyrender_viewer.start(auto_refresh=False)
                     self._pyrender_viewer.wait_until_initialized()
                 gs.logger.info(f"OpenGL context initialized (PYOPENGL_PLATFORM='{platform}').")
+                renderer = ""
                 try:
                     renderer = self._pyrender_viewer.context.get_info().get_renderer()
                     gs.logger.debug(f"OpenGL renderer: {renderer}")
                 except Exception:
                     pass
+
+                # Prefer a hardware GL backend when auto-fallback still has options left.
+                if (
+                    i < len(all_opengl_platforms) - 1
+                    and sys.platform == "linux"
+                    and any(
+                        tag in str(renderer).lower()
+                        for tag in ("llvmpipe", "softpipe", "swiftshader", "software")
+                    )
+                ):
+                    gs.logger.info(
+                        f"Rejecting software OpenGL renderer ({renderer!r}) for "
+                        f"PYOPENGL_PLATFORM='{platform}'; trying next backend..."
+                    )
+                    self._pyrender_viewer.close()
+                    self._pyrender_viewer = None
+                    continue
                 break
             except (OpenGL.error.Error, RuntimeError) as e:
                 # Invalid OpenGL context. Trying another platform if any...
