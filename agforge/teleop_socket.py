@@ -7,6 +7,7 @@ import functools
 import struct
 import math
 import time
+import os
 
 import websockets
 import logging
@@ -296,8 +297,12 @@ async def main():
     
     print("Building simulation environment...")
     cfg = TeleopOptions()
-    cfg.general.show_viewer = False
-    
+
+    # Optional OpenGL backend override. Leave unset so Genesis tries native→egl→glx→osmesa.
+    # Forcing "egl" on WSL often fails (no EGL device); WSLg/X11 usually needs "glx" or auto.
+    if cfg.performance.opengl_platform:
+        os.environ["PYOPENGL_PLATFORM"] = str(cfg.performance.opengl_platform)
+
     # Enable MPM grid/boundary visualization
     cfg.vis.visualize_mpm_boundary = True
     cfg.vis.visualize_mpm_grid = True

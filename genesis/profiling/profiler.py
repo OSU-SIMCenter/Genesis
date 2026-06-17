@@ -18,6 +18,7 @@ import sys
 import tempfile
 import webbrowser
 import os
+import asyncio
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Set, FrozenSet
@@ -90,8 +91,25 @@ class Profiler:
     def _reset_internal_state(self):
         self.root = ProfileEvent("root", time.perf_counter_ns())
         self.stack = [self.root]
+        self._task_stacks: Dict[int, List[ProfileEvent]] = {}
         self._cached_stats = None  # Cache for flat stats
         self._profiler_start_time = time.perf_counter_ns()  # Track when profiler was started/reset
+
+    def _active_stack(self) -> List[ProfileEvent]:
+        """Per-asyncio-task stack; per-thread fallback for pyglet/viewer callbacks."""
+        import threading
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            # Viewer keybinds and other pyglet callbacks run outside asyncio.
+            task = None
+
+        key = id(task) if task is not None else -threading.get_ident()
+        stack = self._task_stacks.get(key)
+        if stack is None:
+            stack = [self.root]
+            self._task_stacks[key] = stack
+        return stack
     
     def reset(self):
         """Clear all timing data."""
@@ -106,21 +124,20 @@ class Profiler:
 
         start_t = time.perf_counter_ns()
         event = ProfileEvent(name, start_t)
-        
-        # Add to current parent
-        if self.stack:
-            self.stack[-1].children.append(event)
-        
-        self.stack.append(event)
+
+        stack = self._active_stack()
+        if stack:
+            stack[-1].children.append(event)
+
+        stack.append(event)
         try:
             yield
         finally:
             end_t = time.perf_counter_ns()
             event.end = end_t
-            # Safety check: only pop if this is the expected event
-            if self.stack and self.stack[-1] is event:
-                self.stack.pop()
-            
+            if stack and stack[-1] is event:
+                stack.pop()
+
             # Invalidate stats cache since we added data
             self._cached_stats = None
 

@@ -389,6 +389,13 @@ class SafetyOptions(Options):
     auto_reset: bool = True
     check_interval: int = 10  # Idle-only: check every N physics steps (strikes always check each step)
 
+
+class TeleopPerformanceOptions(Options):
+    """Runtime tuning for teleop loop throughput (viewer + Unity IO)."""
+    # Force OpenGL backend: "egl", "glx", or "osmesa". None = Genesis auto-fallback (best on WSL).
+    opengl_platform: Optional[str] = None
+
+
 class AdaptiveControlConfig(Options):
     """Configuration for adaptive control gains."""
     base_kp: float = 5000.0
@@ -400,6 +407,7 @@ class TeleopOptions(AgilityForgeOptions):
     strike: StrikeOptions = StrikeOptions()
     adaptive_control: AdaptiveControlConfig = AdaptiveControlConfig()
     safety: SafetyOptions = SafetyOptions()
+    performance: TeleopPerformanceOptions = TeleopPerformanceOptions()
     print_profiling_on_exit: bool = True  # Print profiler visualizations on shutdown
     
     # Induction Heater physical configurations
