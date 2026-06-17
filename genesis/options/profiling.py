@@ -137,8 +137,10 @@ class ProfilingOptions(Options):
             render_mesh_overlay_refresh: bool = True
             render_particle_sync: bool = True
             render_particle_gpu_pull: bool = True
+            render_particle_gpu_resident: bool = True
             render_particle_bucket_write: bool = True
             render_visualizer_update: bool = True
+            gpu_drain: bool = True
             telemetry_gpu_pull: bool = True
             telemetry_aggregate: bool = True
             viewer_idle_tick: bool = True

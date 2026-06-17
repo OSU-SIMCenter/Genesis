@@ -316,7 +316,7 @@ def register_mesh_overlay_keybinds(
         else:
             update_mesh_overlay_display(env, overlay, physics_mesher, flash=True, temp_renderer=temp_renderer)
             if temp_renderer is not None:
-                temp_renderer.sync_from_env(env)
+                temp_renderer.prepare_render_frame(env)
         _refresh_viewer()
 
     unified = bool(getattr(env.cfg.reconstruction, "unified_mesh", True))

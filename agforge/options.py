@@ -388,12 +388,25 @@ class SafetyOptions(Options):
     check_nan: bool = True
     auto_reset: bool = True
     check_interval: int = 10  # Idle-only: check every N physics steps (strikes always check each step)
+    # When heating with no active strike, use this longer interval (still checks every step during strikes).
+    heating_idle_check_interval: int = 25
 
 
 class TeleopPerformanceOptions(Options):
     """Runtime tuning for teleop loop throughput (viewer + Unity IO)."""
+    # Sim / websocket loop cap (physics may step slower when viewer is expensive).
+    target_physics_fps: int = 60
+    # Cap Genesis viewer redraws independently of physics (0 = every physics step).
+    target_viewer_fps: int = 30
+    # Scale viewer resolution (1.0 = full; 0.75 → 960×540 from 1280×720).
+    viewer_res_scale: float = 1.0
     # Force OpenGL backend: "egl", "glx", or "osmesa". None = Genesis auto-fallback (best on WSL).
     opengl_platform: Optional[str] = None
+
+    # Unity IO: vertex temperature kNN map every N websocket frames while heating+idle.
+    vertex_temp_io_interval: int = 3
+    # While heating+idle, reuse the last mesh snapshot every N websocket frames.
+    mesh_io_interval_heating_idle: int = 2
 
 
 class AdaptiveControlConfig(Options):
@@ -438,6 +451,18 @@ class TeleopOptions(AgilityForgeOptions):
     def model_post_init(self, __context: any) -> None:
         # Initialize base options (Sim, Robot, MPM, etc.)
         super().model_post_init(__context)
+
+        perf = self.performance
+        if perf.viewer_res_scale not in (None, 1.0):
+            scale = float(perf.viewer_res_scale)
+            w, h = self.viewer.res if self.viewer.res is not None else (1280, 720)
+            self.viewer.res = (
+                max(320, int(w * scale)),
+                max(240, int(h * scale)),
+            )
+        if perf.target_viewer_fps:
+            self.viewer.max_FPS = int(perf.target_viewer_fps)
+            self.viewer.refresh_rate = int(perf.target_viewer_fps)
         
         # Parametric Approach Speed Calculation
         # User requested max safe ratio = 0.35

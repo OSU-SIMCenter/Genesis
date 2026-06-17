@@ -23,8 +23,8 @@ from agforge.strike_controller import StrikeController, StrikeState
 # Suppress websockets connection errors
 logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
-# Configuration constants
-TARGET_FPS = 60  # Target frame rate for the sim loop
+# Configuration constants (defaults; overridden by TeleopOptions.performance)
+TARGET_FPS = 60
 FORCE_SCALE = 5.0  # Scale factor for client force/strain values (client sends 0-0.1, we want 0-0.5)
 MAX_STRAIN = 0.5   # Maximum target strain (50%)
 
@@ -146,7 +146,9 @@ async def simulation_loop(websocket, state: StrikeController):
                             await websocket.send(message)
             
             with state._profile("teleop_frame_pacing_sleep"):
-                await asyncio.sleep(1/TARGET_FPS)
+                perf = getattr(state.env.cfg, "performance", None)
+                target_fps = int(getattr(perf, "target_physics_fps", TARGET_FPS) or TARGET_FPS)
+                await asyncio.sleep(1 / max(1, target_fps))
             
             # Cleanup flags
             if hasattr(state, 'new_input_received'):
@@ -358,7 +360,7 @@ async def main():
     await shared_state.reset_simulation()
 
     if temp_renderer is not None:
-        temp_renderer.sync_from_env(env)
+        temp_renderer.prepare_render_frame(env)
 
     from agforge.vis.temperature_particles import update_particle_color_display
 

@@ -7,6 +7,7 @@ Used for offline validation plots — same formulas as
 from __future__ import annotations
 
 import numpy as np
+import torch
 
 _EPS = 1e-12
 
@@ -100,3 +101,36 @@ def particle_q_ind(
         skin_depth=skin_depth,
         thermal_time_scale=thermal_time_scale,
     )
+
+
+def particle_q_ind_torch(
+    positions: torch.Tensor,
+    depths: torch.Tensor,
+    *,
+    coil_center_x: float,
+    half_length: float,
+    radius: float,
+    q_peak: float,
+    skin_depth: float,
+    thermal_time_scale: float = 1.0,
+) -> torch.Tensor:
+    """GPU/tensor variant of :func:`particle_q_ind` for viewer bucket coloring."""
+    pos = positions.reshape(-1, 3).to(dtype=torch.float32)
+    depth = depths.reshape(-1).to(dtype=torch.float32)
+    x_axial = pos[:, 0] - float(coil_center_x)
+    h = torch.tensor(float(half_length), device=depth.device, dtype=depth.dtype)
+    r = torch.tensor(float(radius), device=depth.device, dtype=depth.dtype)
+    if float(half_length) <= 0.0 or float(radius) <= 0.0:
+        return torch.zeros_like(depth)
+    t1 = (x_axial + h) / torch.sqrt((x_axial + h) ** 2 + r * r)
+    t2 = (x_axial - h) / torch.sqrt((x_axial - h) ** 2 + r * r)
+    b = 0.5 * (t1 - t2)
+    b_peak = h / torch.sqrt(h * h + r * r)
+    f_ax = (b * b) / torch.clamp(b_peak * b_peak, min=1e-12)
+    delta = float(skin_depth)
+    if delta <= 0.0:
+        w = torch.zeros_like(depth)
+    else:
+        w = torch.exp(-2.0 * depth / delta)
+    scale = float(q_peak) * float(thermal_time_scale)
+    return torch.tensor(scale, device=depth.device, dtype=depth.dtype) * f_ax * w

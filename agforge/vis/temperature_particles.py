@@ -3,6 +3,10 @@
 Buckets particles into a small number of inferno-colored sphere instances so
 `jit.update_buffer` can be called from inside `RasterizerContext.update()`.
 Used by live teleop and episode replay.
+
+Live teleop (all color modes including q_ind) reads from GPU-resident
+``particles_render`` after ``update_render_fields`` — no per-frame particle
+bundle pull. Episode replay still uses the CPU ``set_frame`` path.
 """
 
 from __future__ import annotations
@@ -11,6 +15,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
+
+import genesis as gs
 
 from agforge.profiling_util import teleop_profile
 
@@ -53,6 +59,16 @@ def _scalars_to_bucket_indices(
 
 def _temps_to_bucket_indices(temps: np.ndarray, temp_min: float, temp_max: float, n_buckets: int = N_BUCKETS):
     return _scalars_to_bucket_indices(temps, temp_min, temp_max, n_buckets)
+
+
+def _scalars_to_bucket_indices_torch(
+    values: torch.Tensor, vmin: float, vmax: float, n_buckets: int = N_BUCKETS
+) -> torch.Tensor:
+    t = values.reshape(-1).float()
+    t = torch.nan_to_num(t, nan=float(vmin), posinf=float(vmax), neginf=float(vmin))
+    span = max(float(vmax) - float(vmin), 1e-12)
+    tn = torch.clamp((t - vmin) / span, 0.0, 1.0)
+    return torch.clamp((tn * n_buckets).long(), max=n_buckets - 1)
 
 
 class TemperatureParticleRenderer:
@@ -110,6 +126,10 @@ class TemperatureParticleRenderer:
         self._frame_pos: np.ndarray | None = None
         self._bucket_idx: np.ndarray | None = None
         self._env = None
+        self._gpu_scalar_vmin: float | None = None
+        self._gpu_scalar_vmax: float | None = None
+        self._gpu_render_path_ok: bool | None = None
+        self._sync_path_logged = False
         self._original_update_mpm = ctx.update_mpm
         ctx.update_mpm = self._update_mpm_hook
 
@@ -151,6 +171,8 @@ class TemperatureParticleRenderer:
         self._rebuild_all_bucket_meshes()
         if self._frame_pos is not None and self._bucket_idx is not None:
             self._write_bucket_poses(self._frame_pos, self._bucket_idx, env=self._env)
+        elif self._can_use_gpu_render_path(env):
+            self._write_buckets_from_particles_render(env)
         return self._render_scale
 
     def _rebuild_all_bucket_meshes(self):
@@ -167,9 +189,188 @@ class TemperatureParticleRenderer:
                 self._ctx.remove_node(old_node)
 
     def _update_mpm_hook(self):
+        if self._env is not None and self._can_use_gpu_render_path(self._env):
+            self._write_buckets_from_particles_render(self._env)
+            return
         if self._frame_pos is None or self._bucket_idx is None:
             return
         self._write_bucket_poses(self._frame_pos, self._bucket_idx, env=self._env)
+
+    @staticmethod
+    def _particles_render_has_thermal_scalars(solver) -> bool:
+        pr = getattr(solver, "particles_render", None)
+        if pr is None:
+            return False
+        try:
+            pr.temp
+            pr.depth
+        except (AttributeError, KeyError, TypeError):
+            return False
+        return True
+
+    def _can_use_gpu_render_path(self, env: "AgilityForgeEnv") -> bool:
+        """True when scalar coloring can use GPU-resident particles_render."""
+        if self._gpu_render_path_ok is not None:
+            return self._gpu_render_path_ok
+
+        solver = env.scene.sim.mpm_solver
+        if not getattr(solver, "_enable_thermal", False):
+            self._log_gpu_render_path_once(env, False, "solver._enable_thermal is False")
+            return False
+        if not self._particles_render_has_thermal_scalars(solver):
+            self._log_gpu_render_path_once(env, False, "particles_render missing temp/depth")
+            return False
+
+        mode = getattr(env.cfg.general, "particle_color_mode", "temperature")
+        self._log_gpu_render_path_once(env, True, mode=mode)
+        return True
+
+    def _log_gpu_render_path_once(
+        self,
+        env: "AgilityForgeEnv",
+        ok: bool,
+        reason: str = "",
+        *,
+        mode: str | None = None,
+    ) -> None:
+        if self._gpu_render_path_ok is not None:
+            return
+        self._gpu_render_path_ok = ok
+        if ok:
+            mode_label = mode or getattr(env.cfg.general, "particle_color_mode", "temperature")
+            gs.logger.info(
+                f"Particle render path: GPU-resident (mode={mode_label}, particles_render.temp/depth)"
+            )
+        else:
+            gs.logger.warning(
+                f"Particle render path: CPU bundle fallback ({reason}). "
+                "If you just added particles_render.temp/depth, restart after Genesis recompiles kernels."
+            )
+
+    def _scalar_range_for_mode(self, env: "AgilityForgeEnv", mode: str) -> tuple[float, float]:
+        cfg = env.cfg
+        if mode == "temperature":
+            return cfg.general.particle_temp_min, cfg.general.particle_temp_max
+        if mode == "induction_depth":
+            d_max = cfg.general.particle_depth_max
+            if d_max is None:
+                d_max = 3.0 * float(cfg.skin_depth)
+            return 0.0, float(d_max)
+        if mode == "skin_weight":
+            return 0.0, 1.0
+        if mode == "q_ind":
+            return 0.0, 1.0
+        return self._temp_min, self._temp_max
+
+    def _entity_render_slice(self, env: "AgilityForgeEnv") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        solver = env.scene.sim.mpm_solver
+        ps = self._mpm_entity.particle_start
+        pe = ps + self._mpm_entity.n_particles
+        pr = solver.particles_render
+
+        pos = pr.pos.to_torch().reshape(-1, 3)[ps:pe]
+        active = pr.active.to_torch().reshape(-1)[ps:pe].bool()
+        temps = pr.temp.to_torch().reshape(-1)[ps:pe]
+        depths = pr.depth.to_torch().reshape(-1)[ps:pe]
+
+        offset = getattr(env.scene, "envs_offset", None)
+        if offset is not None:
+            env_offset = torch.as_tensor(offset[0], device=pos.device, dtype=pos.dtype)
+            pos = pos + env_offset
+
+        return pos, active, temps, depths
+
+    def _gpu_scalar_tensor(
+        self,
+        env: "AgilityForgeEnv",
+        pos: torch.Tensor,
+        temps: torch.Tensor,
+        depths: torch.Tensor,
+    ) -> tuple[torch.Tensor, float, float]:
+        mode = getattr(env.cfg.general, "particle_color_mode", "temperature")
+        vmin, vmax = self._scalar_range_for_mode(env, mode)
+
+        if mode == "temperature":
+            return temps, vmin, vmax
+
+        if mode == "induction_depth":
+            return depths, vmin, vmax
+
+        if mode == "skin_weight":
+            skin_depth = float(env.cfg.skin_depth)
+            if skin_depth <= 0.0:
+                weights = torch.zeros_like(depths)
+            else:
+                weights = torch.exp(-2.0 * depths / skin_depth)
+            return weights, vmin, vmax
+
+        if mode == "q_ind":
+            from agforge.thermal_field import particle_q_ind_torch
+
+            cfg = env.cfg
+            solver = env.scene.sim.mpm_solver
+            center, half_length, radius, q_peak, sd, active = solver.get_induction_uniforms_numpy(0)
+            uniforms_unset = half_length <= 0.0 or radius <= 0.0 or q_peak <= 0.0
+            if uniforms_unset:
+                half_length = cfg.robot.coil_length / 2.0
+                radius = cfg.robot.coil_radius
+                q_peak = cfg.heating_power
+                center_x = float(cfg.robot.cylinder_pos[0])
+            else:
+                center_x = float(center[0])
+            if sd <= 0.0:
+                sd = float(cfg.skin_depth)
+            q = particle_q_ind_torch(
+                pos,
+                depths,
+                coil_center_x=center_x,
+                half_length=half_length,
+                radius=radius,
+                q_peak=q_peak,
+                skin_depth=sd,
+                thermal_time_scale=float(cfg.mpm.thermal_time_scale),
+            )
+            if not uniforms_unset and not active:
+                q = torch.zeros_like(q)
+            q = torch.nan_to_num(q, nan=0.0, posinf=0.0, neginf=0.0)
+            if q.numel() == 0:
+                return q, 0.0, 1.0
+            vmax = float(torch.quantile(q, 0.995).item())
+            return q, 0.0, max(vmax, 1e-12)
+
+        return temps, vmin, vmax
+
+    def _write_buckets_from_particles_render(self, env: "AgilityForgeEnv"):
+        """Bucket and upload poses from GPU-resident particles_render (no particle bundle pull)."""
+        with teleop_profile(env, "teleop_render_particle_gpu_resident"):
+            pos, active, temps, depths = self._entity_render_slice(env)
+            scalars, vmin, vmax = self._gpu_scalar_tensor(env, pos, temps, depths)
+            if self._gpu_scalar_vmin is not None:
+                vmin = self._gpu_scalar_vmin
+            if self._gpu_scalar_vmax is not None:
+                vmax = self._gpu_scalar_vmax
+
+            if active.shape[0] == pos.shape[0]:
+                pos = pos[active]
+                scalars = scalars[active]
+
+            bucket_idx = _scalars_to_bucket_indices_torch(scalars, vmin, vmax, self._n_buckets)
+        self._write_bucket_poses_torch(pos, bucket_idx, env=env)
+
+    def _write_bucket_poses_torch(self, positions: torch.Tensor, bucket_idx: torch.Tensor, env=None):
+        """Upload bucket poses with a single GPU→CPU sync (then pure-numpy buffer writes)."""
+        positions = positions.reshape(-1, 3)
+        bucket_idx = bucket_idx.reshape(-1)
+        n = min(positions.shape[0], bucket_idx.shape[0])
+        if n == 0:
+            return
+
+        bundle = torch.cat(
+            (positions[:n], bucket_idx[:n].unsqueeze(1).to(dtype=positions.dtype)),
+            dim=1,
+        )
+        arr = bundle.detach().cpu().numpy()
+        self._write_bucket_poses(arr[:, :3], arr[:, 3].astype(np.int32), env=env)
 
     def _recreate_bucket_node(self, b: int, n_slots: int):
         from genesis.ext import pyrender
@@ -236,6 +437,8 @@ class TemperatureParticleRenderer:
                 lo = self._temp_min if vmin is None else vmin
                 hi = self._temp_max if vmax is None else vmax
                 self._bucket_idx = _scalars_to_bucket_indices(values, lo, hi, self._n_buckets)
+        self._gpu_scalar_vmin = vmin
+        self._gpu_scalar_vmax = vmax
 
     def _scalar_field_from_env(
         self,
@@ -326,9 +529,36 @@ class TemperatureParticleRenderer:
         active = arr[:, 5].astype(bool)
         return pos, active, temps, depths
 
-    def sync_from_env(self, env: "AgilityForgeEnv"):
-        """Read live particle positions and the configured scalar field from the simulation."""
+    def prepare_render_frame(self, env: "AgilityForgeEnv"):
+        """Bind env and scalar range; bucket upload runs in the visualizer MPM hook."""
         self._env = env
+        if self._can_use_gpu_render_path(env):
+            mode = getattr(env.cfg.general, "particle_color_mode", "temperature")
+            if mode == "q_ind":
+                self._gpu_scalar_vmin = None
+                self._gpu_scalar_vmax = None
+            else:
+                vmin, vmax = self._scalar_range_for_mode(env, mode)
+                self._gpu_scalar_vmin = vmin
+                self._gpu_scalar_vmax = vmax
+            self._frame_pos = None
+            self._bucket_idx = None
+            if not self._sync_path_logged:
+                self._sync_path_logged = True
+                gs.logger.info("Particle render sync: GPU-resident (defer to visualizer hook)")
+            return
+        self._sync_from_env_cpu(env)
+
+    def sync_from_env(self, env: "AgilityForgeEnv"):
+        """Backward-compatible alias for :meth:`prepare_render_frame`."""
+        self.prepare_render_frame(env)
+
+    def _sync_from_env_cpu(self, env: "AgilityForgeEnv"):
+        """CPU bundle pull fallback when particles_render thermal fields are unavailable."""
+        self._env = env
+        if not self._sync_path_logged:
+            self._sync_path_logged = True
+            gs.logger.info("Particle render sync: CPU bundle pull")
         with teleop_profile(env, "teleop_render_particle_gpu_pull"):
             entity = env.mpm_entity
             if hasattr(entity, "get_particles_render_bundle"):
@@ -413,7 +643,7 @@ def cycle_particle_color_mode(env: "AgilityForgeEnv", renderer: TemperatureParti
         idx = 0
     mode = modes[(idx + step) % len(modes)]
     env.cfg.general.particle_color_mode = mode
-    renderer.sync_from_env(env)
+    renderer.prepare_render_frame(env)
     return mode
 
 
@@ -505,6 +735,7 @@ def install_temperature_particle_renderer(
     if env.scene.visualizer is None:
         return None
     renderer = TemperatureParticleRenderer.from_env(env, temp_min=temp_min, temp_max=temp_max)
+    renderer._can_use_gpu_render_path(env)
     if register_keybinds:
         register_particle_color_keybinds(env, renderer)
     return renderer

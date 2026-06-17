@@ -144,12 +144,63 @@ class StrikeController:
         # Cached kNN bind for Unity vertex temperatures (SciPy cKDTree; rebuilt on geometry change).
         self._invalidate_unity_vertex_temp_cache()
 
+        # Teleop IO / viewer throttling
+        self._io_frame_counter = 0
+        self._last_viewer_update_mono = 0.0
+        self._io_mesh_cache: dict | None = None
+        self._unity_knn_indices_t: torch.Tensor | None = None
+        self._unity_knn_weights_t: torch.Tensor | None = None
+
     def _invalidate_unity_vertex_temp_cache(self) -> None:
         self._unity_knn_fingerprint_cache = None
         self._unity_knn_quick_stamp = None
         self._unity_knn_indices = None
         self._unity_knn_weights = None
         self._unity_knn_fade_alpha = None
+        self._unity_knn_indices_t = None
+        self._unity_knn_weights_t = None
+        self._io_mesh_cache = None
+
+    def _perf(self):
+        return getattr(self.env.cfg, "performance", None)
+
+    def _stability_check_interval(self) -> int:
+        safety = getattr(self.env.cfg, "safety", None)
+        base = max(1, int(getattr(safety, "check_interval", 1) if safety else 1))
+        if (
+            self.strike_state == StrikeState.IDLE
+            and self.thermal_enabled
+            and safety is not None
+        ):
+            heating_iv = int(getattr(safety, "heating_idle_check_interval", base))
+            return max(base, heating_iv)
+        return base
+
+    def _should_update_viewer(self) -> bool:
+        perf = self._perf()
+        cap = int(getattr(perf, "target_viewer_fps", 0) or 0) if perf else 0
+        if cap <= 0:
+            return True
+        now = time.monotonic()
+        min_dt = 1.0 / cap
+        if now - self._last_viewer_update_mono < min_dt:
+            return False
+        self._last_viewer_update_mono = now
+        return True
+
+    def _should_compute_vertex_temps_io(self) -> bool:
+        if self.strike_state != StrikeState.IDLE:
+            return True
+        perf = self._perf()
+        interval = max(1, int(getattr(perf, "vertex_temp_io_interval", 1) if perf else 1))
+        return (self._io_frame_counter % interval) == 0
+
+    def _should_refresh_mesh_io(self) -> bool:
+        if self.strike_state != StrikeState.IDLE or not self.thermal_enabled:
+            return True
+        perf = self._perf()
+        interval = max(1, int(getattr(perf, "mesh_io_interval_heating_idle", 1) if perf else 1))
+        return (self._io_frame_counter % interval) == 0
 
     def _unity_mesh_stamp(self) -> int:
         if self._uses_unified_surface_mesh():
@@ -245,6 +296,8 @@ class StrikeController:
             weights_norm = weights / weights.sum(axis=1, keepdims=True)
             self._unity_knn_indices = np.asarray(indices, dtype=np.int32)
             self._unity_knn_weights = np.asarray(weights_norm, dtype=np.float32)
+            self._unity_knn_indices_t = None
+            self._unity_knn_weights_t = None
 
         self._unity_knn_fingerprint_cache = fingerprint
         self._unity_knn_quick_stamp = quick_stamp
@@ -276,9 +329,20 @@ class StrikeController:
 
         with self._profile("teleop_io_kdtree_vertex_temps"):
             if isinstance(particles_temp, torch.Tensor):
-                temps = particles_temp.reshape(-1).detach().cpu().numpy()
-            else:
-                temps = particles_temp
+                temps = particles_temp.reshape(-1)
+                device = temps.device
+                if self._unity_knn_indices_t is None or self._unity_knn_indices_t.device != device:
+                    self._unity_knn_indices_t = torch.from_numpy(self._unity_knn_indices).to(device=device)
+                    self._unity_knn_weights_t = torch.from_numpy(self._unity_knn_weights).to(device=device)
+                if self._unity_knn_fade_alpha is not None:
+                    fade = torch.from_numpy(self._unity_knn_fade_alpha).to(device=device, dtype=temps.dtype)
+                    target_vis = torch.minimum(temps, torch.tensor(900.0, device=device, dtype=temps.dtype))
+                    temps = temps * (1.0 - fade) + target_vis * fade
+                neighbor_temps = temps[self._unity_knn_indices_t]
+                vertices_temp = (neighbor_temps * self._unity_knn_weights_t).sum(dim=1)
+                return vertices_temp.detach().cpu().numpy().astype(np.float32)
+
+            temps = particles_temp.reshape(-1)
             if self._unity_knn_fade_alpha is not None:
                 target_vis = np.minimum(temps, 900.0)
                 temps = temps * (1.0 - self._unity_knn_fade_alpha) + target_vis * self._unity_knn_fade_alpha
@@ -327,7 +391,7 @@ class StrikeController:
             if self._mesh_overlay is not None:
                 self._mesh_overlay.sync_from_controller(self)
             if self._temp_particle_renderer is not None:
-                self._temp_particle_renderer.sync_from_env(self.env)
+                self._temp_particle_renderer.prepare_render_frame(self.env)
             from agforge.vis.temperature_particles import update_particle_color_display
 
             update_particle_color_display(self.env, physics_mesher=self.physics_mesher)
@@ -868,11 +932,37 @@ class StrikeController:
             # self.env.mpm_entity.set_particles_temp(debug_temps)
             # ---------------------------
 
+        # --- GPU drain once before any post-physics GPU reads this step ---
+        import quadrants as qd  # type: ignore
+
+        safety = getattr(self.env.cfg, 'safety', None)
+        _telemetry_interval = 10 if _is_striking else 20
+        _run_telemetry = (
+            self.thermal_enabled and self._physics_step_counter % _telemetry_interval == 0
+        )
+
+        if physics_failed:
+            needs_check = True
+        elif self._stability_grace_steps > 0:
+            self._stability_grace_steps -= 1
+            needs_check = False
+        elif not safety or not getattr(safety, "enabled", True):
+            needs_check = False
+        elif self.strike_state == StrikeState.IDLE:
+            needs_check = (self._physics_step_counter % self._stability_check_interval()) == 0
+        else:
+            needs_check = True
+
+        _will_render = bool(self.env.scene.visualizer and self._should_update_viewer())
+        _will_record = self.strike_state != StrikeState.IDLE
+        if needs_check or _run_telemetry or _will_record or _will_render:
+            with self._profile("teleop_gpu_drain"):
+                qd.sync()
+
         # --- Thermal Telemetry ---
         # Log every 10th frame during strikes, and every 20th frame during idle/heating
-        _telemetry_interval = 10 if _is_striking else 20
         with self._profile("teleop_thermal_telemetry"):
-            if self.thermal_enabled and self._physics_step_counter % _telemetry_interval == 0:
+            if _run_telemetry:
                 try:
                     with self._profile("teleop_telemetry_gpu_pull"):
                         entity = self.env.mpm_entity
@@ -1015,27 +1105,7 @@ class StrikeController:
                 self._diag_last_step = self._physics_step_counter
 
         # 4b. Stability Check (separate from physics for accurate profiling)
-        # - Always fires on physics exceptions (regardless of grace period)
-        # - During active strikes: checks every step for fast detection
-        # - During idle: checks every check_interval steps to reduce GPU sync overhead
-        # - Suppressed during grace period after undo/reset (prevents cascading auto-undos
-        #   from residual elastic energy in the restored state)
-        safety = getattr(self.env.cfg, 'safety', None)
-
         with self._profile("teleop_stability"):
-            if physics_failed:
-                needs_check = True
-            elif self._stability_grace_steps > 0:
-                self._stability_grace_steps -= 1
-                needs_check = False
-            elif not safety or not getattr(safety, "enabled", True):
-                needs_check = False
-            elif self.strike_state == StrikeState.IDLE:
-                interval = max(1, int(getattr(safety, "check_interval", 1)))
-                needs_check = (self._physics_step_counter % interval) == 0
-            else:
-                needs_check = True
-
             if needs_check:
                 try:
                     if physics_failed:
@@ -1064,17 +1134,14 @@ class StrikeController:
                 self.physics_mesher.update_live(should_reconstruct=True, is_deforming=True)
 
         # 5. Render Update
-        if self.env.scene.visualizer:
-            import quadrants as qd  # type: ignore
-            with self._profile("teleop_pre_render_drain"):
-                qd.sync()
+        if self.env.scene.visualizer and _will_render:
             with self._profile("teleop_render"):
                 if self._mesh_overlay is not None:
                     with self._profile("teleop_render_mesh_overlay_sync"):
                         self._mesh_overlay.sync_from_controller(self)
                 if self._temp_particle_renderer is not None:
                     with self._profile("teleop_render_particle_sync"):
-                        self._temp_particle_renderer.sync_from_env(self.env)
+                        self._temp_particle_renderer.prepare_render_frame(self.env)
                 with self._profile("teleop_render_visualizer_update"):
                     self.env.scene.visualizer.update(force=False, auto=True)
 
@@ -1140,10 +1207,58 @@ class StrikeController:
             return self.env.scene.profiling_options.profiler.time(name)
         return contextlib.suppress()
 
+    def _compute_vertex_temps_for_io(self, cached: dict) -> np.ndarray:
+        """kNN vertex temperatures using cached mesh + particle positions."""
+        particles = cached["particles"]
+        vertices_raw = cached["vertices"]
+        with self._profile("teleop_io_vertex_temp_prep"):
+            particles_temp_tensor = self.env.mpm_entity.get_particles_temp().reshape(-1)
+            mapping_parts_np = self.reconstructor._cached_particles
+            if mapping_parts_np is None:
+                if isinstance(particles, torch.Tensor):
+                    mapping_parts_np = particles.detach().cpu().numpy().squeeze()
+                else:
+                    mapping_parts_np = np.asarray(particles).squeeze()
+            if mapping_parts_np.shape[0] != particles_temp_tensor.shape[0]:
+                active_mask = self.env.mpm_entity.get_particles_active(envs_idx=0).squeeze(0)
+                particles_temp = particles_temp_tensor[active_mask]
+            else:
+                particles_temp = particles_temp_tensor
+            if isinstance(vertices_raw, torch.Tensor):
+                verts_np = vertices_raw.detach().cpu().numpy()
+            else:
+                verts_np = np.asarray(vertices_raw)
+        with self._profile("teleop_io_kdtree_map"):
+            return self._map_particle_temps_to_vertices(
+                particles_temp, mapping_parts_np, verts_np
+            )
+
     async def update_and_get_recon_data(self, include_vertex_temps: bool | None = None):
         """Updates reconstruction and returns data for visualization/IO."""
+        self._io_frame_counter += 1
         if include_vertex_temps is None:
             include_vertex_temps = bool(getattr(self, "thermal_enabled", False))
+
+        want_vertex_temps = bool(include_vertex_temps) and self._should_compute_vertex_temps_io()
+        if not self._should_refresh_mesh_io() and self._io_mesh_cache is not None:
+            cached = self._io_mesh_cache
+            if want_vertex_temps:
+                vertices_temp = self._compute_vertex_temps_for_io(cached)
+                cached["vertices_temp"] = vertices_temp
+                cached["vertex_temp_frame"] = self._io_frame_counter
+            elif include_vertex_temps:
+                vertices_temp = cached.get("vertices_temp")
+                if vertices_temp is None:
+                    vertices_temp = cached["vertices_temp_empty"]
+            else:
+                vertices_temp = cached["vertices_temp_empty"]
+            return (
+                cached["vertices"],
+                cached["triangles"],
+                cached["particles"],
+                vertices_temp,
+            )
+
         with self._profile("teleop_recon"):
             allowed_stages = (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE)
             should_reconstruct = self.strike_state in allowed_stages
@@ -1181,7 +1296,7 @@ class StrikeController:
             
             # Extract and spatial-interpolate thermal data to vertices
             if (
-                include_vertex_temps
+                want_vertex_temps
                 and hasattr(self.env.scene.sim.mpm_solver, 'particles')
                 and hasattr(self.env.scene.sim.mpm_solver.particles, 'temp')
             ):
@@ -1212,8 +1327,27 @@ class StrikeController:
                     )
             else:
                 vertices_temp = np.zeros(vertices_raw.shape[0] if hasattr(vertices_raw, 'shape') else 0, dtype=np.float32)
+                if (
+                    include_vertex_temps
+                    and not want_vertex_temps
+                    and self._io_mesh_cache is not None
+                    and self._io_mesh_cache.get("vertices_temp") is not None
+                ):
+                    prev = self._io_mesh_cache["vertices_temp"]
+                    if hasattr(vertices_raw, "shape") and len(prev) == vertices_raw.shape[0]:
+                        vertices_temp = prev
+
+            empty_temps = np.zeros(vertices_raw.shape[0] if hasattr(vertices_raw, 'shape') else 0, dtype=np.float32)
+            self._io_mesh_cache = {
+                "vertices": vertices,
+                "triangles": triangles,
+                "particles": points,
+                "vertices_temp": vertices_temp if want_vertex_temps else None,
+                "vertices_temp_empty": empty_temps,
+                "vertex_temp_frame": self._io_frame_counter,
+            }
             
-            return vertices, triangles, points, vertices_temp
+            return vertices, triangles, points, vertices_temp if want_vertex_temps else empty_temps
 
     def _apply_transformation(self, points):
         """Return raw physics-space coordinates. Unity handles all visual transforms."""

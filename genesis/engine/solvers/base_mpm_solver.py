@@ -149,11 +149,15 @@ class BaseMPMSolver(Solver):
         }
 
     def _make_particle_state_render_template(self):
-        return {
+        template = {
             "pos": gs.qd_vec3,
             "vel": gs.qd_vec3,
             "active": gs.qd_bool,
         }
+        if self._enable_thermal:
+            template["temp"] = gs.qd_float
+            template["depth"] = gs.qd_float
+        return template
 
     def init_particle_fields(self):
         # dynamic particle state
@@ -1109,6 +1113,9 @@ class BaseMPMSolver(Solver):
             if self.particles_ng[f, i_p, i_b].active:
                 self.particles_render[i_p, i_b].pos = self.particles[f, i_p, i_b].pos
                 self.particles_render[i_p, i_b].vel = self.particles[f, i_p, i_b].vel
+                if qd.static(self._enable_thermal):
+                    self.particles_render[i_p, i_b].temp = self.particles[f, i_p, i_b].temp
+                    self.particles_render[i_p, i_b].depth = self.induction_depth[i_p, i_b]
             else:
                 self.particles_render[i_p, i_b].pos = gu.qd_nowhere()
             self.particles_render[i_p, i_b].active = self.particles_ng[f, i_p, i_b].active
