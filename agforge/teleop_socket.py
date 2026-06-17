@@ -23,6 +23,34 @@ from agforge.strike_controller import StrikeController, StrikeState
 # Suppress websockets connection errors
 logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
+
+def _log_opengl_info(env, cfg: TeleopOptions) -> None:
+    """Log OpenGL backend and warn when software rendering is detected (common on WSL)."""
+    if not getattr(cfg.performance, "log_opengl_info", True):
+        return
+    vis = env.scene.visualizer
+    if vis is None or vis.viewer is None:
+        return
+    pyv = getattr(vis.viewer, "_pyrender_viewer", None)
+    if pyv is None:
+        return
+    platform = os.environ.get("PYOPENGL_PLATFORM", "auto")
+    renderer = "unknown"
+    try:
+        info = pyv.context.get_info()
+        get_renderer = getattr(info, "get_renderer", None)
+        renderer = get_renderer() if callable(get_renderer) else str(info)
+    except Exception:
+        pass
+    gs.logger.info(f"OpenGL: platform={platform!r}, renderer={renderer}")
+    rlower = str(renderer).lower()
+    if any(tag in rlower for tag in ("llvmpipe", "softpipe", "software", "swiftshader")):
+        gs.logger.warning(
+            "Software OpenGL detected — viewer rendering will be slow. "
+            "On WSL2+WSLg: update Windows GPU drivers; if auto picks a slow backend, "
+            "try cfg.performance.opengl_platform = 'glx'."
+        )
+
 # Configuration constants (defaults; overridden by TeleopOptions.performance)
 TARGET_FPS = 60
 FORCE_SCALE = 5.0  # Scale factor for client force/strain values (client sends 0-0.1, we want 0-0.5)
@@ -361,6 +389,8 @@ async def main():
 
     if temp_renderer is not None:
         temp_renderer.prepare_render_frame(env)
+
+    _log_opengl_info(env, cfg)
 
     from agforge.vis.temperature_particles import update_particle_color_display
 

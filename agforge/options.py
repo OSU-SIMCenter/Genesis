@@ -387,9 +387,12 @@ class SafetyOptions(Options):
     
     check_nan: bool = True
     auto_reset: bool = True
-    check_interval: int = 10  # Idle-only: check every N physics steps (strikes always check each step)
-    # When heating with no active strike, use this longer interval (still checks every step during strikes).
+    check_interval: int = 10  # IDLE (no heating): check every N physics steps
+    # When heating with no active strike, use this longer interval.
     heating_idle_check_interval: int = 25
+    # During strike phases (still catches runaway physics; APPROACHING uses approaching_check_interval).
+    strike_check_interval: int = 3
+    approaching_check_interval: int = 5
 
 
 class TeleopPerformanceOptions(Options):
@@ -403,10 +406,16 @@ class TeleopPerformanceOptions(Options):
     # Force OpenGL backend: "egl", "glx", or "osmesa". None = Genesis auto-fallback (best on WSL).
     opengl_platform: Optional[str] = None
 
-    # Unity IO: vertex temperature kNN map every N websocket frames while heating+idle.
+    # Unity IO: vertex temperature kNN map every N websocket frames (idle, no heating).
     vertex_temp_io_interval: int = 3
+    # Heating+idle: less frequent vertex temp kNN (temps change slowly).
+    vertex_temp_io_interval_heating_idle: int = 6
+    # During strikes: every N websocket frames (still responsive for Unity).
+    vertex_temp_io_interval_strike: int = 2
     # While heating+idle, reuse the last mesh snapshot every N websocket frames.
-    mesh_io_interval_heating_idle: int = 2
+    mesh_io_interval_heating_idle: int = 3
+    # Log OpenGL platform/renderer after viewer init (helps spot llvmpipe on WSL).
+    log_opengl_info: bool = True
 
 
 class AdaptiveControlConfig(Options):

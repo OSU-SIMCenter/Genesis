@@ -115,6 +115,12 @@ class Viewer(RBC):
                     if not self._run_in_thread:
                         self._pyrender_viewer.start(auto_refresh=False)
                     self._pyrender_viewer.wait_until_initialized()
+                gs.logger.info(f"OpenGL context initialized (PYOPENGL_PLATFORM='{platform}').")
+                try:
+                    renderer = self._pyrender_viewer.context.get_info().get_renderer()
+                    gs.logger.debug(f"OpenGL renderer: {renderer}")
+                except Exception:
+                    pass
                 break
             except (OpenGL.error.Error, RuntimeError) as e:
                 # Invalid OpenGL context. Trying another platform if any...

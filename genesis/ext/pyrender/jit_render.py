@@ -971,9 +971,14 @@ class JITRenderer:
         if not self._buffer:
             return
 
-        updates = np.zeros((len(self._buffer), 3), dtype=np.int64)
+        # Snapshot pending updates so concurrent update_buffer calls from the sim
+        # thread cannot mutate the dict while the viewer thread is flushing.
+        pending = self._buffer
+        self._buffer = {}
+
+        updates = np.zeros((len(pending), 3), dtype=np.int64)
         buffers = []
-        for idx, (id, data) in enumerate(self._buffer.items()):
+        for idx, (id, data) in enumerate(pending.items()):
             buffer = np.ascontiguousarray(data, dtype=np.float32)
             buffers.append(buffer)
 
@@ -984,7 +989,6 @@ class JITRenderer:
         if self._update_buffer_fn is None:
             self.gen_func_ptr()
         self._update_buffer_fn(updates, self.gl.wrapper_instance)
-        self._buffer.clear()
 
     def read_depth_buf(self, weight, height, z_near, z_far):
         if self._read_depth_buf is None:

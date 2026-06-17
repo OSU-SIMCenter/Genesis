@@ -167,13 +167,19 @@ class StrikeController:
     def _stability_check_interval(self) -> int:
         safety = getattr(self.env.cfg, "safety", None)
         base = max(1, int(getattr(safety, "check_interval", 1) if safety else 1))
-        if (
-            self.strike_state == StrikeState.IDLE
-            and self.thermal_enabled
-            and safety is not None
-        ):
-            heating_iv = int(getattr(safety, "heating_idle_check_interval", base))
-            return max(base, heating_iv)
+        if safety is None:
+            return base
+
+        if self.strike_state == StrikeState.IDLE:
+            if self.thermal_enabled:
+                heating_iv = int(getattr(safety, "heating_idle_check_interval", base))
+                return max(base, heating_iv)
+            return base
+
+        if self.strike_state == StrikeState.APPROACHING:
+            return max(1, int(getattr(safety, "approaching_check_interval", base)))
+        if self.strike_state in (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE):
+            return max(1, int(getattr(safety, "strike_check_interval", 1)))
         return base
 
     def _should_update_viewer(self) -> bool:
@@ -189,10 +195,17 @@ class StrikeController:
         return True
 
     def _should_compute_vertex_temps_io(self) -> bool:
-        if self.strike_state != StrikeState.IDLE:
-            return True
         perf = self._perf()
-        interval = max(1, int(getattr(perf, "vertex_temp_io_interval", 1) if perf else 1))
+        if self.strike_state != StrikeState.IDLE:
+            interval = max(1, int(getattr(perf, "vertex_temp_io_interval_strike", 1) if perf else 1))
+            return (self._io_frame_counter % interval) == 0
+        if self.thermal_enabled:
+            interval = max(
+                1,
+                int(getattr(perf, "vertex_temp_io_interval_heating_idle", 6) if perf else 6),
+            )
+        else:
+            interval = max(1, int(getattr(perf, "vertex_temp_io_interval", 3) if perf else 3))
         return (self._io_frame_counter % interval) == 0
 
     def _should_refresh_mesh_io(self) -> bool:
@@ -948,10 +961,8 @@ class StrikeController:
             needs_check = False
         elif not safety or not getattr(safety, "enabled", True):
             needs_check = False
-        elif self.strike_state == StrikeState.IDLE:
-            needs_check = (self._physics_step_counter % self._stability_check_interval()) == 0
         else:
-            needs_check = True
+            needs_check = (self._physics_step_counter % self._stability_check_interval()) == 0
 
         _will_render = bool(self.env.scene.visualizer and self._should_update_viewer())
         _will_record = self.strike_state != StrikeState.IDLE

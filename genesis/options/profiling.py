@@ -135,6 +135,7 @@ class ProfilingOptions(Options):
             physics_rebuild_overlay_sync: bool = True
             render_mesh_overlay_sync: bool = True
             render_mesh_overlay_refresh: bool = True
+            render_mesh_overlay_vertices: bool = True
             render_particle_sync: bool = True
             render_particle_gpu_pull: bool = True
             render_particle_gpu_resident: bool = True

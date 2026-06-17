@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from enum import Enum
 from typing import TYPE_CHECKING, Callable
 
@@ -118,6 +119,30 @@ class ReconMeshOverlay:
         self._refresh_node("visual", allow_inplace=False)
         return self.visual_mode
 
+    def _bind_display_mesh_from_source(self, which: str, source: trimesh.Trimesh | None) -> None:
+        """Cache viewer-oriented mesh; copy topology only when counts change."""
+        mesh_attr = f"_{which}_mesh"
+        topo_attr = f"_{which}_topology"
+        if source is None or len(source.vertices) < 4:
+            setattr(self, mesh_attr, None)
+            setattr(self, topo_attr, None)
+            return
+
+        display: trimesh.Trimesh | None = getattr(self, mesh_attr)
+        source_topo = _topology_key(source)
+        if (
+            display is not None
+            and getattr(self, topo_attr) == source_topo
+            and len(display.vertices) == len(source.vertices)
+        ):
+            with teleop_profile(self._env, "teleop_render_mesh_overlay_vertices"):
+                display.vertices[:] = source.vertices
+            return
+
+        display_mesh = _display_mesh_from_source(source)
+        setattr(self, mesh_attr, display_mesh)
+        setattr(self, topo_attr, _topology_key(display_mesh))
+
     def sync_meshes(
         self,
         visual_mesh: trimesh.Trimesh | None,
@@ -131,28 +156,14 @@ class ReconMeshOverlay:
         else:
             visual_changed = True
             self._visual_stamp = -1 if visual_stamp is None else int(visual_stamp)
-            self._visual_mesh = (
-                _display_mesh_from_source(visual_mesh)
-                if visual_mesh is not None and len(visual_mesh.vertices) >= 4
-                else None
-            )
-            self._visual_topology = (
-                _topology_key(self._visual_mesh) if self._visual_mesh is not None else None
-            )
+            self._bind_display_mesh_from_source("visual", visual_mesh)
 
         if physics_stamp is not None and physics_stamp == self._physics_stamp:
             physics_changed = False
         else:
             physics_changed = True
             self._physics_stamp = -1 if physics_stamp is None else int(physics_stamp)
-            self._physics_mesh = (
-                _display_mesh_from_source(physics_mesh)
-                if physics_mesh is not None and len(physics_mesh.vertices) >= 4
-                else None
-            )
-            self._physics_topology = (
-                _topology_key(self._physics_mesh) if self._physics_mesh is not None else None
-            )
+            self._bind_display_mesh_from_source("physics", physics_mesh)
 
         if visual_changed:
             self._refresh_node("visual", allow_inplace=True)
@@ -166,12 +177,7 @@ class ReconMeshOverlay:
             return
         self._visual_stamp = int(stamp)
         self._physics_stamp = int(stamp)
-        self._visual_mesh = (
-            _display_mesh_from_source(mesh) if mesh is not None and len(mesh.vertices) >= 4 else None
-        )
-        self._visual_topology = (
-            _topology_key(self._visual_mesh) if self._visual_mesh is not None else None
-        )
+        self._bind_display_mesh_from_source("visual", mesh)
         self._physics_mesh = None
         self._physics_topology = None
         self._remove_node("physics")
@@ -218,6 +224,18 @@ class ReconMeshOverlay:
             setattr(self, node_attr, None)
         setattr(self, f"_{which}_topology", None)
 
+    def _viewer_buffer_lock(self):
+        """Serialize GPU buffer queue updates with the threaded viewer render pass."""
+        if self._env is None:
+            return contextlib.nullcontext()
+        vis = self._env.scene.visualizer
+        if vis is None or vis.viewer is None or not vis.viewer._is_built:
+            return contextlib.nullcontext()
+        pyv = vis.viewer._pyrender_viewer
+        if pyv is None or not getattr(pyv, "run_in_thread", False):
+            return contextlib.nullcontext()
+        return vis.viewer.lock
+
     def _try_update_node_geometry(self, which: str, mesh: trimesh.Trimesh) -> bool:
         """Update GPU vertex/normal buffers when topology is unchanged."""
         node = getattr(self, f"_{which}_node")
@@ -231,10 +249,11 @@ class ReconMeshOverlay:
 
         scene = self._ctx._scene
         update_data = scene.reorder_vertices(node, mesh.vertices.astype(np.float32))
-        self._ctx.jit.update_buffer(scene.get_buffer_id(node, "pos"), update_data)
-        normal_data = self._ctx.jit.update_normal(node, update_data)
-        if normal_data is not None:
-            self._ctx.jit.update_buffer(scene.get_buffer_id(node, "normal"), normal_data)
+        with self._viewer_buffer_lock():
+            self._ctx.jit.update_buffer(scene.get_buffer_id(node, "pos"), update_data)
+            normal_data = self._ctx.jit.update_normal(node, update_data)
+            if normal_data is not None:
+                self._ctx.jit.update_buffer(scene.get_buffer_id(node, "normal"), normal_data)
         return True
 
     def _refresh_node(self, which: str, *, allow_inplace: bool = False) -> None:
