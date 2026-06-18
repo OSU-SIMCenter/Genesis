@@ -179,6 +179,45 @@ def _prepare_array(arr, dtype):
 IDLE_BROADCAST_INTERVAL_S = 0.1
 
 
+def _state_header(
+    state: StrikeController,
+    *,
+    counts: dict,
+    thermal_enabled: bool,
+    status_only: bool = False,
+) -> dict:
+    header = {
+        "stage": state.strike_state.name,
+        "is_pressing": state.strike_state != StrikeState.IDLE,
+        "thermal_enabled": thermal_enabled,
+        "checkpoint_count": len(state.checkpoints),
+        "force": state.last_force_normalized,
+        "counts": counts,
+    }
+    if status_only:
+        header["status_only"] = True
+    return header
+
+
+async def _send_ws_message(websocket, header: dict, binary_body: bytes = b"") -> None:
+    header_json = json.dumps(header).encode("utf-8")
+    message = struct.pack("<I", len(header_json)) + header_json + binary_body
+    await websocket.send(message)
+
+
+async def _send_status_heartbeat(websocket, state: StrikeController) -> None:
+    """Lightweight idle sync — stage/is_pressing/force only, no mesh recon."""
+    header = _state_header(
+        state,
+        counts={"vertices": 0, "faces": 0, "particles": 0, "temperatures": 0},
+        thermal_enabled=bool(getattr(state, "thermal_enabled", False)),
+        status_only=True,
+    )
+    with state._profile("teleop_io_status_heartbeat"):
+        with state._profile("teleop_io_websocket_pack_send"):
+            await _send_ws_message(websocket, header)
+
+
 async def _send_state_update(websocket, state: StrikeController, *, include_vertex_temps=None):
     """Pack and send the current simulation state to the Unity client."""
     if include_vertex_temps is None:
@@ -203,23 +242,19 @@ async def _send_state_update(websocket, state: StrikeController, *, include_vert
     p_flat, p_count = _prepare_array(particles, np.float32)
     temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
 
-    header = {
-        "stage": state.strike_state.name,
-        "is_pressing": state.strike_state != StrikeState.IDLE,
-        "thermal_enabled": include_vertex_temps,
-        "checkpoint_count": len(state.checkpoints),
-        "force": state.last_force_normalized,
-        "counts": {
+    header = _state_header(
+        state,
+        counts={
             "vertices": v_count,
             "faces": t_count,
             "particles": p_count,
             "temperatures": temp_count,
         },
-    }
-    header_json = json.dumps(header).encode("utf-8")
+        thermal_enabled=include_vertex_temps,
+    )
     binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes() + temp_flat.tobytes()
-    message = struct.pack("<I", len(header_json)) + header_json + binary_body
-    await websocket.send(message)
+    with state._profile("teleop_io_websocket_pack_send"):
+        await _send_ws_message(websocket, header, binary_body)
 
 
 async def simulation_loop(websocket, state: StrikeController):
@@ -250,7 +285,7 @@ async def simulation_loop(websocket, state: StrikeController):
                     if now - last >= IDLE_BROADCAST_INTERVAL_S:
                         state._last_idle_broadcast_mono = now
                         with state._profile("teleop_io"):
-                            await _send_state_update(websocket, state)
+                            await _send_status_heartbeat(websocket, state)
                     else:
                         with state._profile("teleop_frame_pacing_sleep"):
                             await asyncio.sleep(0.001)
