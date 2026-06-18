@@ -117,11 +117,16 @@ class TemperatureParticleRenderer:
             if n_slots <= 0:
                 self._bucket_nodes.append(None)
                 continue
-            mesh = mu.create_sphere(self._draw_radius(), subdivisions=1, color=self._colors[b])
+            mesh = mu.create_sphere(
+                self._draw_radius(),
+                subdivisions=self._sphere_subdivisions(),
+                color=self._colors[b],
+            )
             tfs = np.tile(np.eye(4), (n_slots, 1, 1))
             tfs[:, :3, 3] = OFF_SCREEN
             pr_mesh = pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs)
             self._bucket_nodes.append(self._ctx.add_node(pr_mesh))
+            self._bucket_pose_buffers[b] = tfs
 
         self._frame_pos: np.ndarray | None = None
         self._bucket_idx: np.ndarray | None = None
@@ -131,6 +136,10 @@ class TemperatureParticleRenderer:
         self._gpu_render_path_ok: bool | None = None
         self._sync_path_logged = False
         self._original_update_mpm = ctx.update_mpm
+        self._bucket_pose_buffers: list[np.ndarray | None] = [None] * N_BUCKETS
+        self._q_ind_vmax_cached: float | None = None
+        self._q_ind_vmax_frame: int = 0
+        self._render_hook_frame: int = 0
         ctx.update_mpm = self._update_mpm_hook
 
     @classmethod
@@ -155,6 +164,13 @@ class TemperatureParticleRenderer:
             bucket_max_sizes=bucket_max_sizes,
         )
 
+    def _sphere_subdivisions(self, env: "AgilityForgeEnv | None" = None) -> int:
+        if env is not None:
+            perf = getattr(env.cfg, "performance", None)
+            if perf is not None:
+                return max(0, int(getattr(perf, "particle_sphere_subdivisions", 1)))
+        return 1
+
     def _draw_radius(self) -> float:
         return self._physics_radius * self._render_scale
 
@@ -168,18 +184,18 @@ class TemperatureParticleRenderer:
             self._render_scale = small
         else:
             self._render_scale = 1.0
-        self._rebuild_all_bucket_meshes()
+        self._rebuild_all_bucket_meshes(env)
         if self._frame_pos is not None and self._bucket_idx is not None:
             self._write_bucket_poses(self._frame_pos, self._bucket_idx, env=self._env)
         elif self._can_use_gpu_render_path(env):
             self._write_buckets_from_particles_render(env)
         return self._render_scale
 
-    def _rebuild_all_bucket_meshes(self):
+    def _rebuild_all_bucket_meshes(self, env: "AgilityForgeEnv | None" = None):
         for b in range(self._n_buckets):
             n_slots = int(self._bucket_max[b])
             if n_slots > 0:
-                self._recreate_bucket_node(b, n_slots)
+                self._recreate_bucket_node(b, n_slots, env=env)
 
     def _remove_default_nodes(self):
         for idx in self._ctx.rendered_envs_idx:
@@ -208,10 +224,19 @@ class TemperatureParticleRenderer:
             return False
         return True
 
+    def _is_simple_color(self, env: "AgilityForgeEnv") -> bool:
+        return bool(getattr(env.cfg.general, "particle_simple_color", False))
+
     def _can_use_gpu_render_path(self, env: "AgilityForgeEnv") -> bool:
         """True when scalar coloring can use GPU-resident particles_render."""
         if self._gpu_render_path_ok is not None:
             return self._gpu_render_path_ok
+
+        if self._is_simple_color(env):
+            solver = env.scene.sim.mpm_solver
+            if getattr(solver, "particles_render", None) is not None:
+                self._log_gpu_render_path_once(env, True, mode="simple")
+                return True
 
         solver = env.scene.sim.mpm_solver
         if not getattr(solver, "_enable_thermal", False):
@@ -262,16 +287,26 @@ class TemperatureParticleRenderer:
             return 0.0, 1.0
         return self._temp_min, self._temp_max
 
-    def _entity_render_slice(self, env: "AgilityForgeEnv") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _entity_render_slice(
+        self, env: "AgilityForgeEnv", *, need_scalars: bool = True
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         solver = env.scene.sim.mpm_solver
         ps = self._mpm_entity.particle_start
         pe = ps + self._mpm_entity.n_particles
-        pr = solver.particles_render
+        entity = env.mpm_entity
 
-        pos = pr.pos.to_torch().reshape(-1, 3)[ps:pe]
-        active = pr.active.to_torch().reshape(-1)[ps:pe].bool()
-        temps = pr.temp.to_torch().reshape(-1)[ps:pe]
-        depths = pr.depth.to_torch().reshape(-1)[ps:pe]
+        if hasattr(entity, "get_particles_render_bundle"):
+            pos_t, active_t, temps_t, depths_t = entity.get_particles_render_bundle()
+            pos = pos_t.reshape(-1, 3)[ps:pe]
+            active = active_t.reshape(-1)[ps:pe].bool()
+            temps = temps_t.reshape(-1)[ps:pe] if need_scalars else None
+            depths = depths_t.reshape(-1)[ps:pe] if need_scalars else None
+        else:
+            pr = solver.particles_render
+            pos = pr.pos.to_torch().reshape(-1, 3)[ps:pe]
+            active = pr.active.to_torch().reshape(-1)[ps:pe].bool()
+            temps = pr.temp.to_torch().reshape(-1)[ps:pe] if need_scalars else None
+            depths = pr.depth.to_torch().reshape(-1)[ps:pe] if need_scalars else None
 
         offset = getattr(env.scene, "envs_offset", None)
         if offset is not None:
@@ -279,6 +314,22 @@ class TemperatureParticleRenderer:
             pos = pos + env_offset
 
         return pos, active, temps, depths
+
+    def _subsample_particles(
+        self,
+        env: "AgilityForgeEnv",
+        pos: torch.Tensor,
+        scalars: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        frac = float(getattr(env.cfg.general, "particle_render_fraction", 1.0))
+        if frac >= 1.0 or pos.shape[0] <= 1:
+            return pos, scalars
+        frac = max(0.05, min(1.0, frac))
+        stride = max(1, int(round(1.0 / frac)))
+        pos = pos[::stride]
+        if scalars is not None:
+            scalars = scalars[::stride]
+        return pos, scalars
 
     def _gpu_scalar_tensor(
         self,
@@ -335,7 +386,18 @@ class TemperatureParticleRenderer:
             q = torch.nan_to_num(q, nan=0.0, posinf=0.0, neginf=0.0)
             if q.numel() == 0:
                 return q, 0.0, 1.0
-            vmax = float(torch.quantile(q, 0.995).item())
+            perf = getattr(env.cfg, "performance", None)
+            interval = max(1, int(getattr(perf, "q_ind_vmax_refresh_interval", 15) if perf else 15))
+            self._render_hook_frame += 1
+            if (
+                self._q_ind_vmax_cached is not None
+                and (self._render_hook_frame - self._q_ind_vmax_frame) < interval
+            ):
+                vmax = self._q_ind_vmax_cached
+            else:
+                vmax = float(torch.quantile(q, 0.995).item())
+                self._q_ind_vmax_cached = vmax
+                self._q_ind_vmax_frame = self._render_hook_frame
             return q, 0.0, max(vmax, 1e-12)
 
         return temps, vmin, vmax
@@ -343,48 +405,111 @@ class TemperatureParticleRenderer:
     def _write_buckets_from_particles_render(self, env: "AgilityForgeEnv"):
         """Bucket and upload poses from GPU-resident particles_render (no particle bundle pull)."""
         with teleop_profile(env, "teleop_render_particle_gpu_resident"):
-            pos, active, temps, depths = self._entity_render_slice(env)
-            scalars, vmin, vmax = self._gpu_scalar_tensor(env, pos, temps, depths)
-            if self._gpu_scalar_vmin is not None:
-                vmin = self._gpu_scalar_vmin
-            if self._gpu_scalar_vmax is not None:
-                vmax = self._gpu_scalar_vmax
+            simple = self._is_simple_color(env)
+            pos, active, temps, depths = self._entity_render_slice(
+                env, need_scalars=not simple
+            )
 
             if active.shape[0] == pos.shape[0]:
                 pos = pos[active]
-                scalars = scalars[active]
+                if not simple and temps is not None:
+                    temps = temps[active]
+                    depths = depths[active] if depths is not None else None
 
-            bucket_idx = _scalars_to_bucket_indices_torch(scalars, vmin, vmax, self._n_buckets)
+            if simple:
+                pos, _ = self._subsample_particles(env, pos, None)
+                bucket_idx = torch.full(
+                    (pos.shape[0],),
+                    self._n_buckets // 2,
+                    device=pos.device,
+                    dtype=torch.long,
+                )
+            else:
+                scalars, vmin, vmax = self._gpu_scalar_tensor(env, pos, temps, depths)
+                if self._gpu_scalar_vmin is not None:
+                    vmin = self._gpu_scalar_vmin
+                if self._gpu_scalar_vmax is not None:
+                    vmax = self._gpu_scalar_vmax
+                pos, scalars = self._subsample_particles(env, pos, scalars)
+                bucket_idx = _scalars_to_bucket_indices_torch(scalars, vmin, vmax, self._n_buckets)
+
         self._write_bucket_poses_torch(pos, bucket_idx, env=env)
 
     def _write_bucket_poses_torch(self, positions: torch.Tensor, bucket_idx: torch.Tensor, env=None):
-        """Upload bucket poses with a single GPU→CPU sync (then pure-numpy buffer writes)."""
+        """Upload bucket poses with GPU sort + one GPU→CPU sync."""
         positions = positions.reshape(-1, 3)
         bucket_idx = bucket_idx.reshape(-1)
         n = min(positions.shape[0], bucket_idx.shape[0])
         if n == 0:
             return
 
-        bundle = torch.cat(
-            (positions[:n], bucket_idx[:n].unsqueeze(1).to(dtype=positions.dtype)),
-            dim=1,
-        )
-        arr = bundle.detach().cpu().numpy()
-        self._write_bucket_poses(arr[:, :3], arr[:, 3].astype(np.int32), env=env)
+        order = torch.argsort(bucket_idx[:n])
+        sorted_pos = positions[:n][order]
+        sorted_buckets = bucket_idx[:n][order]
+        counts = torch.bincount(sorted_buckets, minlength=self._n_buckets)
 
-    def _recreate_bucket_node(self, b: int, n_slots: int):
+        pos_np = sorted_pos.detach().cpu().numpy()
+        counts_np = counts.detach().cpu().numpy().astype(np.int32)
+        self._write_bucket_poses_sorted(pos_np, counts_np, env=env)
+
+    def _write_bucket_poses_sorted(
+        self, positions: np.ndarray, bucket_counts: np.ndarray, env=None
+    ):
+        """Fill preallocated pose buffers from GPU-sorted positions and per-bucket counts."""
+        positions = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
+        bucket_counts = np.asarray(bucket_counts, dtype=np.int32).reshape(-1)
+        if bucket_counts.shape[0] != self._n_buckets:
+            bucket_counts = np.pad(
+                bucket_counts,
+                (0, max(0, self._n_buckets - bucket_counts.shape[0])),
+            )[: self._n_buckets]
+
+        for b in range(self._n_buckets):
+            needed = int(bucket_counts[b])
+            if needed > self._bucket_max[b]:
+                self._recreate_bucket_node(b, needed, env=env)
+
+        with teleop_profile(env, "teleop_render_particle_bucket_write"):
+            offset = 0
+            for b in range(self._n_buckets):
+                node = self._bucket_nodes[b]
+                if node is None:
+                    offset += int(bucket_counts[b])
+                    continue
+                n_slots = self._bucket_max[b]
+                count = int(bucket_counts[b])
+                tfs = self._bucket_pose_buffers[b]
+                if tfs is None or tfs.shape[0] != n_slots:
+                    tfs = np.tile(np.eye(4), (n_slots, 1, 1))
+                    self._bucket_pose_buffers[b] = tfs
+                tfs[:, :3, 3] = OFF_SCREEN
+                if count > 0:
+                    tfs[:count, :3, 3] = positions[offset : offset + count]
+                offset += count
+                for prim in node.mesh.primitives:
+                    prim.poses = tfs
+                buf_id = self._ctx._scene.get_buffer_id(node, "model")
+                if buf_id != -1:
+                    self._ctx.jit.update_buffer(buf_id, tfs.transpose((0, 2, 1)))
+
+    def _recreate_bucket_node(self, b: int, n_slots: int, env=None):
         from genesis.ext import pyrender
         import genesis.utils.mesh as mu
 
         old = self._bucket_nodes[b]
         if old is not None:
             self._ctx.remove_node(old)
-        mesh = mu.create_sphere(self._draw_radius(), subdivisions=1, color=self._colors[b])
+        mesh = mu.create_sphere(
+            self._draw_radius(),
+            subdivisions=self._sphere_subdivisions(env),
+            color=self._colors[b],
+        )
         tfs = np.tile(np.eye(4), (n_slots, 1, 1))
         tfs[:, :3, 3] = OFF_SCREEN
         pr_mesh = pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs)
         self._bucket_nodes[b] = self._ctx.add_node(pr_mesh)
         self._bucket_max[b] = n_slots
+        self._bucket_pose_buffers[b] = tfs
 
     def _write_bucket_poses(self, positions: np.ndarray, bucket_idx: np.ndarray, env=None):
         positions = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
@@ -395,7 +520,7 @@ class TemperatureParticleRenderer:
         for b in range(self._n_buckets):
             needed = int(counts[b])
             if needed > self._bucket_max[b]:
-                self._recreate_bucket_node(b, needed)
+                self._recreate_bucket_node(b, needed, env=env)
 
         with teleop_profile(env, "teleop_render_particle_bucket_write"):
             for b in range(self._n_buckets):
@@ -403,7 +528,10 @@ class TemperatureParticleRenderer:
                 if node is None:
                     continue
                 n_slots = self._bucket_max[b]
-                tfs = np.tile(np.eye(4), (n_slots, 1, 1))
+                tfs = self._bucket_pose_buffers[b]
+                if tfs is None or tfs.shape[0] != n_slots:
+                    tfs = np.tile(np.eye(4), (n_slots, 1, 1))
+                    self._bucket_pose_buffers[b] = tfs
                 tfs[:, :3, 3] = OFF_SCREEN
                 mask = bucket_idx[:n] == b
                 count = int(mask.sum())
@@ -633,6 +761,29 @@ def update_particle_color_display(
     update_viewer_status(env, physics_mesher=physics_mesher)
 
 
+def toggle_particle_simple_color(env: "AgilityForgeEnv", renderer: TemperatureParticleRenderer) -> bool:
+    """Toggle plain-metal particles (skips scalar coloring work)."""
+    general = env.cfg.general
+    general.particle_simple_color = not bool(getattr(general, "particle_simple_color", False))
+    renderer._gpu_render_path_ok = None
+    renderer._q_ind_vmax_cached = None
+    renderer.prepare_render_frame(env)
+    return general.particle_simple_color
+
+
+def toggle_viewer_fps_mode(env: "AgilityForgeEnv") -> int:
+    """Toggle viewer redraw cap between quality and performance targets."""
+    perf = env.cfg.performance
+    quality = int(getattr(perf, "viewer_fps_quality_mode", 30))
+    perf_fps = int(getattr(perf, "viewer_fps_perf_mode", 15))
+    current = int(getattr(perf, "target_viewer_fps", quality) or quality)
+    new_fps = quality if current <= perf_fps + 1 else perf_fps
+    perf.target_viewer_fps = new_fps
+    env.cfg.viewer.max_FPS = new_fps
+    env.cfg.viewer.refresh_rate = new_fps
+    return new_fps
+
+
 def cycle_particle_color_mode(env: "AgilityForgeEnv", renderer: TemperatureParticleRenderer, step: int = 1) -> str:
     """Advance the live viewer scalar field and refresh particle colors."""
     modes = PARTICLE_COLOR_MODES
@@ -643,6 +794,8 @@ def cycle_particle_color_mode(env: "AgilityForgeEnv", renderer: TemperatureParti
         idx = 0
     mode = modes[(idx + step) % len(modes)]
     env.cfg.general.particle_color_mode = mode
+    env.cfg.general.particle_simple_color = False
+    renderer._gpu_render_path_ok = None
     renderer.prepare_render_frame(env)
     return mode
 
@@ -689,6 +842,19 @@ def register_particle_color_keybinds(
         gs.logger.info(f"Particle render size: {label} (scale={scale:.2f})")
         _refresh_viewer()
 
+    def _toggle_simple_color():
+        enabled = toggle_particle_simple_color(env, renderer)
+        label = "simple (mono)" if enabled else "fancy"
+        gs.logger.info(f"Particle coloring: {label}")
+        update_particle_color_display(env, physics_mesher=physics_mesher)
+        _refresh_viewer()
+
+    def _toggle_viewer_fps():
+        fps = toggle_viewer_fps_mode(env)
+        gs.logger.info(f"Viewer FPS cap: {fps}")
+        update_particle_color_display(env, physics_mesher=physics_mesher)
+        _refresh_viewer()
+
     viewer.register_keybinds(
         Keybind(
             "cycle_color_mode",
@@ -710,6 +876,21 @@ def register_particle_color_keybinds(
             Key.B,
             key_action=KeyAction.PRESS,
             callback=_toggle_size,
+            allow_overload=True,
+        ),
+        Keybind(
+            "toggle_particle_simple_color",
+            Key.C,
+            key_mods=(KeyMod.SHIFT,),
+            key_action=KeyAction.PRESS,
+            callback=_toggle_simple_color,
+            allow_overload=True,
+        ),
+        Keybind(
+            "toggle_viewer_fps_mode",
+            Key.F,
+            key_action=KeyAction.PRESS,
+            callback=_toggle_viewer_fps,
             allow_overload=True,
         ),
         overwrite=False,

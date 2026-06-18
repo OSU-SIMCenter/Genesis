@@ -180,6 +180,7 @@ async def simulation_loop(websocket, state: StrikeController):
     gs.logger.debug("Simulation loop started")
     
     try:
+        state._teleop_loop_start_mono = time.monotonic()
         while True:
             # Determine if we need to step physics
             is_active = (state.strike_state != StrikeState.IDLE)
@@ -256,7 +257,17 @@ async def simulation_loop(websocket, state: StrikeController):
             with state._profile("teleop_frame_pacing_sleep"):
                 perf = getattr(state.env.cfg, "performance", None)
                 target_fps = int(getattr(perf, "target_physics_fps", TARGET_FPS) or TARGET_FPS)
-                await asyncio.sleep(1 / max(1, target_fps))
+                smart_pacing = bool(getattr(perf, "smart_physics_pacing", True))
+                if smart_pacing:
+                    loop_start = getattr(state, "_teleop_loop_start_mono", None)
+                    if loop_start is not None:
+                        remaining = (1.0 / max(1, target_fps)) - (time.monotonic() - loop_start)
+                        if remaining > 0:
+                            await asyncio.sleep(remaining)
+                else:
+                    await asyncio.sleep(1 / max(1, target_fps))
+            
+            state._teleop_loop_start_mono = time.monotonic()
             
             # Cleanup flags
             if hasattr(state, 'new_input_received'):

@@ -116,6 +116,7 @@ class StrikeController:
         self._cached_slider_x: float | None = None
         self._last_induction_key: tuple | None = None
         self.heater = None
+        self._pending_sdf_upload = False
         self._temp_particle_renderer = None
 
         # Initialize billet to physical room temperature (293.0 K)
@@ -873,8 +874,14 @@ class StrikeController:
                             physics_mesher=self.physics_mesher,
                             reconstructor=self.reconstructor,
                         )
-                        # Precompute the initial physics mesh + skin-depth field before the first strike.
-                        self.rebuild_physics_induction()
+                        # Precompute the initial physics mesh; defer SDF upload to next frame.
+                        self.rebuild_physics_induction(upload_sdf=False)
+                        self._pending_sdf_upload = True
+
+                if self._pending_sdf_upload and self.heater is not None:
+                    with self._profile("teleop_heating_sdf_upload"):
+                        self.heater.recompute_and_upload()
+                    self._pending_sdf_upload = False
 
                 # Induction heat is deposited on the GPU inside the MPM P2G kernel. Here we
                 # only publish the per-frame coil uniforms (center rides the sliding arm).
@@ -1148,8 +1155,13 @@ class StrikeController:
         if self.env.scene.visualizer and _will_render:
             with self._profile("teleop_render"):
                 if self._mesh_overlay is not None:
-                    with self._profile("teleop_render_mesh_overlay_sync"):
-                        self._mesh_overlay.sync_from_controller(self)
+                    perf = self._perf()
+                    stride = max(1, int(getattr(perf, "mesh_overlay_sync_stride", 1) if perf else 1))
+                    _live_stages_overlay = (StrikeState.PRESSING, StrikeState.HOLDING, StrikeState.RELEASE)
+                    in_live_strike = self.strike_state in _live_stages_overlay
+                    if not in_live_strike or (self._physics_step_counter % stride == 0):
+                        with self._profile("teleop_render_mesh_overlay_sync"):
+                            self._mesh_overlay.sync_from_controller(self)
                 if self._temp_particle_renderer is not None:
                     with self._profile("teleop_render_particle_sync"):
                         self._temp_particle_renderer.prepare_render_frame(self.env)

@@ -95,6 +95,10 @@ class GeneralOptions(Options):
     particle_depth_max: Optional[float] = None
     # Viewer-only draw radius multiplier when toggled with [B] (physics unchanged).
     particle_render_scale_small: float = 0.3
+    # Runtime toggle: plain metal spheres (skip scalar coloring / bucketing work).
+    particle_simple_color: bool = False
+    # Fraction of active particles drawn in the viewer (physics unchanged).
+    particle_render_fraction: float = 1.0
 
 class ReconstructionOptions(Options):
     """Parameters for surface reconstruction."""
@@ -409,6 +413,17 @@ class TeleopPerformanceOptions(Options):
     wsl_prefer_glx: bool = True
     # WSLg: Mesa defaults to llvmpipe without /dev/dri; D3D12 uses /dev/dxg for GPU GL.
     wsl_use_d3d12: bool = True
+    # Only sleep when ahead of this loop rate (False = legacy fixed sleep every iteration).
+    smart_physics_pacing: bool = True
+    # Refresh q_ind color vmax every N viewer frames (avoids per-frame quantile).
+    q_ind_vmax_refresh_interval: int = 15
+    # During live strike MC, sync viewer mesh overlay every N physics steps (1 = every step).
+    mesh_overlay_sync_stride: int = 2
+    # pyrender sphere subdivisions for particle buckets (0 = cheaper, 1 = smoother).
+    particle_sphere_subdivisions: int = 1
+    # Viewer FPS targets for the [F] quality/performance toggle.
+    viewer_fps_quality_mode: int = 30
+    viewer_fps_perf_mode: int = 15
 
     # Unity IO: vertex temperature kNN map every N websocket frames (idle, no heating).
     vertex_temp_io_interval: int = 3

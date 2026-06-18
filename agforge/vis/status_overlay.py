@@ -75,6 +75,11 @@ def update_viewer_status(
 
     mode = getattr(env.cfg.general, "particle_color_mode", "temperature")
     color_label = PARTICLE_COLOR_MODE_LABELS.get(mode, mode)
+    if getattr(env.cfg.general, "particle_simple_color", False):
+        color_label = f"{color_label} (simple)"
+
+    perf = getattr(env.cfg, "performance", None)
+    viewer_fps = int(getattr(perf, "target_viewer_fps", 0) or 0) if perf else 0
 
     unified = bool(getattr(env.cfg.reconstruction, "unified_mesh", True))
     mesh_label = ""
@@ -83,6 +88,8 @@ def update_viewer_status(
         mesh_label = f"{backend} (unified)" if unified else backend
 
     lines = [f"Color: {color_label}"]
+    if viewer_fps > 0:
+        lines.append(f"Viewer: {viewer_fps} FPS")
     if mesh_label:
         prefix = "Mesh" if unified else "SDF mesh"
         lines.append(f"{prefix}: {mesh_label}")
