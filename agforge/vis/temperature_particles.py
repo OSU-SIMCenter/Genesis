@@ -110,6 +110,7 @@ class TemperatureParticleRenderer:
 
         self._bucket_max = bucket_max_sizes.tolist()
         self._bucket_nodes: list = []
+        self._bucket_pose_buffers: list[np.ndarray | None] = [None] * N_BUCKETS
         self._remove_default_nodes()
 
         for b in range(N_BUCKETS):
@@ -136,7 +137,6 @@ class TemperatureParticleRenderer:
         self._gpu_render_path_ok: bool | None = None
         self._sync_path_logged = False
         self._original_update_mpm = ctx.update_mpm
-        self._bucket_pose_buffers: list[np.ndarray | None] = [None] * N_BUCKETS
         self._q_ind_vmax_cached: float | None = None
         self._q_ind_vmax_frame: int = 0
         self._render_hook_frame: int = 0
