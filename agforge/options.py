@@ -404,7 +404,7 @@ class TeleopPerformanceOptions(Options):
     # Sim / websocket loop cap (physics may step slower when viewer is expensive).
     target_physics_fps: int = 60
     # Cap Genesis viewer redraws independently of physics (0 = every physics step).
-    target_viewer_fps: int = 30
+    target_viewer_fps: int = 10
     # Scale viewer resolution (1.0 = full; 0.75 → 960×540 from 1280×720).
     viewer_res_scale: float = 1.0
     # Force OpenGL backend: "egl", "glx", or "osmesa". None = Genesis auto-fallback.
@@ -421,9 +421,8 @@ class TeleopPerformanceOptions(Options):
     mesh_overlay_sync_stride: int = 2
     # pyrender sphere subdivisions for particle buckets (0 = cheaper, 1 = smoother).
     particle_sphere_subdivisions: int = 1
-    # Viewer FPS targets for the [F] quality/performance toggle.
-    viewer_fps_quality_mode: int = 30
-    viewer_fps_perf_mode: int = 15
+    # Viewer FPS caps cycled by [T] (10 → 20 → 30).
+    viewer_fps_cycle: List[int] = [10, 20, 30]
 
     # Unity IO: vertex temperature kNN map every N websocket frames (idle, no heating).
     vertex_temp_io_interval: int = 3

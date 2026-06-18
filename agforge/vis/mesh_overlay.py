@@ -85,7 +85,7 @@ class ReconMeshOverlay:
         self._visual_color = np.array(visual_color, dtype=np.float32)
         self._physics_color = np.array(physics_color, dtype=np.float32)
         self._transparent_alpha = float(transparent_alpha)
-        self.visual_mode = MeshDisplayMode.OFF
+        self.visual_mode = MeshDisplayMode.TRANSPARENT
         self.physics_mode = MeshDisplayMode.OFF
         self._visual_node = None
         self._physics_node = None

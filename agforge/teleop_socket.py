@@ -175,6 +175,53 @@ def _prepare_array(arr, dtype):
     return flat, len(flat)
 
 
+# Keep Unity synced when Genesis is idle (no physics step) but connected.
+IDLE_BROADCAST_INTERVAL_S = 0.1
+
+
+async def _send_state_update(websocket, state: StrikeController, *, include_vertex_temps=None):
+    """Pack and send the current simulation state to the Unity client."""
+    if include_vertex_temps is None:
+        include_vertex_temps = bool(
+            getattr(state, "thermal_enabled", False) or getattr(state, "pending_mesh_send", False)
+        )
+
+    vertices, triangles, particles, vertices_temp = await state.update_and_get_recon_data(
+        include_vertex_temps=include_vertex_temps,
+    )
+
+    v_flat, v_count = _prepare_array(vertices, np.float32)
+
+    if getattr(state, "input_mapper", None) and state.input_mapper.billet_base_x is None:
+        if v_count > 0:
+            state.input_mapper.billet_base_x = float(np.max(v_flat[0::3]))
+            gs.logger.warning(
+                f"billet_base_x fallback from mesh (maxX): {state.input_mapper.billet_base_x}"
+            )
+
+    t_flat, t_count = _prepare_array(triangles, np.int32)
+    p_flat, p_count = _prepare_array(particles, np.float32)
+    temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
+
+    header = {
+        "stage": state.strike_state.name,
+        "is_pressing": state.strike_state != StrikeState.IDLE,
+        "thermal_enabled": include_vertex_temps,
+        "checkpoint_count": len(state.checkpoints),
+        "force": state.last_force_normalized,
+        "counts": {
+            "vertices": v_count,
+            "faces": t_count,
+            "particles": p_count,
+            "temperatures": temp_count,
+        },
+    }
+    header_json = json.dumps(header).encode("utf-8")
+    binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes() + temp_flat.tobytes()
+    message = struct.pack("<I", len(header_json)) + header_json + binary_body
+    await websocket.send(message)
+
+
 async def simulation_loop(websocket, state: StrikeController):
     """Runs the simulation and sends state updates to the client."""
     gs.logger.debug("Simulation loop started")
@@ -197,8 +244,19 @@ async def simulation_loop(websocket, state: StrikeController):
             should_send = should_step or pending_send
             
             if not should_send:
-                with state._profile("teleop_frame_pacing_sleep"):
-                    await asyncio.sleep(0.001)
+                if getattr(state, "is_client_connected", False):
+                    now = time.monotonic()
+                    last = getattr(state, "_last_idle_broadcast_mono", 0.0)
+                    if now - last >= IDLE_BROADCAST_INTERVAL_S:
+                        state._last_idle_broadcast_mono = now
+                        with state._profile("teleop_io"):
+                            await _send_state_update(websocket, state)
+                    else:
+                        with state._profile("teleop_frame_pacing_sleep"):
+                            await asyncio.sleep(0.001)
+                else:
+                    with state._profile("teleop_frame_pacing_sleep"):
+                        await asyncio.sleep(0.001)
                 continue
             
             # Root of the hierarchy for this frame/step
@@ -211,48 +269,9 @@ async def simulation_loop(websocket, state: StrikeController):
                 # No need to burn CPU smoothing a static mesh.
                 
                 # 2. Reconstruction & IO (always send when should_send is True)
-                # Note: state.env.scene.profiling_options is accessible
                 with state._profile("teleop_io"):
-                    send_thermal_enabled = getattr(state, 'thermal_enabled', False) or getattr(state, 'pending_mesh_send', False)
-
-                    with state._profile("teleop_io_recon_data"):
-                        vertices, triangles, particles, vertices_temp = await state.update_and_get_recon_data(
-                            include_vertex_temps=send_thermal_enabled,
-                        )
-
-                    with state._profile("teleop_io_gpu_to_cpu"):
-                        v_flat, v_count = _prepare_array(vertices, np.float32)
-
-                        if getattr(state, "input_mapper", None) and state.input_mapper.billet_base_x is None:
-                            if v_count > 0:
-                                state.input_mapper.billet_base_x = float(np.max(v_flat[0::3]))
-                                gs.logger.warning(f"billet_base_x fallback from mesh (maxX): {state.input_mapper.billet_base_x}")
-
-                        t_flat, t_count = _prepare_array(triangles, np.int32)
-                        p_flat, p_count = _prepare_array(particles, np.float32)
-                        temp_flat, temp_count = _prepare_array(vertices_temp, np.float32)
-
                     with state._profile("teleop_io_websocket_pack_send"):
-                        with state._profile("teleop_io_websocket_pack"):
-                            header = {
-                                "stage": state.strike_state.name,
-                                "is_pressing": state.strike_state != StrikeState.IDLE,
-                                "thermal_enabled": send_thermal_enabled,
-                                "checkpoint_count": len(state.checkpoints),
-                                "force": state.last_force_normalized,
-                                "counts": {
-                                    "vertices": v_count,
-                                    "faces": t_count,
-                                    "particles": p_count,
-                                    "temperatures": temp_count
-                                }
-                            }
-                            header_json = json.dumps(header).encode('utf-8')
-                            binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes() + temp_flat.tobytes()
-                            message = struct.pack('<I', len(header_json)) + header_json + binary_body
-
-                        with state._profile("teleop_io_websocket_send"):
-                            await websocket.send(message)
+                        await _send_state_update(websocket, state)
             
             with state._profile("teleop_frame_pacing_sleep"):
                 perf = getattr(state.env.cfg, "performance", None)
@@ -291,29 +310,26 @@ async def simulation_loop(websocket, state: StrikeController):
         gs.logger.debug("Simulation loop finished")
 
 async def viewer_idle_loop(state: StrikeController):
-    """Keeps the viewer responsive when no client is connected.
+    """Keeps the Genesis viewer responsive between throttled sim renders.
 
-    Full particle/overlay GPU sync runs from ``step_simulation`` while Unity is
-    connected. When disconnected, only process queued physics rebuilds (which
-    refresh the overlay themselves) and throttle cheap ``visualizer.update``
-    calls for camera/UI — no per-tick GPU particle pulls.
+    Full particle/overlay GPU sync runs from ``step_simulation``. This loop
+    processes queued rebuilds and pumps lightweight viewer updates so the
+    window stays interactive even when physics is idle or render is capped.
     """
-    viewer_refresh_interval_s = 0.2  # 5 Hz — enough for mouse/camera, not sim data
+    viewer_refresh_interval_s = 0.1  # 10 Hz — camera/UI + rigid-body pose sync
 
     try:
         while True:
-            is_connected = getattr(state, 'is_client_connected', False)
-
-            if not is_connected:
-                with state._profile("teleop_viewer_idle_tick"):
-                    await state.process_pending_physics_rebuild()
-                    vis = getattr(state.env.scene, 'visualizer', None)
-                    if vis:
-                        now = time.monotonic()
-                        last = getattr(state, '_viewer_idle_last_refresh', 0.0)
-                        if now - last >= viewer_refresh_interval_s:
-                            state._viewer_idle_last_refresh = now
-                            vis.update(force=False, auto=True)
+            with state._profile("teleop_viewer_idle_tick"):
+                await state.process_pending_physics_rebuild()
+                vis = getattr(state.env.scene, "visualizer", None)
+                if vis and vis._viewer is not None:
+                    now = time.monotonic()
+                    last = getattr(state, "_viewer_idle_last_refresh", 0.0)
+                    if now - last >= viewer_refresh_interval_s:
+                        state._viewer_idle_last_refresh = now
+                        # Rigid/MPM pose sync only — avoid context.update() particle GPU pulls.
+                        vis.update_visual_states(force_render=True)
 
             await asyncio.sleep(0.02)
     except asyncio.CancelledError:
@@ -339,6 +355,9 @@ async def handle_client(websocket, state: StrikeController, path=None):
     producer_task = asyncio.create_task(simulation_loop(websocket, state))
 
     try:
+        with state._profile("teleop_io"):
+            await _send_state_update(websocket, state)
+
         async for msg in websocket:
             try:
                 packet = json.loads(msg)
@@ -394,6 +413,8 @@ async def handle_client(websocket, state: StrikeController, path=None):
                          
                          gs.logger.info(f"Strike request: raw={raw_force}, scaled_strain={scaled_strain:.2f}")
                          await state.trigger_strike(scaled_strain)
+                         with state._profile("teleop_io"):
+                             await _send_state_update(websocket, state)
 
             except json.JSONDecodeError:
                 gs.logger.warning("Invalid JSON from client")

@@ -771,16 +771,34 @@ def toggle_particle_simple_color(env: "AgilityForgeEnv", renderer: TemperaturePa
     return general.particle_simple_color
 
 
-def toggle_viewer_fps_mode(env: "AgilityForgeEnv") -> int:
-    """Toggle viewer redraw cap between quality and performance targets."""
+def cycle_viewer_fps_mode(env: "AgilityForgeEnv") -> int:
+    """Cycle viewer redraw cap through configured FPS steps (default 10 → 20 → 30)."""
     perf = env.cfg.performance
-    quality = int(getattr(perf, "viewer_fps_quality_mode", 30))
-    perf_fps = int(getattr(perf, "viewer_fps_perf_mode", 15))
-    current = int(getattr(perf, "target_viewer_fps", quality) or quality)
-    new_fps = quality if current <= perf_fps + 1 else perf_fps
+    cycle = [int(x) for x in getattr(perf, "viewer_fps_cycle", None) or (10, 20, 30)]
+    if not cycle:
+        cycle = [10, 20, 30]
+    current = int(getattr(perf, "target_viewer_fps", cycle[0]) or cycle[0])
+    try:
+        idx = cycle.index(current)
+    except ValueError:
+        idx = -1
+    new_fps = cycle[(idx + 1) % len(cycle)]
     perf.target_viewer_fps = new_fps
     env.cfg.viewer.max_FPS = new_fps
     env.cfg.viewer.refresh_rate = new_fps
+
+    vis = getattr(env.scene, "visualizer", None)
+    viewer = getattr(vis, "_viewer", None) if vis is not None else None
+    if viewer is not None:
+        viewer._max_FPS = new_fps
+        viewer._refresh_rate = new_fps
+        from genesis.utils.tools import Rate
+
+        viewer.rate = Rate(new_fps)
+        pyv = getattr(viewer, "_pyrender_viewer", None)
+        if pyv is not None:
+            pyv.viewer_flags["refresh_rate"] = new_fps
+
     return new_fps
 
 
@@ -849,8 +867,8 @@ def register_particle_color_keybinds(
         update_particle_color_display(env, physics_mesher=physics_mesher)
         _refresh_viewer()
 
-    def _toggle_viewer_fps():
-        fps = toggle_viewer_fps_mode(env)
+    def _cycle_viewer_fps():
+        fps = cycle_viewer_fps_mode(env)
         gs.logger.info(f"Viewer FPS cap: {fps}")
         update_particle_color_display(env, physics_mesher=physics_mesher)
         _refresh_viewer()
@@ -880,17 +898,16 @@ def register_particle_color_keybinds(
         ),
         Keybind(
             "toggle_particle_simple_color",
-            Key.C,
-            key_mods=(KeyMod.SHIFT,),
+            Key.E,
             key_action=KeyAction.PRESS,
             callback=_toggle_simple_color,
             allow_overload=True,
         ),
         Keybind(
-            "toggle_viewer_fps_mode",
-            Key.F,
+            "cycle_viewer_fps_mode",
+            Key.T,
             key_action=KeyAction.PRESS,
-            callback=_toggle_viewer_fps,
+            callback=_cycle_viewer_fps,
             allow_overload=True,
         ),
         overwrite=False,

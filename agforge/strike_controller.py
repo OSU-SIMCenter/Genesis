@@ -23,6 +23,22 @@ class SimulationStabilityError(Exception):
     """Raised when simulation state becomes unstable (NaNs, Exploding velocities)."""
     pass
 
+
+def _per_particle_field_cpu(field: torch.Tensor, n_particles: int) -> torch.Tensor:
+    """Collapse batched MPM particle fields to shape (n_particles,) on CPU."""
+    t = field.detach().cpu()
+    if t.numel() == 0:
+        return t.reshape(0)
+    if t.dim() == 1 and t.shape[0] == n_particles:
+        return t
+    if t.dim() >= 2 and t.shape[-1] == n_particles:
+        return t.reshape(-1, n_particles)[0]
+    if t.dim() >= 2 and t.shape[1] == n_particles:
+        return t[0].reshape(n_particles)
+    flat = t.reshape(-1)
+    return flat[:n_particles]
+
+
 # Configuration constants
 MAX_CHECKPOINTS = 50  # Maximum number of checkpoints to retain
 VERBOSE_LOGGING = True  # Enable per-frame logging during strike (set to False to disable)
@@ -1151,7 +1167,10 @@ class StrikeController:
             with self._profile("teleop_unified_recon"):
                 self.physics_mesher.update_live(should_reconstruct=True, is_deforming=True)
 
-        # 5. Render Update
+        # 5. Render Update — sync rigid/MPM visual state every step; heavy overlays only when capped.
+        if self.env.scene.visualizer:
+            self.env.scene.visualizer.update_visual_states(force_render=True)
+
         if self.env.scene.visualizer and _will_render:
             with self._profile("teleop_render"):
                 if self._mesh_overlay is not None:
@@ -1603,41 +1622,58 @@ class StrikeController:
             # We download the fields to CPU to find the exact particle
             pos_cpu = pos.cpu()
             vels_cpu = vels.cpu()
-            t_cpu = temp.cpu() if temp is not None else None
+            n_particles = pos_cpu.shape[1] if pos_cpu.dim() >= 2 else pos_cpu.shape[0]
+            t_cpu = (
+                _per_particle_field_cpu(temp, n_particles)
+                if temp is not None
+                else None
+            )
             
             # Find the indices of the failing particles based on the triggers
-            mask = torch.zeros(pos_cpu.shape[1], dtype=torch.bool, device='cpu')
+            mask = torch.zeros(n_particles, dtype=torch.bool, device="cpu")
             
             if has_nan.item():
-                mask |= torch.isnan(vels_cpu).any(dim=-1).squeeze(0)
-                mask |= torch.isnan(pos_cpu).any(dim=-1).squeeze(0)
-                if temp is not None: mask |= torch.isnan(temp.cpu()).squeeze(-1).squeeze(0)
+                if vels_cpu.dim() >= 2:
+                    mask |= torch.isnan(vels_cpu).any(dim=-1).reshape(-1)[:n_particles]
+                    mask |= torch.isnan(pos_cpu).any(dim=-1).reshape(-1)[:n_particles]
+                else:
+                    mask |= torch.isnan(vels_cpu).reshape(-1)[:n_particles]
+                    mask |= torch.isnan(pos_cpu).reshape(-1)[:n_particles]
+                if t_cpu is not None:
+                    mask |= torch.isnan(t_cpu)
                 
             if has_out_of_bounds.item():
                 ub = upper_bounds.cpu()
                 lb = lower_bounds.cpu()
-                mask |= (pos_cpu > ub).any(dim=-1).squeeze(0) | (pos_cpu < lb).any(dim=-1).squeeze(0)
+                if pos_cpu.dim() >= 2:
+                    mask |= (pos_cpu > ub).any(dim=-1).reshape(-1)[:n_particles]
+                    mask |= (pos_cpu < lb).any(dim=-1).reshape(-1)[:n_particles]
                 
             if has_super_velocity.item():
-                mask |= (vels_cpu.abs() > safety.max_particle_velocity).any(dim=-1).squeeze(0)
+                if vels_cpu.dim() >= 2:
+                    mask |= (vels_cpu.abs() > safety.max_particle_velocity).any(dim=-1).reshape(-1)[:n_particles]
                 
             if has_thermal_detonation.item() and t_cpu is not None:
-                mask |= (t_cpu > safety.max_temperature).squeeze(-1).squeeze(0) | (t_cpu < safety.min_temperature).squeeze(-1).squeeze(0)
+                mask |= (t_cpu > safety.max_temperature) | (t_cpu < safety.min_temperature)
                 
             bad_indices = torch.where(mask)[0]
             
             if len(bad_indices) > 0:
                 idx = bad_indices[0].item() # Take the first violating particle
-                p_pos = pos_cpu[0, idx].tolist()
-                p_vel = vels_cpu[0, idx].tolist()
+                if pos_cpu.dim() >= 2:
+                    p_pos = pos_cpu[0, idx].tolist()
+                    p_vel = vels_cpu[0, idx].tolist()
+                else:
+                    p_pos = pos_cpu[idx].tolist()
+                    p_vel = vels_cpu[idx].tolist()
                 
                 msg = f"\n[GROUND ZERO PROFILING]\n"
                 msg += f"Particle Index: {idx}\n"
                 msg += f"Position (X,Y,Z): [{p_pos[0]:.4f}, {p_pos[1]:.4f}, {p_pos[2]:.4f}]\n"
                 msg += f"Velocity (X,Y,Z): [{p_vel[0]:.4f}, {p_vel[1]:.4f}, {p_vel[2]:.4f}]\n"
                 
-                if temp is not None:
-                    p_temp = t_cpu[0, idx].item()
+                if t_cpu is not None:
+                    p_temp = t_cpu[idx].item()
                     msg += f"Temperature: {p_temp:.2f} K\n"
 
                 # Pull the SVD Tensor from the solver
