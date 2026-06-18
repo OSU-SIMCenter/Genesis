@@ -407,6 +407,8 @@ class TeleopPerformanceOptions(Options):
     # On WSL, unset + wsl_prefer_glx=True sets "glx" before viewer init.
     opengl_platform: Optional[str] = None
     wsl_prefer_glx: bool = True
+    # WSLg: Mesa defaults to llvmpipe without /dev/dri; D3D12 uses /dev/dxg for GPU GL.
+    wsl_use_d3d12: bool = True
 
     # Unity IO: vertex temperature kNN map every N websocket frames (idle, no heating).
     vertex_temp_io_interval: int = 3

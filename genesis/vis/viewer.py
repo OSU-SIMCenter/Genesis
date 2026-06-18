@@ -23,6 +23,17 @@ if TYPE_CHECKING:
     from genesis.vis.viewer_plugins import ViewerPlugin
 
 
+def apply_wslg_graphics_defaults() -> None:
+    """Prefer Mesa D3D12 over llvmpipe for WSLg (no /dev/dri, but /dev/dxg is present)."""
+    if sys.platform != "linux" or not os.environ.get("WSL_DISTRO_NAME"):
+        return
+    if not os.path.exists("/dev/dxg"):
+        return
+    if os.environ.get("GALLIUM_DRIVER") or os.environ.get("MESA_LOADER_DRIVER_OVERRIDE"):
+        return
+    os.environ["GALLIUM_DRIVER"] = "d3d12"
+
+
 class ViewerLock:
     def __init__(self, pyrender_viewer):
         self._pyrender_viewer = pyrender_viewer
@@ -72,6 +83,8 @@ class Viewer(RBC):
 
         # set viewer camera
         self.setup_camera()
+
+        apply_wslg_graphics_defaults()
 
         # Try all candidate onscreen OpenGL "platforms" if none is specifically requested
         opengl_platform_orig = os.environ.get("PYOPENGL_PLATFORM")

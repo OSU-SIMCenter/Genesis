@@ -55,19 +55,24 @@ def _log_opengl_info(env, cfg: TeleopOptions) -> None:
         )
 
 
-def _apply_wsl_opengl_default(cfg: TeleopOptions) -> None:
-    """Prefer GLX on WSL before Genesis viewer init when not explicitly configured."""
+def _apply_wsl_graphics_defaults(cfg: TeleopOptions) -> None:
+    """Prefer GLX + Mesa D3D12 on WSLg before Genesis viewer init."""
+    from genesis.vis.viewer import apply_wslg_graphics_defaults
+
+    if getattr(cfg.performance, "wsl_use_d3d12", True):
+        apply_wslg_graphics_defaults()
+        if os.environ.get("GALLIUM_DRIVER") == "d3d12":
+            print("WSLg detected: using Mesa GALLIUM_DRIVER=d3d12 for hardware OpenGL.")
+
     perf = cfg.performance
-    if perf.opengl_platform:
-        return
-    if not getattr(perf, "wsl_prefer_glx", True):
+    if perf.opengl_platform or not getattr(perf, "wsl_prefer_glx", True):
         return
     if not os.environ.get("WSL_DISTRO_NAME"):
         return
     if os.environ.get("PYOPENGL_PLATFORM"):
         return
     perf.opengl_platform = "glx"
-    gs.logger.info("WSL detected: defaulting opengl_platform to 'glx' (override with --opengl or cfg).")
+    print("WSL detected: defaulting opengl_platform to 'glx' (override with --opengl or cfg).")
 
 
 def _parse_teleop_args() -> argparse.Namespace:
@@ -404,7 +409,7 @@ async def main():
     print("Building simulation environment...")
     cfg = TeleopOptions()
     _apply_cli_overrides(cfg, args)
-    _apply_wsl_opengl_default(cfg)
+    _apply_wsl_graphics_defaults(cfg)
 
     # Optional OpenGL backend override. Leave unset so Genesis tries platform fallbacks.
     # Forcing "egl" on WSL often fails (no EGL device); WSLg/X11 usually needs "glx" or auto.

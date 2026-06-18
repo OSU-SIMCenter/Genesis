@@ -93,7 +93,13 @@ def default_platforms() -> tuple[str, ...]:
     return ("native",)
 
 
+def _apply_wslg_defaults() -> None:
+    if sys.platform == "linux" and os.environ.get("WSL_DISTRO_NAME") and os.path.exists("/dev/dxg"):
+        os.environ.setdefault("GALLIUM_DRIVER", "d3d12")
+
+
 def main() -> int:
+    _apply_wslg_defaults()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--platform",
@@ -109,6 +115,8 @@ def main() -> int:
     print(f"WAYLAND_DISPLAY={os.environ.get('WAYLAND_DISPLAY', '')!r}")
     print(f"WSL_DISTRO_NAME={os.environ.get('WSL_DISTRO_NAME', '')!r}")
     print(f"PYOPENGL_PLATFORM={os.environ.get('PYOPENGL_PLATFORM', 'unset')!r}")
+    print(f"GALLIUM_DRIVER={os.environ.get('GALLIUM_DRIVER', 'unset')!r}")
+    print(f"/dev/dxg exists={os.path.exists('/dev/dxg')}")
     print()
 
     platforms = tuple(args.platforms) if args.platforms else default_platforms()
@@ -136,9 +144,7 @@ def main() -> int:
     if any(row["ok"] for row in rows):
         print(
             "Only software OpenGL backends succeeded. Viewer will be slow.\n"
-            "  WSL2: update Windows GPU drivers; in WSL run:\n"
-            "    sudo apt install mesa-utils mesa-vulkan-drivers libgl1-mesa-dri\n"
-            "  try: pixi run python agforge/teleop_socket.py --opengl glx\n"
+            "  WSLg: try export GALLIUM_DRIVER=d3d12 (needs /dev/dxg)\n"
             "  or:  pixi run python agforge/teleop_socket.py --headless"
         )
         return 1
