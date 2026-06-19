@@ -15,6 +15,27 @@ import logging
 import torch
 import numpy as np
 
+
+def _is_wsl() -> bool:
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    if os.path.exists("/dev/dxg"):
+        return True
+    try:
+        return "microsoft" in os.uname().release.lower()
+    except Exception:
+        return False
+
+
+# WSLg's emulated OpenGL (Mesa -> D3D12) intermittently raises spurious/deferred
+# GL_INVALID_OPERATION errors on otherwise-legal calls (e.g. glBindFramebuffer to the
+# default framebuffer). PyOpenGL checks glGetError() after every call and escalates any
+# such hiccup into a fatal exception that kills the viewer thread mid-session. Disable
+# that per-call checking on WSL so a benign driver burp can't crash the run. Must be set
+# before PyOpenGL is imported (pulled in by `import genesis` below).
+if _is_wsl() and "PYOPENGL_ERROR_CHECKING" not in os.environ:
+    os.environ["PYOPENGL_ERROR_CHECKING"] = "0"
+
 import genesis as gs
 
 from agforge.options import TeleopOptions
