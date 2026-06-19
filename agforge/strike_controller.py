@@ -451,7 +451,7 @@ class StrikeController:
             self.thermal_enabled = enabled
                 
             if enabled:
-                gs.logger.info(f"Thermal ACTIVATED (power={self.heating_power}W)")
+                gs.logger.info(f"Thermal ACTIVATED (q_peak={self.heating_power:.3e} W/m³)")
             else:
                 gs.logger.info("Thermal FROZEN")
                 
@@ -1530,8 +1530,8 @@ class StrikeController:
                 self.reconstructor.create_reconstructed_mesh()
 
             self.thermal_enabled = ckpt.get('thermal_enabled', False)
-            self.heating_power = ckpt.get('heating_power', 2000.0)
-            self.skin_depth = ckpt.get('skin_depth', 0.02)
+            self.heating_power = ckpt.get('heating_power', self.env.cfg.heating_power)
+            self.skin_depth = ckpt.get('skin_depth', self.env.cfg.skin_depth)
             self._invalidate_induction_params_cache()
 
             # Particle positions changed on restore — rebuild surface mesh (+ SDF if heating).

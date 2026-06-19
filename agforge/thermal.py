@@ -157,8 +157,12 @@ class InductionHeater:
             pos_np = np.asarray(pos_tensor.detach().cpu().numpy().reshape(-1, 3), dtype=np.float64)
 
         with teleop_profile(scene, "teleop_induction_igl_sdf"):
-            distances, _, _, _ = igl.signed_distance(pos_np, verts, faces)
-        depth = np.abs(distances)
+            # NB: igl.signed_distance()'s returned distance scalar is exactly 3x too large in
+            # this libigl python binding (its closest points are correct, only the distance is
+            # inflated). We only need the unsigned distance (depth uses abs anyway), so use the
+            # robust point-to-mesh squared-distance instead. See thermal_skin_diagnostic.py.
+            sqr_dist = igl.point_mesh_squared_distance(pos_np, verts, faces)[0]
+        depth = np.sqrt(np.maximum(sqr_dist, 0.0))
 
         # Guard against NaN/inf from degenerate triangles: treat as deep interior (no heating).
         bad = ~np.isfinite(depth)
