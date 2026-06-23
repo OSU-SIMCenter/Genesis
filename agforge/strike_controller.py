@@ -232,6 +232,12 @@ class StrikeController:
         interval = max(1, int(getattr(perf, "mesh_io_interval_heating_idle", 1) if perf else 1))
         return (self._io_frame_counter % interval) == 0
 
+    def _can_reuse_cached_vertex_temps(self, n_verts: int) -> bool:
+        if self._io_mesh_cache is None or n_verts <= 0:
+            return False
+        prev = self._io_mesh_cache.get("vertices_temp")
+        return prev is not None and len(prev) == n_verts
+
     def _unity_mesh_stamp(self) -> int:
         if self._uses_unified_surface_mesh():
             return int(getattr(self.physics_mesher, "version", 0))
@@ -1335,7 +1341,17 @@ class StrikeController:
             with self._profile("teleop_recon_faces_copy"):
                 triangles = self.reconstructor.reconstructed_mesh.faces.copy()
             # Winding reversal is now handled by Unity after axis conversion
-            
+
+            n_verts = int(vertices_raw.shape[0]) if hasattr(vertices_raw, "shape") else 0
+            if (
+                include_vertex_temps
+                and not want_vertex_temps
+                and not self._can_reuse_cached_vertex_temps(n_verts)
+            ):
+                # Live MC during strikes changes vertex count most frames; throttling
+                # would send zeros when the cached temp array length no longer matches.
+                want_vertex_temps = True
+
             # Extract and spatial-interpolate thermal data to vertices
             if (
                 want_vertex_temps
@@ -1380,16 +1396,19 @@ class StrikeController:
                         vertices_temp = prev
 
             empty_temps = np.zeros(vertices_raw.shape[0] if hasattr(vertices_raw, 'shape') else 0, dtype=np.float32)
+            # When vertex temps are throttled (want_vertex_temps=False), vertices_temp may
+            # still hold the previous frame's kNN map — keep/send that instead of zeros.
+            out_vertex_temps = vertices_temp if include_vertex_temps else empty_temps
             self._io_mesh_cache = {
                 "vertices": vertices,
                 "triangles": triangles,
                 "particles": points,
-                "vertices_temp": vertices_temp if want_vertex_temps else None,
+                "vertices_temp": out_vertex_temps if include_vertex_temps else None,
                 "vertices_temp_empty": empty_temps,
                 "vertex_temp_frame": self._io_frame_counter,
             }
             
-            return vertices, triangles, points, vertices_temp if want_vertex_temps else empty_temps
+            return vertices, triangles, points, out_vertex_temps
 
     def _apply_transformation(self, points):
         """Return raw physics-space coordinates. Unity handles all visual transforms."""
