@@ -272,9 +272,10 @@ class AgilityForgeOptions(Options):
         alpha_worst = 44.0 / (7850.0 * 450.0)  # ~1.245e-5 m²/s
         S_T_max = dx**2 / (6.0 * alpha_worst * substep_dt)
         
-        # Use 50% of the theoretical maximum — explicit forward Euler diffusion develops
-        # checkerboard oscillations above ~60-70% of CFL, so 50% is max-reasonable-safe.
-        thermal_cfl_fraction = 0.10
+        # Fraction of the explicit-diffusion CFL limit used as the thermal time-scale. Higher =
+        # faster wall-clock thermal evolution (heating AND cooling together, so the balance is
+        # preserved); explicit FTCS develops checkerboard oscillations above ~60-70% of CFL, keep <=~0.4.
+        thermal_cfl_fraction = 0.25
         thermal_time_scale = S_T_max * thermal_cfl_fraction
         
         # Thermal CFL validation
@@ -304,8 +305,9 @@ class AgilityForgeOptions(Options):
             # Fixed-end (truncated-domain) BC: the held end conducts into the unsimulated
             # rod (Robin BC on the cut plane) instead of being exposed to air.
             enable_fixed_end_bc=True,
+            thermal_contact_conductivity=3000.0,  # W/(m²K); reduced from 5000 — less aggressive die chill on light contact
             fixed_end_x_cut=float(self.robot.cylinder_pos[0] + self.robot.cylinder_height / 2.0),
-            fixed_end_conduction_length=0.05,  # L_eff [m]; tune for gradient steepness
+            fixed_end_conduction_length=0.08,  # L_eff [m]; larger = weaker held-end conduction sink
             fixed_end_ambient=293.0,
         )
         self.env = EnvOptions(
@@ -455,8 +457,10 @@ class TeleopOptions(AgilityForgeOptions):
     # intensity at the surface directly under the coil center. It is geometry-independent: a
     # partially- and a fully-inserted billet heat at the same surface rate (no total-power
     # funneling). Deposition profile: q_peak * exp(-2*depth/skin_depth) * f_axial(x).
-    # Calibrate with the energy-balance calculator; ~2e8 gives forging temps that beat cooling.
-    heating_power: float = 2.0e8  # Peak volumetric power density [W/m^3]
+    # Physics-tuned so forging temp is reachable: radiation (~T^4) and held-end conduction cap the
+    # steady-state ceiling, so q_peak must be high enough to beat them at ~1200C. Fine-tune the
+    # exact value to the observed idle-heating plateau.
+    heating_power: float = 2.5e8  # Peak volumetric power density [W/m^3]
     skin_depth: Optional[float] = None # Calculated parametrically based on cylinder radius
     thermal_visual_fade: bool = True  # Display-only: fade held-end color to <=900K at the seam (physics unchanged)
     _slider_speed: float = 0.0034
@@ -505,6 +509,9 @@ class TeleopOptions(AgilityForgeOptions):
         # Override default
         self.strike.approach_speed = parametric_speed
         
-        # Calculate skin depth parametrically (1/3 of the cylinder radius for realistic through-heating)
-        self.skin_depth = self.robot.cylinder_radius / 3.0
+        # Skin depth = hot reference depth of a well-designed MF through-heating coil. Eddy-current
+        # power deposits as exp(-2d/delta) with delta = sqrt(rho_e/(pi*f*mu)); for hot (above-Curie,
+        # non-magnetic) steel at ~6-7 kHz this gives delta ~= R/2, i.e. the diameter/skin-depth ratio
+        # d/delta ~= 4 that Rudnev cites as the efficiency knee for billet through-heating.
+        self.skin_depth = self.robot.cylinder_radius / 2.0
 
