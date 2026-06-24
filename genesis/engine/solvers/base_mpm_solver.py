@@ -50,19 +50,22 @@ class BaseMPMSolver(Solver):
         self._default_initial_temperature = options.default_initial_temperature
         self._default_heat_capacity = options.default_heat_capacity
         
-        # Scaling applied to diffusion and convective coefficients (Thermal Fast-Forwarding)
-        self._h_contact = options.thermal_contact_conductivity * self._thermal_time_scale
-        self._h_air = options.thermal_air_conductivity * self._thermal_time_scale
-        self._alpha_thermal = options.default_thermal_diffusivity * self._thermal_time_scale
+        # Unscaled literature/base coefficients — multiplied by S_T in runtime fields.
+        self._h_contact_base = float(options.thermal_contact_conductivity)
+        self._h_air_base = float(options.thermal_air_conductivity)
+        self._alpha_thermal_base = float(options.default_thermal_diffusivity)
+        # Python mirrors (updated by set_thermal_runtime_tuning for logging / CFL hints).
+        self._h_contact = self._h_contact_base * self._thermal_time_scale
+        self._h_air = self._h_air_base * self._thermal_time_scale
+        self._alpha_thermal = self._alpha_thermal_base * self._thermal_time_scale
         self._emissivity = options.emissivity  # Stefan-Boltzmann emissivity (not pre-scaled; computed dynamically)
 
-        # Fixed-end (truncated-domain) BC. These are static config baked into the grid kernel
-        # at compile time (the `_thermal_time_scale` pattern), so they must be set before the
-        # first step. The app layer (agforge) supplies `fixed_end_x_cut` from billet geometry.
+        # Fixed-end (truncated-domain) BC. x_cut is fixed at build; L_eff / ambient / blend are runtime fields.
         self._enable_fixed_end_bc = bool(options.enable_fixed_end_bc)
         self._fixed_end_x_cut = float(options.fixed_end_x_cut)
         self._fixed_end_conduction_length = float(options.fixed_end_conduction_length)
         self._fixed_end_ambient = float(options.fixed_end_ambient)
+        self._fixed_end_blend = float(getattr(options, "fixed_end_blend", 0.0))
 
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
 
@@ -209,6 +212,23 @@ class BaseMPMSolver(Solver):
             self._induction_center.fill(0.0)
             self._induction_params.fill(0.0)
             self._induction_active.fill(0)
+
+            # Live-tunable thermal scalars (interactive tuner / teleop calibration).
+            self._rt_thermal_time_scale = qd.field(dtype=gs.qd_float, shape=())
+            self._rt_h_air = qd.field(dtype=gs.qd_float, shape=())
+            self._rt_h_contact = qd.field(dtype=gs.qd_float, shape=())
+            self._rt_alpha_thermal = qd.field(dtype=gs.qd_float, shape=())
+            self._rt_fixed_end_L_eff = qd.field(dtype=gs.qd_float, shape=())
+            self._rt_fixed_end_ambient = qd.field(dtype=gs.qd_float, shape=())
+            self._rt_fixed_end_blend = qd.field(dtype=gs.qd_float, shape=())
+            self._rt_fixed_end_sink_temp = qd.field(dtype=gs.qd_float, shape=())
+            self._sync_thermal_runtime_fields(
+                thermal_time_scale=self._thermal_time_scale,
+                fixed_end_conduction_length=self._fixed_end_conduction_length,
+                fixed_end_ambient=self._fixed_end_ambient,
+                fixed_end_blend=self._fixed_end_blend,
+                fixed_end_sink_temp=self._fixed_end_ambient,
+            )
 
     def _make_grid_cell_state_template(self):
         template = {
@@ -478,7 +498,7 @@ class BaseMPMSolver(Solver):
                     B_peak = half_length / qd.math.sqrt(half_length * half_length + radius * radius)
                     f_axial = (B * B) / qd.math.max(B_peak * B_peak, gs.EPS)
 
-                    q_eff = q_peak * self._thermal_time_scale
+                    q_eff = q_peak * self._rt_thermal_time_scale[None]
                     dT = q_eff * w_skin * f_axial * self.substep_dt / qd.math.max(rho * Cp, gs.EPS)
                     self.particles[f + 1, i_p, i_b].temp = self.particles[f + 1, i_p, i_b].temp + dT
                     self.particles[f + 1, i_p, i_b].dT_induction = self.particles[f, i_p, i_b].dT_induction + dT
@@ -1348,6 +1368,89 @@ class BaseMPMSolver(Solver):
             d = np.repeat(d[None, :], self._B, axis=0)  # broadcast to [B, n_particles]
         self._kernel_set_induction_depth(d)
 
+    def _sync_thermal_runtime_fields(
+        self,
+        *,
+        thermal_time_scale: float,
+        fixed_end_conduction_length: float,
+        fixed_end_ambient: float,
+        fixed_end_blend: float,
+        fixed_end_sink_temp: float,
+    ) -> None:
+        """Write live thermal tuning scalars to GPU fields (no recompile)."""
+        if not self._enable_thermal:
+            return
+        s_t = float(thermal_time_scale)
+        self._thermal_time_scale = s_t
+        self._h_air = self._h_air_base * s_t
+        self._h_contact = self._h_contact_base * s_t
+        self._alpha_thermal = self._alpha_thermal_base * s_t
+        self._fixed_end_conduction_length = float(fixed_end_conduction_length)
+        self._fixed_end_ambient = float(fixed_end_ambient)
+        self._fixed_end_blend = float(fixed_end_blend)
+
+        self._rt_thermal_time_scale[None] = s_t
+        self._rt_h_air[None] = self._h_air
+        self._rt_h_contact[None] = self._h_contact
+        self._rt_alpha_thermal[None] = self._alpha_thermal
+        self._rt_fixed_end_L_eff[None] = self._fixed_end_conduction_length
+        self._rt_fixed_end_ambient[None] = self._fixed_end_ambient
+        self._rt_fixed_end_blend[None] = self._fixed_end_blend
+        self._rt_fixed_end_sink_temp[None] = float(fixed_end_sink_temp)
+
+    def set_thermal_runtime_tuning(
+        self,
+        *,
+        thermal_time_scale: float | None = None,
+        fixed_end_conduction_length: float | None = None,
+        fixed_end_ambient: float | None = None,
+        fixed_end_blend: float | None = None,
+        fixed_end_sink_temp: float | None = None,
+    ) -> None:
+        """Update live thermal coefficients used by induction, diffusion, and grid-op cooling."""
+        if not self._enable_thermal:
+            return
+        self._sync_thermal_runtime_fields(
+            thermal_time_scale=(
+                float(thermal_time_scale)
+                if thermal_time_scale is not None
+                else self._thermal_time_scale
+            ),
+            fixed_end_conduction_length=(
+                float(fixed_end_conduction_length)
+                if fixed_end_conduction_length is not None
+                else self._fixed_end_conduction_length
+            ),
+            fixed_end_ambient=(
+                float(fixed_end_ambient)
+                if fixed_end_ambient is not None
+                else self._fixed_end_ambient
+            ),
+            fixed_end_blend=(
+                float(fixed_end_blend)
+                if fixed_end_blend is not None
+                else self._fixed_end_blend
+            ),
+            fixed_end_sink_temp=(
+                float(fixed_end_sink_temp)
+                if fixed_end_sink_temp is not None
+                else float(self._rt_fixed_end_sink_temp[None])
+            ),
+        )
+
+    def get_thermal_runtime_tuning(self) -> dict:
+        """Return current live thermal tuning values (Python mirrors)."""
+        return {
+            "thermal_time_scale": float(self._thermal_time_scale),
+            "fixed_end_conduction_length": float(self._fixed_end_conduction_length),
+            "fixed_end_ambient": float(self._fixed_end_ambient),
+            "fixed_end_blend": float(self._fixed_end_blend),
+            "fixed_end_sink_temp": float(self._rt_fixed_end_sink_temp[None]),
+            "h_air": float(self._h_air),
+            "h_contact": float(self._h_contact),
+            "alpha_thermal": float(self._alpha_thermal),
+        }
+
     def get_induction_uniforms_numpy(self, env_idx: int = 0):
         """Return (center_xyz, half_length, radius, q_peak, skin_depth, active) for visualization."""
         if not self._enable_thermal:
@@ -1871,7 +1974,7 @@ class BaseMPMSolver(Solver):
                                 A_contact = qd.math.pi * (radius ** 2.0)
                                 
                                 # Apply stable exponential Robin decay
-                                h_contact = self._h_contact
+                                h_contact = self._rt_h_contact[None]
                                 k_contact = (h_contact * A_contact) / (mass_thermal_real * Cp)
                                 
                                 decay_contact = qd.math.exp(-k_contact * self.substep_dt)

@@ -64,6 +64,7 @@ def update_viewer_status(
     *,
     physics_mesher: "InductionPhysicsMesher | None" = None,
     status_plugin: ViewerStatusPlugin | None = None,
+    extra_lines: list[str] | None = None,
 ) -> None:
     """Show current particle color mode and induction SDF mesh backend (top-right)."""
     from agforge.vis.temperature_particles import PARTICLE_COLOR_MODE_LABELS
@@ -93,8 +94,21 @@ def update_viewer_status(
     if mesh_label:
         prefix = "Mesh" if unified else "SDF mesh"
         lines.append(f"{prefix}: {mesh_label}")
+    if extra_lines:
+        lines.extend(extra_lines)
 
     status_plugin.set_lines(lines)
+
+
+def refresh_viewer_status_with_tuner(
+    env: "AgilityForgeEnv",
+    *,
+    tuner=None,
+    physics_mesher: "InductionPhysicsMesher | None" = None,
+) -> None:
+    """Refresh the HUD including optional thermal tuner readout."""
+    extra = tuner.format_status_lines() if tuner is not None else None
+    update_viewer_status(env, physics_mesher=physics_mesher, extra_lines=extra)
 
 
 def install_viewer_status_plugin(env: "AgilityForgeEnv") -> ViewerStatusPlugin | None:

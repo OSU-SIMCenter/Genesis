@@ -605,6 +605,8 @@ class MPMOptions(Options):
     fixed_end_x_cut: float = 0.0  # World X of the cut plane (held end). Set by the app layer.
     fixed_end_conduction_length: float = 0.05  # L_eff [m]: effective conduction length into the bulk rod
     fixed_end_ambient: float = 293.15  # Bulk/chuck temperature the cut plane drains toward [K]
+    # Blend held-end sink between ambient (0) and measured cut-face temp (1): T_sink = (1-b)*T_amb + b*T_end
+    fixed_end_blend: float = 0.0
 
     use_legacy_solver: bool = True
 

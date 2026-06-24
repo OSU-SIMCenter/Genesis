@@ -309,6 +309,7 @@ class AgilityForgeOptions(Options):
             fixed_end_x_cut=float(self.robot.cylinder_pos[0] + self.robot.cylinder_height / 2.0),
             fixed_end_conduction_length=0.08,  # L_eff [m]; larger = weaker held-end conduction sink
             fixed_end_ambient=293.0,
+            fixed_end_blend=0.0,
         )
         self.env = EnvOptions(
             num_envs=1,

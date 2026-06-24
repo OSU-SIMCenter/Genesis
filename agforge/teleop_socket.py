@@ -386,6 +386,15 @@ async def viewer_idle_loop(state: StrikeController):
                         state._viewer_idle_last_refresh = now
                         # Rigid/MPM pose sync only — avoid context.update() particle GPU pulls.
                         vis.update_visual_states(force_render=True)
+                        tuner = getattr(state, "thermal_tuner", None)
+                        if tuner is not None:
+                            from agforge.vis.status_overlay import refresh_viewer_status_with_tuner
+
+                            refresh_viewer_status_with_tuner(
+                                state.env,
+                                tuner=tuner,
+                                physics_mesher=state.physics_mesher,
+                            )
 
             await asyncio.sleep(0.02)
     except asyncio.CancelledError:
@@ -537,6 +546,10 @@ async def main():
             mesh_overlay=mesh_overlay,
             physics_mesher=shared_state.physics_mesher,
         )
+
+    from agforge.interactive.thermal_tuner import install_thermal_tuner
+
+    thermal_tuner = install_thermal_tuner(env, shared_state, register_keybinds=True)
     shared_state.robot.set_control_mode("TELEPORT")
     
     # Add dynamic attributes needed for socket loop

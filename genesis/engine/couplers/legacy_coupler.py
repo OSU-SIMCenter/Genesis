@@ -440,13 +440,16 @@ class LegacyCoupler(RBC):
                             # h_bulk = k(T) / L_eff. Same stable exponential update as air
                             # convection; replaces (not adds to) air+radiation on this face.
                             T_cell = self.mpm_solver.grid[f, I, i_b].temp
-                            T_bulk = self.mpm_solver._fixed_end_ambient
+                            T_amb = self.mpm_solver._rt_fixed_end_ambient[None]
+                            blend = self.mpm_solver._rt_fixed_end_blend[None]
+                            T_end = self.mpm_solver._rt_fixed_end_sink_temp[None]
+                            T_bulk = (1.0 - blend) * T_amb + blend * T_end
                             mass_thermal_real = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
                             Cp = self.mpm_solver.get_steel_cp(T_cell)
                             A_cut = self.mpm_solver.dx ** 2
                             k_local = self.mpm_solver.get_steel_thermal_conductivity(T_cell)
-                            h_bulk = k_local / self.mpm_solver._fixed_end_conduction_length
-                            h_bulk_scaled = h_bulk * self.mpm_solver._thermal_time_scale  # match air pre-scaling
+                            h_bulk = k_local / self.mpm_solver._rt_fixed_end_L_eff[None]
+                            h_bulk_scaled = h_bulk * self.mpm_solver._rt_thermal_time_scale[None]  # match air pre-scaling
                             k_bulk = (h_bulk_scaled * A_cut) / (mass_thermal_real * Cp)
                             decay_bulk = qd.math.exp(-k_bulk * self.mpm_solver.substep_dt)
                             dT_bulk = (T_cell - T_bulk) * (1.0 - decay_bulk)
@@ -462,7 +465,7 @@ class LegacyCoupler(RBC):
                             A_cell = self.mpm_solver.dx ** 2  # one cell face area
 
                             # --- Air Convection: Newton's Law of Cooling ---
-                            h_air = self.mpm_solver._h_air  # already scaled by thermal_time_scale
+                            h_air = self.mpm_solver._rt_h_air[None]  # already scaled by thermal_time_scale
                             k_air = (h_air * A_cell) / (mass_thermal_real * Cp)
                             decay_air = qd.math.exp(-k_air * self.mpm_solver.substep_dt)
                             dT_conv = (T_cell - T_amb) * (1.0 - decay_air)
@@ -477,7 +480,7 @@ class LegacyCoupler(RBC):
                             sigma = 5.67e-8
                             h_rad = emissivity * sigma * (T_cell_after_air * T_cell_after_air + T_amb * T_amb) * (T_cell_after_air + T_amb)
                             # Scale by thermal_time_scale (h_air is pre-scaled, radiation must be scaled dynamically)
-                            h_rad_scaled = h_rad * self.mpm_solver._thermal_time_scale
+                            h_rad_scaled = h_rad * self.mpm_solver._rt_thermal_time_scale[None]
                             k_rad = (h_rad_scaled * A_cell) / (mass_thermal_real * Cp)
                             decay_rad = qd.math.exp(-k_rad * self.mpm_solver.substep_dt)
                             dT_rad = (T_cell_after_air - T_amb) * (1.0 - decay_rad)
@@ -1106,7 +1109,7 @@ class LegacyCoupler(RBC):
                     k_local = self.mpm_solver.get_steel_thermal_conductivity(T_C)
                     Cp_local = self.mpm_solver.get_steel_cp(T_C)
                     rho = gs.qd_float(7850.0)  # kg/m^3 (AISI 4340 steel density)
-                    alpha = (k_local / (rho * Cp_local)) * self.mpm_solver._thermal_time_scale
+                    alpha = (k_local / (rho * Cp_local)) * self.mpm_solver._rt_alpha_thermal[None]
                     dx = self.mpm_solver.dx
                     dt = self.mpm_solver.substep_dt
                     

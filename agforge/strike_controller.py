@@ -885,6 +885,10 @@ class StrikeController:
         # 3b. Thermodynamics
         frozen_temps_tensor = None
         _is_striking = self.strike_state != StrikeState.IDLE
+        tuner = getattr(self, "thermal_tuner", None)
+        if tuner is not None:
+            with self._profile("teleop_thermal_tuner"):
+                tuner.on_pre_physics_step()
         if self.thermal_enabled:
             with self._profile("teleop_heating"):
                 if self.heater is None:
