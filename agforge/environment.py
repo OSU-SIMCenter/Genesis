@@ -268,6 +268,8 @@ class AgilityForgeEnv:
 
     def _setup_entities(self):
         """Creates the MPM object and the target shape visual guide."""
+        self._target_bounds_entity = None
+        self._fixed_region_guide_entity = None
         custom_sampler = None
         if self.cfg.env.particle_sampler != "default":
             custom_sampler = self.cfg.env.particle_sampler
@@ -294,17 +296,19 @@ class AgilityForgeEnv:
             surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
         )
         if self.cfg.env.show_target_bounds:
-            self.scene.add_entity(
+            self._target_bounds_entity = self.scene.add_entity(
                 morph=gs.morphs.Box(size=(self.cfg.robot.target_shape_bounds[1] - self.cfg.robot.target_shape_bounds[0]).cpu(), pos=((self.cfg.robot.target_shape_bounds[0] + self.cfg.robot.target_shape_bounds[1]) / 2).cpu(), fixed=True, collision=False),
                 surface=gs.surfaces.Default(color=(1.0, 0.0, 0.0, 0.4)),
             )
+        else:
+            self._target_bounds_entity = None
 
     def _add_visual_guides(self):
         """Adds a non-physical box to visualize the fixed particle region."""
         bounds = self.cfg.env.fixed_region_bounds
         box_size = (bounds[:, 1] - bounds[:, 0]).cpu()
         box_pos = bounds.mean(dim=1).cpu()
-        self.scene.add_entity(
+        self._fixed_region_guide_entity = self.scene.add_entity(
             morph=gs.morphs.Box(size=box_size, pos=box_pos, fixed=True, collision=False),
             surface=gs.surfaces.Default(color=(0.1, 0.1, 0.6, 0.4)),
         )

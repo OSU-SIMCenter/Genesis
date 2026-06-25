@@ -108,6 +108,9 @@ def refresh_viewer_status_with_tuner(
 ) -> None:
     """Refresh the HUD including optional thermal tuner readout."""
     extra = tuner.format_status_lines() if tuner is not None else None
+    guides = getattr(env, "_visual_guides", None)
+    if guides is not None:
+        extra = (extra or []) + [guides.status_line()]
     update_viewer_status(env, physics_mesher=physics_mesher, extra_lines=extra)
 
 

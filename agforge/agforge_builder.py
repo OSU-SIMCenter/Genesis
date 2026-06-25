@@ -69,7 +69,7 @@ class RobotXMLGenerator:
       <inertial pos="0 0 0" mass="1e-7" diaginertia="1e-7 1e-7 1e-7"/>
 
       <!-- Translucent Induction Coil visualizer linked safely to the slider arm without physics collision -->
-      <geom type="cylinder" size="{self.coil_radius:.4f} {self.coil_length/2.0:.4f}" pos="{self.coil_offset_x:.4f} 0 {self.hinge_pos_z:.4f}" euler="0 90 0" rgba="1 0.5 0.0 0.4" contype="0" conaffinity="0"/>
+      <geom name="induction_coil_visual" type="cylinder" size="{self.coil_radius:.4f} {self.coil_length/2.0:.4f}" pos="{self.coil_offset_x:.4f} 0 {self.hinge_pos_z:.4f}" euler="0 90 0" rgba="1 0.5 0.0 0.4" contype="0" conaffinity="0"/>
 
       <body name="hinge_cylinder" pos="0 0 {self.hinge_pos_z:.4f}">
         <joint name="x_hinge" type="hinge" axis="1 0 0"/>
