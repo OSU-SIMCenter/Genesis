@@ -23,7 +23,7 @@ from agforge.profiling_util import teleop_profile
 if TYPE_CHECKING:
     from agforge.environment import AgilityForgeEnv
 
-N_BUCKETS = 8
+N_BUCKETS = 32  # inferno color bands for particle rendering (was 8)
 OFF_SCREEN = np.array([0.0, 0.0, -0.05])
 
 PARTICLE_COLOR_MODES = ("temperature", "induction_depth", "skin_weight", "q_ind")
@@ -85,6 +85,7 @@ class TemperatureParticleRenderer:
         temp_max: float = 1450.0,
         bucket_max_sizes: np.ndarray | None = None,
         cmap_name: str = "inferno",
+        n_buckets: int = N_BUCKETS,
     ):
         from genesis.ext import pyrender
         import genesis.utils.mesh as mu
@@ -96,24 +97,24 @@ class TemperatureParticleRenderer:
         self._n_particles = n_particles
         self._temp_min = temp_min
         self._temp_max = temp_max
-        self._n_buckets = N_BUCKETS
-        self._colors = _bucket_colors(cmap_name, N_BUCKETS)
+        self._n_buckets = max(2, int(n_buckets))
+        self._colors = _bucket_colors(cmap_name, self._n_buckets)
 
         if bucket_max_sizes is None:
             # Live teleop: any single bucket may hold ALL particles when temperature is
             # uniform (e.g. room-temp billet → bucket 0 only). Start with a modest
             # allocation; _write_bucket_poses grows buckets on demand.
-            base = max(256, int(np.ceil(n_particles / N_BUCKETS)))
-            bucket_max_sizes = np.full(N_BUCKETS, base, dtype=np.int32)
+            base = max(256, int(np.ceil(n_particles / self._n_buckets)))
+            bucket_max_sizes = np.full(self._n_buckets, base, dtype=np.int32)
         else:
             bucket_max_sizes = np.asarray(bucket_max_sizes, dtype=np.int32)
 
         self._bucket_max = bucket_max_sizes.tolist()
         self._bucket_nodes: list = []
-        self._bucket_pose_buffers: list[np.ndarray | None] = [None] * N_BUCKETS
+        self._bucket_pose_buffers: list[np.ndarray | None] = [None] * self._n_buckets
         self._remove_default_nodes()
 
-        for b in range(N_BUCKETS):
+        for b in range(self._n_buckets):
             n_slots = int(self._bucket_max[b])
             if n_slots <= 0:
                 self._bucket_nodes.append(None)
@@ -154,6 +155,7 @@ class TemperatureParticleRenderer:
         ctx = env.scene.visualizer._context
         mpm_entity = env.mpm_entity
         radius = env.scene.sim.mpm_solver.particle_radius
+        n_buckets = int(getattr(env.cfg.general, "particle_color_buckets", N_BUCKETS) or N_BUCKETS)
         return cls(
             ctx,
             mpm_entity,
@@ -162,6 +164,7 @@ class TemperatureParticleRenderer:
             temp_min=temp_min,
             temp_max=temp_max,
             bucket_max_sizes=bucket_max_sizes,
+            n_buckets=n_buckets,
         )
 
     def _sphere_subdivisions(self, env: "AgilityForgeEnv | None" = None) -> int:
@@ -173,6 +176,21 @@ class TemperatureParticleRenderer:
 
     def _draw_radius(self) -> float:
         return self._physics_radius * self._render_scale
+
+    def _viewer_lock(self, env: "AgilityForgeEnv | None" = None):
+        target = env or self._env
+        if target is None or target.scene.visualizer is None:
+            from contextlib import nullcontext
+
+            return nullcontext()
+        return target.scene.visualizer.viewer_lock
+
+    def _safe_remove_node(self, node) -> None:
+        if node is None:
+            return
+        scene = self._ctx._scene
+        if scene.has_node(node):
+            self._ctx.remove_node(node)
 
     def render_scale_label(self) -> str:
         return "normal" if self._render_scale >= 0.99 else "small"
@@ -496,9 +514,8 @@ class TemperatureParticleRenderer:
         from genesis.ext import pyrender
         import genesis.utils.mesh as mu
 
+        target_env = env or self._env
         old = self._bucket_nodes[b]
-        if old is not None:
-            self._ctx.remove_node(old)
         mesh = mu.create_sphere(
             self._draw_radius(),
             subdivisions=self._sphere_subdivisions(env),
@@ -507,7 +524,9 @@ class TemperatureParticleRenderer:
         tfs = np.tile(np.eye(4), (n_slots, 1, 1))
         tfs[:, :3, 3] = OFF_SCREEN
         pr_mesh = pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs)
-        self._bucket_nodes[b] = self._ctx.add_node(pr_mesh)
+        with self._viewer_lock(target_env):
+            self._safe_remove_node(old)
+            self._bucket_nodes[b] = self._ctx.add_node(pr_mesh)
         self._bucket_max[b] = n_slots
         self._bucket_pose_buffers[b] = tfs
 
@@ -824,6 +843,7 @@ def register_particle_color_keybinds(
     *,
     mesh_overlay=None,
     physics_mesher=None,
+    controller=None,
 ) -> None:
     """Bind G / Shift+G in the Genesis viewer to cycle particle color modes."""
     if renderer is None:
@@ -855,9 +875,13 @@ def register_particle_color_keybinds(
         _refresh_viewer()
 
     def _toggle_size():
-        scale = renderer.cycle_render_scale(env)
-        label = renderer.render_scale_label()
-        gs.logger.info(f"Particle render size: {label} (scale={scale:.2f})")
+        if controller is not None:
+            controller.request_particle_scale_toggle()
+            gs.logger.info("Particle render size toggle queued")
+        else:
+            scale = renderer.cycle_render_scale(env)
+            label = renderer.render_scale_label()
+            gs.logger.info(f"Particle render size: {label} (scale={scale:.2f})")
         _refresh_viewer()
 
     def _toggle_simple_color():

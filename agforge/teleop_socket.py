@@ -128,6 +128,11 @@ def _parse_teleop_args() -> argparse.Namespace:
         action="store_true",
         help="Do not auto-select GLX on WSL when --opengl is unset.",
     )
+    parser.add_argument(
+        "--no-thermal-tuner",
+        action="store_true",
+        help="Disable live thermal tuning HUD/keybinds (restores pre-tuner performance).",
+    )
     return parser.parse_args()
 
 
@@ -146,6 +151,8 @@ def _apply_cli_overrides(cfg: TeleopOptions, args: argparse.Namespace) -> None:
     if args.viewer_res_scale is not None:
         scale = float(args.viewer_res_scale)
         cfg.performance.viewer_res_scale = scale
+    if args.no_thermal_tuner:
+        cfg.general.interactive_thermal_tuner = False
         w, h = cfg.viewer.res if cfg.viewer.res is not None else (1280, 720)
         cfg.viewer.res = (
             max(320, int(w * scale)),
@@ -239,12 +246,15 @@ async def _send_status_heartbeat(websocket, state: StrikeController) -> None:
             await _send_ws_message(websocket, header)
 
 
+def _default_include_vertex_temps(state: StrikeController) -> bool:
+    """Vertex temperature coloring is independent of heating/cooling physics toggle."""
+    return bool(getattr(state.env.cfg.mpm, "enable_thermal", False))
+
+
 async def _send_state_update(websocket, state: StrikeController, *, include_vertex_temps=None):
     """Pack and send the current simulation state to the Unity client."""
     if include_vertex_temps is None:
-        include_vertex_temps = bool(
-            getattr(state, "thermal_enabled", False) or getattr(state, "pending_mesh_send", False)
-        )
+        include_vertex_temps = _default_include_vertex_temps(state)
 
     vertices, triangles, particles, vertices_temp = await state.update_and_get_recon_data(
         include_vertex_temps=include_vertex_temps,
@@ -271,7 +281,7 @@ async def _send_state_update(websocket, state: StrikeController, *, include_vert
             "particles": p_count,
             "temperatures": temp_count,
         },
-        thermal_enabled=include_vertex_temps,
+        thermal_enabled=bool(getattr(state, "thermal_enabled", False)),
     )
     binary_body = v_flat.tobytes() + t_flat.tobytes() + p_flat.tobytes() + temp_flat.tobytes()
     with state._profile("teleop_io_websocket_pack_send"):
@@ -300,6 +310,9 @@ async def simulation_loop(websocket, state: StrikeController):
             should_send = should_step or pending_send
             
             if not should_send:
+                tuner = getattr(state, "thermal_tuner", None)
+                if tuner is not None:
+                    tuner.flush_pending()
                 if getattr(state, "is_client_connected", False):
                     now = time.monotonic()
                     last = getattr(state, "_last_idle_broadcast_mono", 0.0)
@@ -378,15 +391,17 @@ async def viewer_idle_loop(state: StrikeController):
         while True:
             with state._profile("teleop_viewer_idle_tick"):
                 await state.process_pending_physics_rebuild()
+                state.process_pending_particle_scale_toggle()
+                tuner = getattr(state, "thermal_tuner", None)
+                if tuner is not None:
+                    tuner.flush_pending()
                 vis = getattr(state.env.scene, "visualizer", None)
                 if vis and vis._viewer is not None:
                     now = time.monotonic()
                     last = getattr(state, "_viewer_idle_last_refresh", 0.0)
                     if now - last >= viewer_refresh_interval_s:
                         state._viewer_idle_last_refresh = now
-                        # Rigid/MPM pose sync only — avoid context.update() particle GPU pulls.
                         vis.update_visual_states(force_render=True)
-                        tuner = getattr(state, "thermal_tuner", None)
                         if tuner is not None:
                             from agforge.vis.status_overlay import refresh_viewer_status_with_tuner
 
@@ -545,11 +560,16 @@ async def main():
             temp_renderer,
             mesh_overlay=mesh_overlay,
             physics_mesher=shared_state.physics_mesher,
+            controller=shared_state,
         )
 
     from agforge.interactive.thermal_tuner import install_thermal_tuner
 
-    thermal_tuner = install_thermal_tuner(env, shared_state, register_keybinds=True)
+    install_thermal_tuner(env, shared_state, register_keybinds=True)
+
+    from agforge.vis.visual_guides import install_visual_guides
+
+    install_visual_guides(env, register_keybinds=True)
     shared_state.robot.set_control_mode("TELEPORT")
     
     # Add dynamic attributes needed for socket loop

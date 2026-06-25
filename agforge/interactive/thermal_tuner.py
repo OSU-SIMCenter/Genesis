@@ -3,14 +3,56 @@
 from __future__ import annotations
 
 import copy
+import time
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 if TYPE_CHECKING:
     from agforge.environment import AgilityForgeEnv
     from agforge.strike_controller import StrikeController
+
+# HUD temperature readout interval (seconds). Held-end sink updates run only when blend > 0.
+_TELEMETRY_INTERVAL_S = 0.5
+
+_THERMAL_TUNER_KEY_PAIRS = [
+    ("dec_q_peak", "_1", "q_peak", -1.0),
+    ("inc_q_peak", "_2", "q_peak", 1.0),
+    ("dec_skin", "_3", "skin_depth", -1.0),
+    ("inc_skin", "_4", "skin_depth", 1.0),
+    ("dec_coil_len", "_5", "coil_length", -1.0),
+    ("inc_coil_len", "_6", "coil_length", 1.0),
+    ("dec_coil_r", "_7", "coil_radius", -1.0),
+    ("inc_coil_r", "_8", "coil_radius", 1.0),
+    ("dec_st", "_9", "thermal_time_scale", -1.0),
+    ("inc_st", "_0", "thermal_time_scale", 1.0),
+    ("dec_leff", "MINUS", "fixed_end_L_eff", -1.0),
+    ("inc_leff", "EQUAL", "fixed_end_L_eff", 1.0),
+    ("dec_blend", "BRACKETLEFT", "fixed_end_blend", -1.0),
+    ("inc_blend", "BRACKETRIGHT", "fixed_end_blend", 1.0),
+    ("dec_off", "SEMICOLON", "coil_offset_x", -1.0),
+    ("inc_off", "APOSTROPHE", "coil_offset_x", 1.0),
+]
+# Shift+number row sends punctuation on US keyboards (!@#...), not the digit + shift mod.
+_THERMAL_TUNER_FINE_KEY_NAMES = {
+    "_1": "EXCLAMATION",
+    "_2": "AT",
+    "_3": "HASH",
+    "_4": "DOLLAR",
+    "_5": "PERCENT",
+    "_6": "ASCIICIRCUM",
+    "_7": "AMPERSAND",
+    "_8": "ASTERISK",
+    "_9": "PARENLEFT",
+    "_0": "PARENRIGHT",
+    "MINUS": "UNDERSCORE",
+    "EQUAL": "PLUS",
+    "BRACKETLEFT": "BRACELEFT",
+    "BRACKETRIGHT": "BRACERIGHT",
+    "SEMICOLON": "COLON",
+    "APOSTROPHE": "DOUBLEQUOTE",
+}
 
 
 @dataclass
@@ -71,6 +113,11 @@ class ThermalTuner:
         self.state = self._state_from_config()
         self._saved: ThermalTunerState | None = None
         self._dirty = True
+        self._cached_temps: dict[str, float] = {"mean_k": 0.0, "max_k": 0.0, "min_k": 0.0}
+        self._cached_held_k: float = 0.0
+        self._last_telemetry_mono: float = 0.0
+        # Baseline snapshot so X can restore without pressing Z first.
+        self.save_preset()
 
     def _state_from_config(self) -> ThermalTunerState:
         cfg = self.controller.env.cfg
@@ -91,12 +138,12 @@ class ThermalTuner:
     def save_preset(self) -> None:
         self._saved = copy.deepcopy(self.state)
 
-    def restore_preset(self) -> None:
+    def restore_preset(self) -> bool:
         if self._saved is None:
-            return
+            return False
         self.state = copy.deepcopy(self._saved)
         self._dirty = True
-        self.apply(force=True)
+        return True
 
     def mark_dirty(self) -> None:
         self._dirty = True
@@ -126,16 +173,11 @@ class ThermalTuner:
             raise ValueError(f"Unknown thermal tuner field: {field}")
 
         self._dirty = True
-        self.apply()
 
-    def apply(self, *, force: bool = False) -> None:
-        if not force and not self._dirty:
-            return
-        self._dirty = False
-
+    def _apply_config(self) -> None:
+        """CPU-side mirrors only (safe from viewer keybind thread)."""
         ctrl = self.controller
         cfg = ctrl.env.cfg
-        solver = ctrl.env.scene.sim.mpm_solver
         s = self.state
 
         ctrl.heating_power = s.q_peak
@@ -150,8 +192,14 @@ class ThermalTuner:
         cfg.mpm.fixed_end_ambient = s.fixed_end_ambient
         cfg.mpm.fixed_end_blend = s.fixed_end_blend
 
+    def _apply_gpu(self) -> None:
+        """Push live scalars into Taichi fields (sim thread only)."""
+        ctrl = self.controller
+        solver = ctrl.env.scene.sim.mpm_solver
+        s = self.state
+
         sink_temp = (
-            measure_held_end_particle_temp(ctrl)
+            self._cached_held_k
             if s.fixed_end_blend > 0.0
             else s.fixed_end_ambient
         )
@@ -164,20 +212,58 @@ class ThermalTuner:
                 fixed_end_sink_temp=sink_temp,
             )
 
-        ctrl._last_induction_key = None
+        ctrl._invalidate_induction_params_cache()
+
+    def apply(self, *, force: bool = False) -> None:
+        if not force and not self._dirty:
+            return
+        self._dirty = False
+        self._apply_config()
+        self._apply_gpu()
+
+    def refresh_held_end_temp(self) -> None:
+        """Sample held-end temperature for blend sink (sim thread only)."""
+        self._cached_held_k = measure_held_end_particle_temp(self.controller)
+
+    def refresh_billet_temps(self, *, force: bool = False) -> None:
+        """Throttled billet stats for the HUD (sim thread only)."""
+        now = time.monotonic()
+        if not force and (now - self._last_telemetry_mono) < _TELEMETRY_INTERVAL_S:
+            return
+        self._last_telemetry_mono = now
+        self._cached_temps = measure_billet_temps(self.controller)
 
     def on_pre_physics_step(self) -> None:
-        """Refresh held-end sink temp and push any pending parameter changes."""
+        """Push pending tuning and refresh telemetry at a safe rate."""
         if self.state.fixed_end_blend > 0.0:
+            self.refresh_held_end_temp()
             self._dirty = True
+        if self._dirty:
+            self.apply()
+        self.refresh_billet_temps()
+        guides = getattr(self.controller.env, "_visual_guides", None)
+        if guides is not None:
+            guides.sync_coil_visual_if_needed()
+
+    def flush_pending(self) -> None:
+        """Apply queued tuning on the asyncio/sim thread when physics is idle."""
+        if not self._dirty:
+            return
+        if self.state.fixed_end_blend > 0.0:
+            self.refresh_held_end_temp()
         self.apply()
+        self.refresh_billet_temps()
+        guides = getattr(self.controller.env, "_visual_guides", None)
+        if guides is not None:
+            guides.sync_coil_visual_if_needed()
 
     def format_status_lines(self) -> list[str]:
         s = self.state
-        temps = measure_billet_temps(self.controller)
-        held = measure_held_end_particle_temp(self.controller)
+        temps = self._cached_temps
+        held = self._cached_held_k
+        pending = " *" if self._dirty else ""
         return [
-            f"Thermal tuner  T mean/max {temps['mean_k']:.0f}/{temps['max_k']:.0f} K  held {held:.0f} K",
+            f"Thermal tuner{pending}  T mean/max {temps['mean_k']:.0f}/{temps['max_k']:.0f} K  held {held:.0f} K",
             (
                 f"q_peak {s.q_peak:.2e}  d {s.skin_depth*1e3:.2f} mm  "
                 f"S_T {s.thermal_time_scale:.0f}"
@@ -192,10 +278,19 @@ class ThermalTuner:
     def print_status(self) -> None:
         import genesis as gs
 
+        self.refresh_billet_temps(force=True)
+        if self.state.fixed_end_blend > 0.0:
+            self.refresh_held_end_temp()
         lines = self.format_status_lines()
         for line in lines:
             gs.logger.info(line)
         gs.logger.info(f"state={asdict(self.state)}")
+
+
+def _thermal_key(name: str):
+    from genesis.vis.keybindings import Key
+
+    return getattr(Key, name)
 
 
 def register_thermal_tuner_keybinds(
@@ -209,67 +304,64 @@ def register_thermal_tuner_keybinds(
         return
 
     import genesis as gs
-    from genesis.vis.keybindings import Key, KeyAction, KeyMod, Keybind
+    from genesis.vis.keybindings import Key, KeyAction, Keybind
 
     viewer = vis.viewer
 
-    def _refresh():
+    def _refresh_hud():
         from agforge.vis.status_overlay import refresh_viewer_status_with_tuner
 
         refresh_viewer_status_with_tuner(env, tuner=tuner)
-        if vis is not None:
-            vis.update(force=False, auto=True)
+
+    def _restore_preset():
+        if not tuner.restore_preset():
+            gs.logger.warning("thermal preset restore: nothing saved (press Z to snapshot first)")
+            return
+        tuner._apply_config()
+        gs.logger.info("thermal preset restored (queued)")
+        _refresh_hud()
 
     def _bind(field: str, delta: float):
         def _cb():
             tuner.adjust(field, delta, fine=False)
-            val = getattr(tuner.state, field if field != "fixed_end_L_eff" else "fixed_end_L_eff", None)
-            gs.logger.info(f"thermal tuner: {field} = {val}")
-            _refresh()
+            val = getattr(tuner.state, field, None)
+            gs.logger.info(f"thermal tuner: {field} = {val} (queued)")
+            tuner._apply_config()
+            _refresh_hud()
 
         return _cb
 
     def _bind_fine(field: str, delta: float):
         def _cb():
             tuner.adjust(field, delta, fine=True)
-            gs.logger.info(f"thermal tuner (fine): {field}")
-            _refresh()
+            val = getattr(tuner.state, field, None)
+            gs.logger.info(f"thermal tuner (fine): {field} = {val} (queued)")
+            tuner._apply_config()
+            _refresh_hud()
 
         return _cb
 
-    pairs = [
-        ("dec_q_peak", Key.NUM_1, "q_peak", -1.0),
-        ("inc_q_peak", Key.NUM_2, "q_peak", 1.0),
-        ("dec_skin", Key.NUM_3, "skin_depth", -1.0),
-        ("inc_skin", Key.NUM_4, "skin_depth", 1.0),
-        ("dec_coil_len", Key.NUM_5, "coil_length", -1.0),
-        ("inc_coil_len", Key.NUM_6, "coil_length", 1.0),
-        ("dec_coil_r", Key.NUM_7, "coil_radius", -1.0),
-        ("inc_coil_r", Key.NUM_8, "coil_radius", 1.0),
-        ("dec_st", Key.NUM_9, "thermal_time_scale", -1.0),
-        ("inc_st", Key.NUM_0, "thermal_time_scale", 1.0),
-        ("dec_leff", Key.MINUS, "fixed_end_L_eff", -1.0),
-        ("inc_leff", Key.EQUAL, "fixed_end_L_eff", 1.0),
-        ("dec_blend", Key.BRACKETLEFT, "fixed_end_blend", -1.0),
-        ("inc_blend", Key.BRACKETRIGHT, "fixed_end_blend", 1.0),
-        ("dec_off", Key.SEMICOLON, "coil_offset_x", -1.0),
-        ("inc_off", Key.APOSTROPHE, "coil_offset_x", 1.0),
-    ]
-
     keybinds = [
-        Keybind(name, key, key_action=KeyAction.PRESS, callback=_bind(field, delta), allow_overload=True)
-        for name, key, field, delta in pairs
+        Keybind(
+            name,
+            _thermal_key(key_name),
+            key_action=KeyAction.PRESS,
+            callback=_bind(field, delta),
+            allow_overload=True,
+            show_in_help=False,
+        )
+        for name, key_name, field, delta in _THERMAL_TUNER_KEY_PAIRS
     ]
     keybinds.extend(
         Keybind(
             f"fine_{name}",
-            key,
-            key_mods=(KeyMod.SHIFT,),
+            _thermal_key(_THERMAL_TUNER_FINE_KEY_NAMES[key_name]),
             key_action=KeyAction.PRESS,
             callback=_bind_fine(field, delta),
             allow_overload=True,
+            show_in_help=False,
         )
-        for name, key, field, delta in pairs
+        for name, key_name, field, delta in _THERMAL_TUNER_KEY_PAIRS
     )
     keybinds.extend(
         [
@@ -277,30 +369,30 @@ def register_thermal_tuner_keybinds(
                 "thermal_print",
                 Key.P,
                 key_action=KeyAction.PRESS,
-                callback=lambda: (tuner.print_status(), _refresh()),
+                callback=lambda: (tuner.print_status(), _refresh_hud()),
                 allow_overload=True,
+                show_in_help=False,
             ),
             Keybind(
                 "thermal_save_preset",
                 Key.Z,
                 key_action=KeyAction.PRESS,
-                callback=lambda: (tuner.save_preset(), gs.logger.info("thermal preset saved"), _refresh()),
+                callback=lambda: (tuner.save_preset(), gs.logger.info("thermal preset saved"), _refresh_hud()),
                 allow_overload=True,
+                show_in_help=False,
             ),
             Keybind(
                 "thermal_restore_preset",
                 Key.X,
                 key_action=KeyAction.PRESS,
-                callback=lambda: (tuner.restore_preset(), gs.logger.info("thermal preset restored"), _refresh()),
+                callback=_restore_preset,
                 allow_overload=True,
+                show_in_help=False,
             ),
         ]
     )
 
     viewer.register_keybinds(*keybinds, overwrite=False)
-    from agforge.vis.status_overlay import _refresh_keybind_help
-
-    _refresh_keybind_help(env)
 
 
 def install_thermal_tuner(
@@ -314,8 +406,11 @@ def install_thermal_tuner(
         return None
     if not getattr(env.cfg.mpm, "enable_thermal", False):
         return None
+    if not getattr(env.cfg.general, "interactive_thermal_tuner", False):
+        return None
 
     tuner = ThermalTuner(controller)
+    tuner.refresh_billet_temps(force=True)
     tuner.apply(force=True)
     controller.thermal_tuner = tuner
 

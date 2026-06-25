@@ -97,8 +97,12 @@ class GeneralOptions(Options):
     particle_render_scale_small: float = 0.3
     # Runtime toggle: plain metal spheres (skip scalar coloring / bucketing work).
     particle_simple_color: bool = False
+    # Number of inferno color buckets for particle temperature visualization.
+    particle_color_buckets: int = 32
     # Fraction of active particles drawn in the viewer (physics unchanged).
     particle_render_fraction: float = 1.0
+    # Live thermal tuning HUD + keybinds in the Genesis viewer (adds GPU telemetry overhead).
+    interactive_thermal_tuner: bool = False
 
 class ReconstructionOptions(Options):
     """Parameters for surface reconstruction."""
@@ -483,6 +487,8 @@ class TeleopOptions(AgilityForgeOptions):
     def model_post_init(self, __context: any) -> None:
         # Initialize base options (Sim, Robot, MPM, etc.)
         super().model_post_init(__context)
+
+        self.general.interactive_thermal_tuner = True
 
         perf = self.performance
         if perf.viewer_res_scale not in (None, 1.0):

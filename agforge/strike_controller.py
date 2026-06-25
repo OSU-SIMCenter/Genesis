@@ -102,6 +102,7 @@ class StrikeController:
         self._mesh_overlay = None
         self._pending_physics_rebuild = False
         self._pending_physics_upload_sdf = True
+        self._pending_particle_scale_toggle = False
         
         # Data Recorder
         import os
@@ -416,6 +417,24 @@ class StrikeController:
         upload_sdf = self._pending_physics_upload_sdf
         async with self.lock:
             return self.rebuild_physics_induction(upload_sdf=upload_sdf)
+
+    def request_particle_scale_toggle(self) -> None:
+        """Queue particle draw-size toggle for the asyncio/sim thread."""
+        self._pending_particle_scale_toggle = True
+
+    def process_pending_particle_scale_toggle(self) -> bool:
+        """Run a queued particle render-scale toggle (viewer keybinds must not rebuild buckets)."""
+        if not self._pending_particle_scale_toggle:
+            return False
+        self._pending_particle_scale_toggle = False
+        renderer = self._temp_particle_renderer
+        if renderer is None:
+            return False
+        scale = renderer.cycle_render_scale(self.env)
+        gs.logger.info(
+            f"Particle render size: {renderer.render_scale_label()} (scale={scale:.2f})"
+        )
+        return True
 
     def rebuild_physics_induction(self, upload_sdf: bool = True) -> bool:
         """Rebuild surface mesh; in unified mode one build serves visual + induction SDF."""
@@ -1285,11 +1304,15 @@ class StrikeController:
                 particles_temp, mapping_parts_np, verts_np
             )
 
+    def _default_include_vertex_temps(self) -> bool:
+        """Keep Unity temperature coloring even when heating/cooling is toggled off."""
+        return bool(getattr(self.env.cfg.mpm, "enable_thermal", False))
+
     async def update_and_get_recon_data(self, include_vertex_temps: bool | None = None):
         """Updates reconstruction and returns data for visualization/IO."""
         self._io_frame_counter += 1
         if include_vertex_temps is None:
-            include_vertex_temps = bool(getattr(self, "thermal_enabled", False))
+            include_vertex_temps = self._default_include_vertex_temps()
 
         want_vertex_temps = bool(include_vertex_temps) and self._should_compute_vertex_temps_io()
         if not self._should_refresh_mesh_io() and self._io_mesh_cache is not None:
