@@ -306,6 +306,8 @@ class Keybind:
         and RELEASE on the same key). When False, any other keybind using the same key is
         treated as a conflict: replaced if ``overwrite=True`` and the other keybind is not
         protected, otherwise an error is raised.
+    show_in_help : bool
+        Whether this keybind appears in the viewer keyboard-help overlay.
     """
 
     name: str
@@ -317,6 +319,7 @@ class Keybind:
     kwargs: dict = field(default_factory=dict)
     protected: bool = False
     allow_overload: bool = True
+    show_in_help: bool = True
 
     _modifiers: int | None = field(default=None, init=False, repr=False)
 
@@ -389,6 +392,9 @@ class Keybindings:
             callback=kb.callback,
             args=kb.args,
             kwargs=kb.kwargs,
+            protected=kb.protected,
+            allow_overload=kb.allow_overload,
+            show_in_help=kb.show_in_help,
         )
 
     def get(self, key: int, modifiers: int, key_action: KeyAction) -> Keybind | None:

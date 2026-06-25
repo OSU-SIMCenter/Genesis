@@ -1404,7 +1404,7 @@ class Viewer(pyglet.window.Window):
         self._key_instr_texts = self._instr_texts[0] + [
             f"{'[' + _keybind_key_label(kb):>{12}}]: " + kb.name.replace("_", " ")
             for kb in self._keybindings.keybinds
-            if kb.name != HELP_TEXT_KEYBIND_NAME
+            if kb.name != HELP_TEXT_KEYBIND_NAME and kb.show_in_help
         ]
 
     def _toggle_instructions(self):
