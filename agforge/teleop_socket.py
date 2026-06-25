@@ -9,6 +9,8 @@ import math
 import time
 import os
 import argparse
+from contextlib import redirect_stdout
+from datetime import datetime
 
 import websockets
 import logging
@@ -514,6 +516,46 @@ async def handle_client(websocket, state: StrikeController, path=None):
         state.is_client_connected = False
 
 
+def _print_profiling_on_exit(cfg: TeleopOptions, shared_state: StrikeController) -> None:
+    """Emit profiler tables on shutdown.
+
+    Plain ``print`` goes to stdout. When teleop is piped (``| tee``), Ctrl+C sends
+    SIGINT to both Python and tee; if tee exits first the pipe breaks and profiling
+    vanishes. For piped runs we also write a sidecar text report under logs/.
+    """
+    if not cfg.print_profiling_on_exit:
+        return
+
+    profiler = shared_state.env.scene.profiling_options.profiler
+
+    def _render(stream) -> None:
+        with redirect_stdout(stream):
+            print("\n--- Detailed Profiling Stats (Rich Table - Full) ---", flush=True)
+            profiler.rich_table(min_pct=0.0)
+            print("\n--- Detailed Profiling Hierarchy (ASCII Tree - >2%) ---", flush=True)
+            profiler.print_tree(min_pct=2.0)
+            print("\n--- Profiling Hot-Spots (Flat - >1.5%) ---", flush=True)
+            profiler.print_flat(sort_by="self", min_pct=1.5)
+
+    profile_path: str | None = None
+    if not sys.stdout.isatty():
+        os.makedirs("logs", exist_ok=True)
+        profile_path = f"logs/teleop_profile_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+    try:
+        _render(sys.stdout)
+    except BrokenPipeError:
+        gs.logger.warning(
+            "Profiling stdout pipe closed before report finished (common with `| tee` on Ctrl+C). "
+            "Use: 2>&1 | (trap '' INT; tee logs/teleop_....log)"
+        )
+
+    if profile_path is not None:
+        gs.logger.info(f"Profiling report (piped stdout) -> {profile_path}")
+        with open(profile_path, "w", encoding="utf-8") as fh:
+            _render(fh)
+
+
 async def main():
     sys.stdout.reconfigure(line_buffering=True)
     args = _parse_teleop_args()
@@ -638,16 +680,8 @@ async def main():
                  shared_state.recorder.flush_episode(success_flag=True, language_instruction="Episode finished cleanly before exit.")
                  
              gs.logger.info("Shutdown complete")
-             
-             # Print all profiler visualizations if enabled
-             if cfg.print_profiling_on_exit:
-                 profiler = shared_state.env.scene.profiling_options.profiler
-                 print("\n--- Detailed Profiling Stats (Rich Table - Full) ---")
-                 profiler.rich_table(min_pct=0.0)
-                 print("\n--- Detailed Profiling Hierarchy (ASCII Tree - >2%) ---")
-                 profiler.print_tree(min_pct=2.0)
-                 print("\n--- Profiling Hot-Spots (Flat - >1.5%) ---")
-                 profiler.print_flat(sort_by="self", min_pct=1.5)
+
+             _print_profiling_on_exit(cfg, shared_state)
 
 if __name__ == "__main__":
     asyncio.run(main())
