@@ -97,11 +97,12 @@ def measure_billet_temps(controller: "StrikeController") -> dict[str, float]:
     temps = controller.env.mpm_entity.get_particles_temp().detach().cpu().numpy().reshape(-1)
     temps = temps[np.isfinite(temps)]
     if temps.size == 0:
-        return {"mean_k": 0.0, "max_k": 0.0, "min_k": 0.0}
+        return {"mean_k": 0.0, "max_k": 0.0, "min_k": 0.0, "std_k": 0.0}
     return {
         "mean_k": float(np.mean(temps)),
         "max_k": float(np.max(temps)),
         "min_k": float(np.min(temps)),
+        "std_k": float(np.std(temps)),
     }
 
 
@@ -113,7 +114,7 @@ class ThermalTuner:
         self.state = self._state_from_config()
         self._saved: ThermalTunerState | None = None
         self._dirty = True
-        self._cached_temps: dict[str, float] = {"mean_k": 0.0, "max_k": 0.0, "min_k": 0.0}
+        self._cached_temps: dict[str, float] = {"mean_k": 0.0, "max_k": 0.0, "min_k": 0.0, "std_k": 0.0}
         self._cached_held_k: float = 0.0
         self._last_telemetry_mono: float = 0.0
         # Baseline snapshot so X can restore without pressing Z first.
@@ -211,6 +212,14 @@ class ThermalTuner:
                 fixed_end_blend=s.fixed_end_blend,
                 fixed_end_sink_temp=sink_temp,
             )
+            import genesis as gs
+
+            temps = measure_billet_temps(ctrl)
+            gs.logger.info(
+                f"thermal GPU apply: S_T={s.thermal_time_scale:.0f}  "
+                f"T mean/min/max {temps['mean_k']:.0f}/{temps['min_k']:.0f}/{temps['max_k']:.0f} K  "
+                f"σ {temps['std_k']:.0f} K"
+            )
 
         ctrl._invalidate_induction_params_cache()
 
@@ -263,7 +272,7 @@ class ThermalTuner:
         held = self._cached_held_k
         pending = " *" if self._dirty else ""
         return [
-            f"Thermal tuner{pending}  T mean/max {temps['mean_k']:.0f}/{temps['max_k']:.0f} K  held {held:.0f} K",
+            f"Thermal tuner{pending}  T μ/min/max {temps['mean_k']:.0f}/{temps['min_k']:.0f}/{temps['max_k']:.0f} K  σ {temps['std_k']:.0f}  held {held:.0f} K",
             (
                 f"q_peak {s.q_peak:.2e}  d {s.skin_depth*1e3:.2f} mm  "
                 f"S_T {s.thermal_time_scale:.0f}"
