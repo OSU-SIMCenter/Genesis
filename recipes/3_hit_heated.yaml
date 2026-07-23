@@ -1,0 +1,46 @@
+name: "3-Hit Heated Benchmark"
+description: "Cold first hit, then two heated hits with 45 degree rotation."
+steps:
+  # Hit 1: Cold
+  - type: strike
+    target_strain: 0.25
+    slider_position: 0.0
+    hinge_rotation: 0.0
+
+  # Heat 1: auto-positions coil over the next strike location
+  - type: heat
+    duration_steps: 200
+
+  # Cool 1: moves to next strike position and cools slightly
+  - type: cool
+    duration_steps: 30
+
+  # Rotate 1
+  - type: rotate
+    angle: 45.0
+
+  # Hit 2: Hot
+  - type: strike
+    target_strain: 0.30
+    slider_position: 0.0
+
+  # Heat 2: auto-positions coil over the next strike location
+  - type: heat
+    duration_steps: 150
+    
+  # Cool 2: moves to next strike position and cools slightly
+  - type: cool
+    duration_steps: 30
+
+  # Rotate 2
+  - type: rotate
+    angle: 90.0
+
+  # Hit 3: Hot
+  - type: strike
+    target_strain: 0.35
+    slider_position: 0.0
+
+  # Final cool
+  - type: cool
+    duration_steps: 50
