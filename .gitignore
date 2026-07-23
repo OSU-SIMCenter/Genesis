@@ -165,3 +165,6 @@ agforge_demo.xml
 # agforge benchmark outputs
 agforge/benchmarks/benchmark_data/
 agforge/benchmarks/benchmark_results.json
+
+# Real forge recordings are stored outside git (see ../../forge-data/)
+*.mcap

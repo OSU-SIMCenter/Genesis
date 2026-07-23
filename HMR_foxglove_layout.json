@@ -1,0 +1,92 @@
+{
+  "configById": {
+    "Image!201266b": {
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 60,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {
+        "frame:": {
+          "visible": false
+        }
+      },
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "synchronize": false,
+      "imageMode": {
+        "imageTopic": "hmr/sensors/thermalcam",
+        "minValue": 7000,
+        "colorMode": "colormap",
+        "colorMap": "turbo",
+        "maxValue": 13000
+      }
+    },
+    "Plot!9xm9a9": {
+      "showXAxisLabels": true,
+      "xAxisLabel": "Time [s]",
+      "xAxisDisplayMethod": "relative",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "hmr/press/state.live_force_kn",
+          "enabled": true,
+          "color": "#4e98e2",
+          "id": "48b066dd-4f7d-4619-90ad-8d4647b73a10",
+          "label": "Load [kN]"
+        }
+      ]
+    },
+    "RawMessages!4bx34wu": {
+      "defaultExpanded": false,
+      "topicPath": "hmr/scan/buffer.profiler_samples[:].timestamp_ns"
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": "Image!201266b",
+    "second": {
+      "first": "Plot!9xm9a9",
+      "second": "RawMessages!4bx34wu",
+      "direction": "row",
+      "splitPercentage": 77.8583139315761
+    },
+    "direction": "column",
+    "splitPercentage": 60.198429408734945
+  }
+}
