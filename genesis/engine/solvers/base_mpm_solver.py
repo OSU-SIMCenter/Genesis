@@ -222,6 +222,11 @@ class BaseMPMSolver(Solver):
             self._rt_fixed_end_ambient = qd.field(dtype=gs.qd_float, shape=())
             self._rt_fixed_end_blend = qd.field(dtype=gs.qd_float, shape=())
             self._rt_fixed_end_sink_temp = qd.field(dtype=gs.qd_float, shape=())
+            # FLIP fraction for thermal G2P (remainder is PIC). Pure FLIP is unstable;
+            # pure PIC breaks S_T invariance. 0.97 keeps most S_T-correct transport.
+            self._thermal_flip_frac = 0.97
+            self._rt_thermal_flip_frac = qd.field(dtype=gs.qd_float, shape=())
+            self._rt_thermal_flip_frac[None] = self._thermal_flip_frac
             self._sync_thermal_runtime_fields(
                 thermal_time_scale=self._thermal_time_scale,
                 fixed_end_conduction_length=self._fixed_end_conduction_length,
@@ -345,12 +350,15 @@ class BaseMPMSolver(Solver):
                     "calculated based on `grid_density`). Simulation might be unstable."
                 )
                 
-            if self._enable_thermal and self._alpha_thermal > 0:
-                dt_cfl = self._dx ** 2 / (6.0 * self._alpha_thermal)
+            if self._enable_thermal and self._thermal_time_scale > 0:
+                # Match diffusion kernel: α_phys(T) · S_T; room-temp steel is worst-case.
+                alpha_worst = 44.0 / (7850.0 * 450.0)
+                alpha_scaled = alpha_worst * self._thermal_time_scale
+                dt_cfl = self._dx ** 2 / (6.0 * alpha_scaled)
                 if self.substep_dt > dt_cfl:
                     gs.logger.warning(
                         f"Current `substep_dt` ({self.substep_dt:.6g}) exceeds the thermal diffusion CFL limit "
-                        f"({dt_cfl:.6g}) for explicitly-scaled alpha={self._alpha_thermal}. Heat diffusion may mathematically explode. "
+                        f"({dt_cfl:.6g}) for α_worst·S_T={alpha_scaled:.3e}. Heat diffusion may be unstable. "
                         f"Consider lowering the thermal_time_scale hyperparameter (current: {self._thermal_time_scale})."
                     )
 
@@ -498,8 +506,8 @@ class BaseMPMSolver(Solver):
                     B_peak = half_length / qd.math.sqrt(half_length * half_length + radius * radius)
                     f_axial = (B * B) / qd.math.max(B_peak * B_peak, gs.EPS)
 
-                    q_eff = q_peak * self._rt_thermal_time_scale[None]
-                    dT = q_eff * w_skin * f_axial * self.substep_dt / qd.math.max(rho * Cp, gs.EPS)
+                    dt_th = self.substep_dt * self._rt_thermal_time_scale[None]
+                    dT = q_peak * w_skin * f_axial * dt_th / qd.math.max(rho * Cp, gs.EPS)
                     self.particles[f + 1, i_p, i_b].temp = self.particles[f + 1, i_p, i_b].temp + dT
                     self.particles[f + 1, i_p, i_b].dT_induction = self.particles[f, i_p, i_b].dT_induction + dT
                 else:
@@ -517,7 +525,6 @@ class BaseMPMSolver(Solver):
     @qd.func
     def g2p_prologue(self, f, i_p, i_b):
         if qd.static(self._enable_thermal):
-            self.particles[f + 1, i_p, i_b].temp = gs.qd_float(0.0)
             self.particles[f + 1, i_p, i_b].dT_conv = self.particles[f, i_p, i_b].dT_conv
             self.particles[f + 1, i_p, i_b].dT_rad = self.particles[f, i_p, i_b].dT_rad
             self.particles[f + 1, i_p, i_b].dT_bulk = self.particles[f, i_p, i_b].dT_bulk
@@ -525,14 +532,19 @@ class BaseMPMSolver(Solver):
             self.particles[f + 1, i_p, i_b].dT_contact = self.particles[f, i_p, i_b].dT_contact
 
     @qd.func
+    def g2p_transfer_thermal_telemetry(self, f, i_p, i_b, weight, grid_index: qd.template()):
+        if qd.static(self._enable_thermal):
+            g = self.grid[f, grid_index, i_b]
+            self.particles[f + 1, i_p, i_b].dT_conv += weight * g.dT_conv
+            self.particles[f + 1, i_p, i_b].dT_rad += weight * g.dT_rad
+            self.particles[f + 1, i_p, i_b].dT_bulk += weight * g.dT_bulk
+            self.particles[f + 1, i_p, i_b].dT_diffusion += weight * g.dT_diffusion
+            self.particles[f + 1, i_p, i_b].dT_contact += weight * g.dT_contact
+
+    @qd.func
     def g2p_transfer_extra_fields(self, f, i_p, i_b, weight, grid_index: qd.template()):
         if qd.static(self._enable_thermal):
-            self.particles[f + 1, i_p, i_b].temp += weight * self.grid[f, grid_index, i_b].temp_diffused
-            self.particles[f + 1, i_p, i_b].dT_conv += weight * self.grid[f, grid_index, i_b].dT_conv
-            self.particles[f + 1, i_p, i_b].dT_rad += weight * self.grid[f, grid_index, i_b].dT_rad
-            self.particles[f + 1, i_p, i_b].dT_bulk += weight * self.grid[f, grid_index, i_b].dT_bulk
-            self.particles[f + 1, i_p, i_b].dT_diffusion += weight * self.grid[f, grid_index, i_b].dT_diffusion
-            self.particles[f + 1, i_p, i_b].dT_contact += weight * self.grid[f, grid_index, i_b].dT_contact
+            self.g2p_transfer_thermal_telemetry(f, i_p, i_b, weight, grid_index)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- simulation -------------------------------------
@@ -675,6 +687,31 @@ class BaseMPMSolver(Solver):
                     if not self.particles_info[i_p].free:  # non-free particles behave as boundary conditions
                         self.grid[f, base - self._grid_offset + offset, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
 
+    @qd.func
+    def g2p_apply_thermal_from_grid(
+        self,
+        f: qd.i32,
+        i_p: qd.i32,
+        i_b: qd.i32,
+        base: qd.types.vector(3, gs.qd_int),
+        fx: qd.types.vector(3, gs.qd_float),
+        w: qd.template(),
+    ):
+        """Hybrid FLIP/PIC thermal G2P — must live in one func for Taichi variable scope."""
+        T_flip = self.particles[f + 1, i_p, i_b].temp
+        T_pic = gs.qd_float(0.0)
+        for offset in qd.static(qd.grouped(self.stencil_range())):
+            weight = gs.qd_float(1.0)
+            for d in qd.static(range(3)):
+                weight *= w[offset[d]][d]
+            grid_index = base - self._grid_offset + offset
+            g = self.grid[f, grid_index, i_b]
+            T_flip += weight * (g.dT_diffusion + g.dT_conv + g.dT_rad + g.dT_bulk)
+            T_pic += weight * g.temp_diffused
+            self.g2p_transfer_thermal_telemetry(f, i_p, i_b, weight, grid_index)
+        flip = self._rt_thermal_flip_frac[None]
+        self.particles[f + 1, i_p, i_b].temp = flip * T_flip + (1.0 - flip) * T_pic
+
     @qd.kernel
     def g2p(
         self,
@@ -716,7 +753,9 @@ class BaseMPMSolver(Solver):
 
                     new_vel += weight * grid_vel
                     new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
-                    self.g2p_transfer_extra_fields(f, i_p, i_b, weight, base - self._grid_offset + offset)
+
+                if qd.static(self._enable_thermal):
+                    self.g2p_apply_thermal_from_grid(f, i_p, i_b, base, fx, w)
 
                 # compute actual new_pos with new_vel
                 new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
@@ -1390,13 +1429,42 @@ class BaseMPMSolver(Solver):
         self._fixed_end_blend = float(fixed_end_blend)
 
         self._rt_thermal_time_scale[None] = s_t
-        self._rt_h_air[None] = self._h_air
-        self._rt_h_contact[None] = self._h_contact
-        self._rt_alpha_thermal[None] = self._alpha_thermal
+        # Runtime fields store unscaled physical coefficients; S_T enters only via
+        # dt_thermal = substep_dt * S_T in kernels (steady-state invariant).
+        self._rt_h_air[None] = self._h_air_base
+        self._rt_h_contact[None] = self._h_contact_base
+        self._rt_alpha_thermal[None] = self._alpha_thermal_base
         self._rt_fixed_end_L_eff[None] = self._fixed_end_conduction_length
         self._rt_fixed_end_ambient[None] = self._fixed_end_ambient
         self._rt_fixed_end_blend[None] = self._fixed_end_blend
         self._rt_fixed_end_sink_temp[None] = float(fixed_end_sink_temp)
+
+    def _warn_thermal_cfl_if_needed(self) -> None:
+        """Log when live S_T may violate explicit thermal CFL (diffusion or surface flux)."""
+        if not self._enable_thermal:
+            return
+        s_t = float(self._thermal_time_scale)
+        if s_t <= 0.0:
+            return
+        alpha_worst = 44.0 / (7850.0 * 450.0)
+        dt_diff_cfl = self._dx ** 2 / (6.0 * alpha_worst * s_t)
+        if self.substep_dt > dt_diff_cfl:
+            gs.logger.warning(
+                f"thermal_time_scale={s_t:.0f}: substep_dt exceeds diffusion CFL "
+                f"({dt_diff_cfl:.3e} s). Diffusion may oscillate."
+            )
+        # Surface-cell convection CFL: h·S_T·A·dt / (m·Cp) < 1
+        dx = float(self._dx)
+        rho = 7850.0
+        cp = 450.0
+        cell_mass = rho * dx**3
+        area = dx**2
+        k_conv = self._h_air_base * s_t * area * self.substep_dt / (cell_mass * cp)
+        if k_conv > 0.5:
+            gs.logger.warning(
+                f"thermal_time_scale={s_t:.0f}: surface convection CFL k={k_conv:.2f} "
+                f"(>0.5). Linear cooling may overshoot; lower S_T for stability."
+            )
 
     def set_thermal_runtime_tuning(
         self,
@@ -1437,6 +1505,7 @@ class BaseMPMSolver(Solver):
                 else float(self._rt_fixed_end_sink_temp[None])
             ),
         )
+        self._warn_thermal_cfl_if_needed()
 
     def get_thermal_runtime_tuning(self) -> dict:
         """Return current live thermal tuning values (Python mirrors)."""
@@ -1973,13 +2042,15 @@ class BaseMPMSolver(Solver):
                                 radius = self._particle_size / 2.0
                                 A_contact = qd.math.pi * (radius ** 2.0)
                                 
-                                # Apply stable exponential Robin decay
+                                dt_th = self.substep_dt * self._rt_thermal_time_scale[None]
                                 h_contact = self._rt_h_contact[None]
-                                k_contact = (h_contact * A_contact) / (mass_thermal_real * Cp)
-                                
-                                decay_contact = qd.math.exp(-k_contact * self.substep_dt)
-                                
-                                dT_val = (temp_old - T_rigid) * (1.0 - decay_contact)
+                                dT_val = (
+                                    h_contact
+                                    * A_contact
+                                    * (temp_old - T_rigid)
+                                    * dt_th
+                                    / (mass_thermal_real * Cp)
+                                )
                                 temp_old = temp_old - dT_val
                                 self.particles[f + 1, i_p, i_b].dT_contact -= dT_val
                                 

@@ -372,123 +372,13 @@ class LegacyCoupler(RBC):
                 # Momentum to velocity
                 vel_mpm = (1 / self.mpm_solver.grid[f, I, i_b].mass) * self.mpm_solver.grid[f, I, i_b].vel_in
 
-                # Thermal: normalize mass-weighted temperature
+                # Thermal: normalize mass-weighted temperature (surface flux after diffusion).
                 if qd.static(self.mpm_solver._enable_thermal):
                     if self.mpm_solver.grid[f, I, i_b].mass_thermal > 0:
                         self.mpm_solver.grid[f, I, i_b].temp = (
                             self.mpm_solver.grid[f, I, i_b].temp
                             / self.mpm_solver.grid[f, I, i_b].mass_thermal
                         )
-                        
-                        # --- Air Cooling (Convection) ---
-                        is_surface = 0
-                        I_left = I + qd.Vector([-1, 0, 0])
-                        I_right = I + qd.Vector([1, 0, 0])
-                        I_down = I + qd.Vector([0, -1, 0])
-                        I_up = I + qd.Vector([0, 1, 0])
-                        I_back = I + qd.Vector([0, 0, -1])
-                        I_front = I + qd.Vector([0, 0, 1])
-                        
-                        if I_left[0] < 0:
-                            is_surface = 1
-                        elif self.mpm_solver.grid[f, I_left, i_b].mass_thermal < gs.EPS:
-                            is_surface = 1
-
-                        if I_right[0] >= self.mpm_solver.grid_res[0]:
-                            is_surface = 1
-                        elif self.mpm_solver.grid[f, I_right, i_b].mass_thermal < gs.EPS:
-                            is_surface = 1
-
-                        if I_down[1] < 0:
-                            is_surface = 1
-                        elif self.mpm_solver.grid[f, I_down, i_b].mass_thermal < gs.EPS:
-                            is_surface = 1
-
-                        if I_up[1] >= self.mpm_solver.grid_res[1]:
-                            is_surface = 1
-                        elif self.mpm_solver.grid[f, I_up, i_b].mass_thermal < gs.EPS:
-                            is_surface = 1
-
-                        if I_back[2] < 0:
-                            is_surface = 1
-                        elif self.mpm_solver.grid[f, I_back, i_b].mass_thermal < gs.EPS:
-                            is_surface = 1
-
-                        if I_front[2] >= self.mpm_solver.grid_res[2]:
-                            is_surface = 1
-                        elif self.mpm_solver.grid[f, I_front, i_b].mass_thermal < gs.EPS:
-                            is_surface = 1
-                        
-                        # --- Fixed-end (cut plane) detection ---
-                        # The held end is welded to the unsimulated rod, NOT exposed to air.
-                        # A cut-face cell is metal whose +X neighbor is empty and that sits at
-                        # the known held-end plane. It drains into the bulk (Robin BC), not air.
-                        is_cut_face = 0
-                        if qd.static(self.mpm_solver._enable_fixed_end_bc):
-                            cell_x = (I + self.mpm_solver.grid_offset)[0] * self.mpm_solver.dx
-                            right_empty = 0
-                            if I_right[0] >= self.mpm_solver.grid_res[0]:
-                                right_empty = 1
-                            elif self.mpm_solver.grid[f, I_right, i_b].mass_thermal < gs.EPS:
-                                right_empty = 1
-                            if right_empty == 1 and cell_x >= (self.mpm_solver._fixed_end_x_cut - self.mpm_solver.dx):
-                                is_cut_face = 1
-
-                        if is_cut_face == 1:
-                            # --- Fixed-end conduction into bulk rod (Robin BC) ---
-                            # Newton-form flux toward the bulk temperature with conductance
-                            # h_bulk = k(T) / L_eff. Same stable exponential update as air
-                            # convection; replaces (not adds to) air+radiation on this face.
-                            T_cell = self.mpm_solver.grid[f, I, i_b].temp
-                            T_amb = self.mpm_solver._rt_fixed_end_ambient[None]
-                            blend = self.mpm_solver._rt_fixed_end_blend[None]
-                            T_end = self.mpm_solver._rt_fixed_end_sink_temp[None]
-                            T_bulk = (1.0 - blend) * T_amb + blend * T_end
-                            mass_thermal_real = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
-                            Cp = self.mpm_solver.get_steel_cp(T_cell)
-                            A_cut = self.mpm_solver.dx ** 2
-                            k_local = self.mpm_solver.get_steel_thermal_conductivity(T_cell)
-                            h_bulk = k_local / self.mpm_solver._rt_fixed_end_L_eff[None]
-                            h_bulk_scaled = h_bulk * self.mpm_solver._rt_thermal_time_scale[None]  # match air pre-scaling
-                            k_bulk = (h_bulk_scaled * A_cut) / (mass_thermal_real * Cp)
-                            decay_bulk = qd.math.exp(-k_bulk * self.mpm_solver.substep_dt)
-                            dT_bulk = (T_cell - T_bulk) * (1.0 - decay_bulk)
-                            self.mpm_solver.grid[f, I, i_b].dT_bulk -= dT_bulk
-                            self.mpm_solver.grid[f, I, i_b].temp = T_cell - dT_bulk
-
-                        elif is_surface == 1:
-                            T_cell = self.mpm_solver.grid[f, I, i_b].temp
-                            T_amb = 293.15  # Room temp
-                            # N.B. mass_thermal is inflated by _particle_volume_scale; divide it out for real physics
-                            mass_thermal_real = self.mpm_solver.grid[f, I, i_b].mass_thermal / self.mpm_solver._particle_volume_scale
-                            Cp = self.mpm_solver.get_steel_cp(T_cell)
-                            A_cell = self.mpm_solver.dx ** 2  # one cell face area
-
-                            # --- Air Convection: Newton's Law of Cooling ---
-                            h_air = self.mpm_solver._rt_h_air[None]  # already scaled by thermal_time_scale
-                            k_air = (h_air * A_cell) / (mass_thermal_real * Cp)
-                            decay_air = qd.math.exp(-k_air * self.mpm_solver.substep_dt)
-                            dT_conv = (T_cell - T_amb) * (1.0 - decay_air)
-                            self.mpm_solver.grid[f, I, i_b].dT_conv -= dT_conv
-
-                            T_cell_after_air = T_cell - dT_conv
-
-                            # --- Radiation: Stefan-Boltzmann (linearized for exponential stability) ---
-                            # Q_rad = ε·σ·A·(T⁴ - T_amb⁴) ≈ h_rad·A·(T - T_amb)
-                            # where h_rad = ε·σ·(T² + T_amb²)·(T + T_amb)
-                            emissivity = self.mpm_solver._emissivity
-                            sigma = 5.67e-8
-                            h_rad = emissivity * sigma * (T_cell_after_air * T_cell_after_air + T_amb * T_amb) * (T_cell_after_air + T_amb)
-                            # Scale by thermal_time_scale (h_air is pre-scaled, radiation must be scaled dynamically)
-                            h_rad_scaled = h_rad * self.mpm_solver._rt_thermal_time_scale[None]
-                            k_rad = (h_rad_scaled * A_cell) / (mass_thermal_real * Cp)
-                            decay_rad = qd.math.exp(-k_rad * self.mpm_solver.substep_dt)
-                            dT_rad = (T_cell_after_air - T_amb) * (1.0 - decay_rad)
-                            self.mpm_solver.grid[f, I, i_b].dT_rad -= dT_rad
-
-                            self.mpm_solver.grid[f, I, i_b].temp = T_cell_after_air - dT_rad
-                        
-
 
                 # gravity
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
@@ -1105,21 +995,107 @@ class LegacyCoupler(RBC):
                         if m_N > gs.EPS:
                             laplacian += (qd.math.min(m_C, m_N) / m_C) * (self.mpm_solver.grid[f, I_front, i_b].temp - T_C)
 
-                    # Dynamic thermal diffusivity: α(T) = k(T) / (ρ · Cp(T))
+                    # α(T) with dt_thermal = substep_dt · S_T (steady-state S_T invariant).
                     k_local = self.mpm_solver.get_steel_thermal_conductivity(T_C)
                     Cp_local = self.mpm_solver.get_steel_cp(T_C)
                     rho = gs.qd_float(7850.0)  # kg/m^3 (AISI 4340 steel density)
-                    alpha = (k_local / (rho * Cp_local)) * self.mpm_solver._rt_alpha_thermal[None]
+                    alpha = k_local / (rho * Cp_local)
                     dx = self.mpm_solver.dx
-                    dt = self.mpm_solver.substep_dt
+                    dt_th = self.mpm_solver.substep_dt * self.mpm_solver._rt_thermal_time_scale[None]
                     
-                    T_new = T_C + alpha * dt / (dx * dx) * laplacian
+                    T_new = T_C + alpha * dt_th / (dx * dx) * laplacian
                     self.mpm_solver.grid[f, I, i_b].dT_diffusion = T_new - T_C
                     self.mpm_solver.grid[f, I, i_b].temp_diffused = T_new
                 else:
-                    # Empty cells must have ambient temp so surface particles don't read 0K via G2P.
-                    # Without this, the B-spline stencil bleeds zeroed memory into surface particles.
+                    # PIC gather needs a finite temp; dT_* stay zero (FLIP branch ignores empty cells).
                     self.mpm_solver.grid[f, I, i_b].temp_diffused = gs.qd_float(293.15)
+
+    @qd.kernel
+    def mpm_grid_thermal_surface_flux(self, f: qd.i32):
+        """Surface / cut-face cooling on temp_diffused after diffusion.
+
+        Uses dt_thermal = substep_dt · S_T with unscaled physical h so steady-state T
+        does not drift when S_T is changed at runtime. Convection and radiation are
+        evaluated in parallel at the same cell temperature (not sequential).
+        """
+        dt_th = self.mpm_solver.substep_dt * self.mpm_solver._rt_thermal_time_scale[None]
+        for I in qd.grouped(qd.ndrange(*self.mpm_solver.grid_res)):
+            for i_b in range(self.mpm_solver._B):
+                m_C = self.mpm_solver.grid[f, I, i_b].mass_thermal
+                if m_C <= gs.EPS:
+                    continue
+
+                I_left = I + qd.Vector([-1, 0, 0])
+                I_right = I + qd.Vector([1, 0, 0])
+                I_down = I + qd.Vector([0, -1, 0])
+                I_up = I + qd.Vector([0, 1, 0])
+                I_back = I + qd.Vector([0, 0, -1])
+                I_front = I + qd.Vector([0, 0, 1])
+
+                is_surface = 0
+                if I_left[0] < 0:
+                    is_surface = 1
+                elif self.mpm_solver.grid[f, I_left, i_b].mass_thermal < gs.EPS:
+                    is_surface = 1
+                if I_right[0] >= self.mpm_solver.grid_res[0]:
+                    is_surface = 1
+                elif self.mpm_solver.grid[f, I_right, i_b].mass_thermal < gs.EPS:
+                    is_surface = 1
+                if I_down[1] < 0:
+                    is_surface = 1
+                elif self.mpm_solver.grid[f, I_down, i_b].mass_thermal < gs.EPS:
+                    is_surface = 1
+                if I_up[1] >= self.mpm_solver.grid_res[1]:
+                    is_surface = 1
+                elif self.mpm_solver.grid[f, I_up, i_b].mass_thermal < gs.EPS:
+                    is_surface = 1
+                if I_back[2] < 0:
+                    is_surface = 1
+                elif self.mpm_solver.grid[f, I_back, i_b].mass_thermal < gs.EPS:
+                    is_surface = 1
+                if I_front[2] >= self.mpm_solver.grid_res[2]:
+                    is_surface = 1
+                elif self.mpm_solver.grid[f, I_front, i_b].mass_thermal < gs.EPS:
+                    is_surface = 1
+
+                is_cut_face = 0
+                if qd.static(self.mpm_solver._enable_fixed_end_bc):
+                    cell_x = (I + self.mpm_solver.grid_offset)[0] * self.mpm_solver.dx
+                    right_empty = 0
+                    if I_right[0] >= self.mpm_solver.grid_res[0]:
+                        right_empty = 1
+                    elif self.mpm_solver.grid[f, I_right, i_b].mass_thermal < gs.EPS:
+                        right_empty = 1
+                    if right_empty == 1 and cell_x >= (self.mpm_solver._fixed_end_x_cut - self.mpm_solver.dx):
+                        is_cut_face = 1
+
+                T_cell = self.mpm_solver.grid[f, I, i_b].temp_diffused
+                mass_thermal_real = m_C / self.mpm_solver._particle_volume_scale
+                Cp = self.mpm_solver.get_steel_cp(T_cell)
+                A_face = self.mpm_solver.dx ** 2
+
+                if is_cut_face == 1:
+                    T_amb = self.mpm_solver._rt_fixed_end_ambient[None]
+                    blend = self.mpm_solver._rt_fixed_end_blend[None]
+                    T_end = self.mpm_solver._rt_fixed_end_sink_temp[None]
+                    T_bulk = (1.0 - blend) * T_amb + blend * T_end
+                    k_local = self.mpm_solver.get_steel_thermal_conductivity(T_cell)
+                    h_bulk = k_local / self.mpm_solver._rt_fixed_end_L_eff[None]
+                    dT_bulk = h_bulk * A_face * (T_cell - T_bulk) * dt_th / (mass_thermal_real * Cp)
+                    self.mpm_solver.grid[f, I, i_b].dT_bulk -= dT_bulk
+                    self.mpm_solver.grid[f, I, i_b].temp_diffused = T_cell - dT_bulk
+
+                elif is_surface == 1:
+                    T_amb = 293.15
+                    h_air = self.mpm_solver._rt_h_air[None]
+                    emissivity = self.mpm_solver._emissivity
+                    sigma = 5.67e-8
+                    h_rad = emissivity * sigma * (T_cell * T_cell + T_amb * T_amb) * (T_cell + T_amb)
+                    dT_conv = h_air * A_face * (T_cell - T_amb) * dt_th / (mass_thermal_real * Cp)
+                    dT_rad = h_rad * A_face * (T_cell - T_amb) * dt_th / (mass_thermal_real * Cp)
+                    self.mpm_solver.grid[f, I, i_b].dT_conv -= dT_conv
+                    self.mpm_solver.grid[f, I, i_b].dT_rad -= dT_rad
+                    self.mpm_solver.grid[f, I, i_b].temp_diffused = T_cell - dT_conv - dT_rad
 
     def couple(self, f):
         import contextlib
@@ -1142,6 +1118,8 @@ class LegacyCoupler(RBC):
             if self.mpm_solver._enable_thermal:
                 with profiler.time("couple_thermal_diffusion") if sim_cfg.couple_thermal_diffusion else contextlib.suppress():
                     self.mpm_grid_thermal_diffusion(f)
+                with profiler.time("couple_thermal_surface_flux") if sim_cfg.couple_thermal_diffusion else contextlib.suppress():
+                    self.mpm_grid_thermal_surface_flux(f)
 
         # SPH <-> Rigid
         if self._rigid_sph:
