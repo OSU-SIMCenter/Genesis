@@ -57,6 +57,7 @@ vtk = ">=9.5"                       # Native ARM64 support, rendering improvemen
 fast-simplification = ">=0.1.13"
 libigl = ">=2.6"                    # Uses nanobind (faster than pybind11)
 pymeshlab = ">=2023.12"             # Latest mesh processing optimizations
+meshio = ">=5.3"                    # OBJ reader for the press-tool asset
 
 # --- Physics Simulation ---
 mujoco = ">=3.4"                    # ARM64 optimizations, latest solver improvements
