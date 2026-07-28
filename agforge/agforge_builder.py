@@ -19,8 +19,11 @@ class RobotXMLGenerator:
         self.kv = robot_cfg.kv
         
         # Gripper geometry is sized to handle the cylinder
+        gripper_x_half = (robot_cfg.gripper_axial_width / 2.0
+                          if robot_cfg.gripper_axial_width is not None
+                          else robot_cfg.cylinder_radius * 0.5)
         self.gripper_size = np.array([
-            robot_cfg.cylinder_radius * 0.5,  # X-dimension (height)
+            gripper_x_half,                   # X-dimension (height)
             robot_cfg.cylinder_radius * 0.4,  # Y-dimension (width/thickness)
             robot_cfg.cylinder_radius * 1.2,  # Z-dimension (depth)
         ])

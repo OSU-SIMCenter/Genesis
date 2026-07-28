@@ -133,11 +133,14 @@ class RobotOptions(Options):
     coup_softness: float = 5e-4
 
     # Declare fields for pydantic — Optional because they are computed in model_post_init
+    # (cylinder_diameter/cylinder_height may also be pre-set by the caller, see below)
     cylinder_diameter: Optional[float] = None
     cylinder_radius: Optional[float] = None
     cylinder_height: Optional[float] = None
     cylinder_pos: object = None
     cylinder_euler: Optional[tuple] = None
+    # Optional jaw axial (X) full-width override [m]; None = the default 0.5*radius half-extent.
+    gripper_axial_width: Optional[float] = None
     base_grid_density: Optional[int] = None
     mpm_lower_bound: Optional[tuple] = None
     mpm_upper_bound: Optional[tuple] = None
@@ -157,10 +160,15 @@ class RobotOptions(Options):
         ureg.define(f"{self.time_unit_str} = {self.robot_time_to_seconds} * second")
 
         # --- Perform all calculations first ---
-        self.cylinder_diameter = (1.0 * ureg.inch).to(ureg.meter).magnitude
+        # Keep pre-set stock dimensions if the caller provided them (e.g. an
+        # external driver like the forge_common genesis adapter); otherwise
+        # fall back to the usual defaults.
+        if self.cylinder_diameter is None:
+            self.cylinder_diameter = (1.0 * ureg.inch).to(ureg.meter).magnitude
         self.cylinder_radius = self.cylinder_diameter / 2
         self.coil_radius = self.coil_radius_multiplier * self.cylinder_radius
-        self.cylinder_height = 8 * self.cylinder_radius
+        if self.cylinder_height is None:
+            self.cylinder_height = 8 * self.cylinder_radius
         self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
         self.cylinder_euler = (0.0, 90.0, 0.0)
 
@@ -230,6 +238,12 @@ class AgilityForgeOptions(Options):
     reconstruction: ReconstructionOptions = ReconstructionOptions()
     performance_mode: bool = True
 
+    # Optional stock-size overrides [m] for external drivers (e.g. the
+    # forge_common genesis adapter). None = RobotOptions defaults (1in x 8r).
+    stock_diameter: Optional[float] = None
+    stock_length: Optional[float] = None
+    gripper_axial_width: Optional[float] = None
+
     # Declare fields for pydantic
     sim: object = None
     robot: object = None
@@ -249,7 +263,9 @@ class AgilityForgeOptions(Options):
         # 1. Derive timestep from CFL condition
         # CFL limit: substep_dt <= dx / c, where c = sqrt(E/rho) is the speed of sound.
         # We use a 0.95 safety margin (5% below the theoretical CFL limit).
-        temp_robot = RobotOptions(robot_time_to_seconds=1.0)
+        temp_robot = RobotOptions(robot_time_to_seconds=1.0,
+                                  cylinder_diameter=self.stock_diameter,
+                                  cylinder_height=self.stock_length)
         dx = 1.0 / temp_robot.base_grid_density
         c = math.sqrt(self.mat.E / self.mat.rho)
         dt_cfl = dx / c  # Theoretical max substep_dt
@@ -296,7 +312,10 @@ class AgilityForgeOptions(Options):
             gravity=(0, 0, 0),
             check_bounds=not self.performance_mode,
         )
-        self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt)
+        self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt,
+                                  cylinder_diameter=self.stock_diameter,
+                                  cylinder_height=self.stock_length,
+                                  gripper_axial_width=self.gripper_axial_width)
         self.mpm = MPMOptions(
             grid_density=self.robot.base_grid_density,
             particle_size=dx / 2.0,  # 8 particles per cell (2³ = 8 PPC)
