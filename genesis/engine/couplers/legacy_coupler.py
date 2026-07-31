@@ -998,7 +998,11 @@ class LegacyCoupler(RBC):
                     # α(T) with dt_thermal = substep_dt · S_T (steady-state S_T invariant).
                     k_local = self.mpm_solver.get_steel_thermal_conductivity(T_C)
                     Cp_local = self.mpm_solver.get_steel_cp(T_C)
-                    rho = gs.qd_float(7850.0)  # kg/m^3 (AISI 4340 steel density)
+                    # 316L density. Was 7850 (AISI 4340) — a fifth independent copy of the
+                    # material constants, and the only one inside a kernel that the
+                    # material_properties refactor could not reach by import.
+                    # Mirrors material_properties.STEEL_316L.rho_kg_m3.
+                    rho = gs.qd_float(7980.0)  # kg/m^3 (316L stainless density)
                     alpha = k_local / (rho * Cp_local)
                     dx = self.mpm_solver.dx
                     dt_th = self.mpm_solver.substep_dt * self.mpm_solver._rt_thermal_time_scale[None]

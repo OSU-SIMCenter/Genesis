@@ -125,12 +125,39 @@ class RobotOptions(Options):
     time_unit_str: str = "rtu"
     robot_time_to_seconds: float = 1.
 
-    # Induction Coil physical placeholders (Unity Sync)
+    # ---------------------------------------------------------------- as-built
+    # These defaults mirror the real Agility Forge rather than a generic billet.
+    # Provenance and confidence for every number: docs/AS_BUILT_AGILITY_FORGE.md
+    #
+    # The billet diameter used to be hardcoded to 1.0 inch inside model_post_init,
+    # where it could not be configured at all. Both Colton Wright datasets
+    # (2026-06-15 and 2026-07-17) are 1.5" 316L, so 1.0" matched no real run.
+    billet_diameter_in: float = 1.5
+    #: Simulated billet length [m]. None -> 8 * radius, the legacy self-similar rule,
+    #: which at 1.5" gives 152.4 mm — enough to span the coil (76 mm) plus the 50 mm
+    #: protrusion Colton describes. The real rod continues past the cut plane into the
+    #: chuck; that is what enable_fixed_end_bc models, so this is the SIMULATED
+    #: portion, not the physical rod length.
+    billet_length_m: Optional[float] = None
+    #: Grid cells across the billet diameter. Drives base_grid_density.
+    grid_cells_across_billet: int = 7
+
+    # Induction coil. Length from Colton ("the coil is ~3\" in length"), corroborated
+    # by the tape-measure photos IMG_9854/9855/9856 shipped with the 07-17 dataset.
     coil_offset_x: float = -0.129891413331031800
-    coil_length: float = 0.037
+    coil_length: float = 0.0762  # 3 inch
     # Effective solenoid radius = multiplier × billet radius. For close-coupled forging
     # coils the bore is typically ~110–125% of workpiece OD (ASM / induction heating practice).
-    coil_radius_multiplier: float = 2.0
+    #
+    # This was 2.0, which puts the BORE at 200% of workpiece OD — contradicting the
+    # comment directly above it. Measured off IMG_9856 (tape held across the bore):
+    # coil OD ~58–61 mm, tube OD ~1/4–3/8", giving a bore of ~45 mm and a current-path
+    # (tube centreline) radius of ~26 mm against the 19.05 mm billet radius. Biot–Savart
+    # wants the current-path radius, hence 26.0/19.05 = 1.365. Bore/OD works out at
+    # ~1.18, inside the ASM range.
+    #
+    # Handheld photos with the tape at a different depth than the coil: treat as ±10–15%.
+    coil_radius_multiplier: float = 1.365
     coil_radius: Optional[float] = None  # computed in model_post_init
     coup_softness: float = 5e-4
 
@@ -159,14 +186,26 @@ class RobotOptions(Options):
         ureg.define(f"{self.time_unit_str} = {self.robot_time_to_seconds} * second")
 
         # --- Perform all calculations first ---
-        self.cylinder_diameter = (1.0 * ureg.inch).to(ureg.meter).magnitude
+        self.cylinder_diameter = (self.billet_diameter_in * ureg.inch).to(ureg.meter).magnitude
         self.cylinder_radius = self.cylinder_diameter / 2
         self.coil_radius = self.coil_radius_multiplier * self.cylinder_radius
-        self.cylinder_height = 8 * self.cylinder_radius
+        self.cylinder_height = (
+            self.billet_length_m
+            if self.billet_length_m is not None
+            else 8 * self.cylinder_radius
+        )
         self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
         self.cylinder_euler = (0.0, 90.0, 0.0)
 
-        self.base_grid_density = int(7 / self.cylinder_diameter)
+        # Self-similar grid: a fixed number of cells across the billet regardless of
+        # its size. At 1.5" this gives dx = 5.46 mm.
+        #
+        # Worth knowing for induction work: at 3 kHz in 316L the skin depth is ~10.2 mm
+        # against a 19.05 mm radius, i.e. d/delta ~= 3.7 — essentially Rudnev's
+        # through-heating efficiency knee. The deposition is therefore fairly volumetric
+        # rather than a thin surface skin, so ~3.5 cells from surface to axis is coarse
+        # but not obviously inadequate. It would be inadequate at a much higher frequency.
+        self.base_grid_density = int(self.grid_cells_across_billet / self.cylinder_diameter)
         dx = 1.0 / self.base_grid_density
         mpm_solver_padding = 3 * dx
         mpm_x_padding_lower = self.cylinder_height * 0.85
@@ -318,6 +357,18 @@ class AgilityForgeOptions(Options):
             # rod (Robin BC on the cut plane) instead of being exposed to air.
             enable_fixed_end_bc=True,
             thermal_contact_conductivity=3000.0,  # W/(m²K); reduced from 5000 — less aggressive die chill on light contact
+            # Surface emissivity, previously left at the engine default and assumed 0.80
+            # in calibration.json. Balat-Pichelin et al. measure as-received 316L
+            # oxidising in air at only ~0.25 climbing to ~0.70 across 1100–1500 K, so
+            # 0.80 overstated radiative loss roughly 2x over the range the 07-17 run
+            # actually reached. 0.40 is representative near the hot end, where the T^4
+            # term dominates and the calibration constraint is strongest.
+            #
+            # ⚠️ The real emissivity is NOT constant — it climbs as the oxide forms, and
+            # a scalar cannot express that. Making the radiation term take epsilon(T)
+            # from material_properties.emissivity_316l is the proper fix; it needs a
+            # kernel change. Until then this is a deliberate mid-range compromise.
+            emissivity=0.40,
             fixed_end_x_cut=float(self.robot.cylinder_pos[0] + self.robot.cylinder_height / 2.0),
             fixed_end_conduction_length=0.08,  # L_eff [m]; larger = weaker held-end conduction sink
             fixed_end_ambient=293.0,

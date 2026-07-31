@@ -31,11 +31,24 @@ from agforge.material_properties import (
 KERNEL_K = (13.31, 700.0, 19.87, 1000.0, 24.16, 0.0129, 293.0)
 KERNEL_CP = (500.0, 700.0, 556.5, 1000.0, 605.2, 0.0743, 293.0)
 
+# Transcribed from genesis/engine/couplers/legacy_coupler.py, the thermal diffusion
+# kernel: `rho = gs.qd_float(7980.0)` inside `alpha = k_local / (rho * Cp_local)`.
+# This was a FIFTH independent copy of the density, missed on the first pass because
+# it lives in the coupler rather than the solver.
+COUPLER_DIFFUSION_RHO = 7980.0
+
 
 def test_kernel_conductivity_literals_match_module():
     assert KERNEL_K == K_316L_SEG_PARAMS, (
         "base_mpm_solver.get_steel_thermal_conductivity has drifted from "
         "material_properties.K_316L_SEG_PARAMS"
+    )
+
+
+def test_coupler_diffusion_density_matches_module():
+    assert COUPLER_DIFFUSION_RHO == STEEL_316L.rho_kg_m3, (
+        "legacy_coupler's thermal diffusion kernel has drifted from "
+        "material_properties.STEEL_316L.rho_kg_m3"
     )
 
 
