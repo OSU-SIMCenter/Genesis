@@ -38,7 +38,19 @@ def zstd_decompress(data):
 
 
 def parse_protobuf_rawimage(data):
-    """Minimal foxglove.RawImage field extraction."""
+    """RawImage field extraction for the HMR thermal stream.
+
+    NOT stock foxglove.RawImage. This version previously assumed the stock layout
+    and returned an EMPTY dict for every frame in the 07-17 file — silently, since
+    an unmatched field number is skipped rather than raising.
+
+    Two differences, both determined from the bytes:
+      * there is no `frame_id`, so fields 2..6 are width/height/encoding/step/data
+        rather than the stock 3..7
+      * width/height/step are fixed32 (wire type 5), not varint (wire type 0)
+
+    Canonical implementation, with the reasoning: agforge/mcap_thermal.py.
+    """
     out = {}
     i, n = 0, len(data)
     def varint(i):
@@ -54,19 +66,17 @@ def parse_protobuf_rawimage(data):
         fn, wt = key >> 3, key & 7
         if wt == 0:
             v, i = varint(i)
-            if fn == 3: out["width"] = v
-            elif fn == 4: out["height"] = v
-            elif fn == 6: out["step"] = v
         elif wt == 2:
             ln, i = varint(i)
             chunk = data[i:i+ln]; i += ln
-            if fn == 2: out["frame_id"] = chunk.decode("utf-8", "replace")
-            elif fn == 5: out["encoding"] = chunk.decode("utf-8", "replace")
-            elif fn == 7: out["data_len"] = len(chunk)
-            elif fn == 1:  # timestamp submessage
-                pass
+            if fn == 4: out["encoding"] = chunk.decode("utf-8", "replace")
+            elif fn == 6: out["data_len"] = len(chunk)
         elif wt == 1: i += 8
-        elif wt == 5: i += 4
+        elif wt == 5:
+            v = struct.unpack_from("<I", data, i)[0]; i += 4
+            if fn == 2: out["width"] = v
+            elif fn == 3: out["height"] = v
+            elif fn == 5: out["step"] = v
         else: break
     return out
 
