@@ -44,7 +44,7 @@ Override with `RobotOptions.billet_length_m` once the real number is known.
 | Parameter | Value | Source | Confidence |
 |---|---|---|---|
 | Length | **76.2 mm** (3 in) | `EMAIL-0629` "coil is ~3\" in length", corroborated `PHOTO` | high |
-| Turns | ~5–6 | `PHOTO` | medium |
+| Turns | ~5 (but see below) | `PHOTO` | **low — unresolved** |
 | Outer diameter | ~58–61 mm | `PHOTO` (IMG_9856, tape across the bore) | medium |
 | Tube outer diameter | ~1/4–3/8 in | `PHOTO` | low |
 | Bore | ~45 mm | derived: OD − 2 × tube OD | medium |
@@ -56,6 +56,14 @@ Override with `RobotOptions.billet_length_m` once the real number is known.
 
 The photos are handheld, with the tape at a different depth than the coil and no
 orthogonal reference. Treat all photo-derived dimensions as **±10–15%**.
+
+⚠️ **The turn count is not settled.** Counting copper crossings against the tape in IMG_9854
+gives ~5 turns at ~17 mm pitch. But the thermal frames show the coil turns as cool bars
+occluding the rod, spaced ~24 mm apart at the measured pixel scale — implying 3–4 turns over
+the 76 mm coil. The two disagree by ~1.4× and this was not chased down, because **turn count
+does not enter the simulation**: `f_axial` is a *peak-normalised* Biot–Savart profile, so
+turns, current and kW all cancel into `q_peak`. It would only matter if you wanted to predict
+`q_peak` from first principles instead of fitting it.
 
 `coil_radius_multiplier` was **2.0**, which places the bore at 200% of workpiece OD while
 the comment beside it cited ASM practice of 110–125%. The measured bore/OD is ~1.18,
