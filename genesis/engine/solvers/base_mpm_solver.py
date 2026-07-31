@@ -419,31 +419,44 @@ class BaseMPMSolver(Solver):
 
     @qd.func
     def get_steel_cp(self, temp):
-        # Temperature-dependent specific heat for AISI 4340 and low-alloy steels
-        cp = gs.qd_float(450.0) # Baseline room temp
+        # Temperature-dependent specific heat for 316L austenitic stainless (J/kg-K).
+        # Mirrors agforge/material_properties.py::cp_316l — these literals cannot import
+        # that module (they compile into the kernel), so tests/test_material_property_
+        # consistency.py asserts the two still agree.
+        #
+        # 316L is austenitic at all temperatures: unlike the AISI 4340 curve this
+        # replaced, there is NO ferrite/austenite transformation, so no jump at ~1000 K.
+        cp = gs.qd_float(500.0) # Baseline room temp
         if temp >= 1000.0:
-            cp = gs.qd_float(750.0)
+            cp = gs.qd_float(585.0) + (temp - gs.qd_float(1000.0)) * gs.qd_float(0.05)
         elif temp >= 700.0:
             u = (temp - gs.qd_float(700.0)) / gs.qd_float(300.0)
-            cp = gs.qd_float(580.0) + u * gs.qd_float(70.0)
+            cp = gs.qd_float(550.0) + u * gs.qd_float(35.0)
         elif temp > 293.15:
             u = (temp - gs.qd_float(293.15)) / gs.qd_float(406.85)
-            cp = gs.qd_float(450.0) + u * gs.qd_float(130.0)
+            cp = gs.qd_float(500.0) + u * gs.qd_float(50.0)
         return cp
 
     @qd.func
     def get_steel_thermal_conductivity(self, temp):
-        # Temperature-dependent thermal conductivity for AISI 4340 low-alloy steel (W/mK)
-        # Data from ASM Handbook Vol. 1 & MatWeb 4340 datasheet
-        k = gs.qd_float(44.0)  # Baseline room temp
+        # Temperature-dependent thermal conductivity for 316L austenitic stainless (W/mK).
+        # Mirrors agforge/material_properties.py::k_316l (see note in get_steel_cp).
+        # Anchored on Outokumpu / AK Steel 316L (1.4404) datasheets; published
+        # room-temperature values span ~14.6-16.3, so treat as +/- ~10%.
+        #
+        # NOTE THE SIGN: 316L conductivity RISES with temperature (14.6 -> ~29), whereas
+        # the AISI 4340 curve this replaced FELL (44 -> 27). They differ ~3x at room
+        # temperature and nearly coincide at forging temperature, so swapping materials
+        # changes the heat-up transient far more than the steady state.
+        k = gs.qd_float(14.6)  # Baseline room temp
         if temp >= 1000.0:
-            k = gs.qd_float(27.0)
+            k = gs.qd_float(23.6) + (temp - gs.qd_float(1000.0)) * gs.qd_float(0.0127)
         elif temp >= 700.0:
             u = (temp - gs.qd_float(700.0)) / gs.qd_float(300.0)
-            k = gs.qd_float(35.0) - u * gs.qd_float(8.0)
+            k = gs.qd_float(19.8) + u * gs.qd_float(3.8)
         elif temp > 293.15:
             u = (temp - gs.qd_float(293.15)) / gs.qd_float(406.85)
-            k = gs.qd_float(44.0) - u * gs.qd_float(9.0)
+            k = gs.qd_float(14.6) + u * gs.qd_float(5.2)
         return k
 
     @qd.func
