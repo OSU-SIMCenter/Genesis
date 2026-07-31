@@ -7,52 +7,41 @@ import igl
 import genesis as gs
 
 from agforge.profiling_util import teleop_profile
+from agforge.material_properties import CP_316L_SEG_PARAMS, cp_316l_seg
 
 
 def get_steel_cp_numpy(temp: np.ndarray) -> np.ndarray:
     """Numpy vectorized specific heat [J/kg-K] for 316L austenitic stainless.
 
-    CPU mirror of ``base_mpm_solver.get_steel_cp``. Canonical curve and sources live
-    in ``agforge/material_properties.py``; this stays a standalone transcription so
-    the hot path carries no import cost.
+    CPU mirror of ``base_mpm_solver.get_steel_cp``. Delegates to
+    ``material_properties.cp_316l_seg`` so there is exactly one definition of the
+    curve the kernel implements — this used to be an independent transcription,
+    which is precisely how the four copies of these constants drifted apart before.
     """
-    cp = np.full_like(temp, 500.0)
-
-    mask_high = temp >= 1000.0
-    if np.any(mask_high):
-        cp[mask_high] = 585.0 + (temp[mask_high] - 1000.0) * 0.05
-
-    mask_mid = (temp >= 700.0) & (temp < 1000.0)
-    if np.any(mask_mid):
-        u = (temp[mask_mid] - 700.0) / 300.0
-        cp[mask_mid] = 550.0 + u * 35.0
-
-    mask_low = (temp > 293.15) & (temp < 700.0)
-    if np.any(mask_low):
-        u = (temp[mask_low] - 293.15) / 406.85
-        cp[mask_low] = 500.0 + u * 50.0
-
-    return cp
+    return cp_316l_seg(temp)
 
 
 def get_steel_cp_torch(temp: torch.Tensor) -> torch.Tensor:
     """Torch vectorized specific heat [J/kg-K] for 316L austenitic stainless.
 
-    See :func:`get_steel_cp_numpy`.
+    Torch-native reimplementation of the same 3-segment form as
+    :func:`get_steel_cp_numpy`; kept on-device because this feeds viewer particle
+    colouring. Knot values are imported rather than inlined so they cannot drift.
     """
+    v0, t1, v1, t2, v2, slope_hi, t0 = CP_316L_SEG_PARAMS
     t = temp.reshape(-1).float()
-    cp = torch.full_like(t, 500.0)
-    cp = torch.where(t >= 1000.0, 585.0 + (t - 1000.0) * 0.05, cp)
+    cp = torch.full_like(t, v0)
+    cp = torch.where(t >= t2, v2 + (t - t2) * slope_hi, cp)
 
-    mask_mid = (t >= 700.0) & (t < 1000.0)
+    mask_mid = (t >= t1) & (t < t2)
     if mask_mid.any():
-        u = (t[mask_mid] - 700.0) / 300.0
-        cp[mask_mid] = 550.0 + u * 35.0
+        u = (t[mask_mid] - t1) / (t2 - t1)
+        cp[mask_mid] = v1 + u * (v2 - v1)
 
-    mask_low = (t > 293.15) & (t < 700.0)
+    mask_low = (t > t0) & (t < t1)
     if mask_low.any():
-        u = (t[mask_low] - 293.15) / 406.85
-        cp[mask_low] = 500.0 + u * 50.0
+        u = (t[mask_low] - t0) / (t1 - t0)
+        cp[mask_low] = v0 + u * (v1 - v0)
 
     return cp
 

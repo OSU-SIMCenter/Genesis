@@ -426,15 +426,16 @@ class BaseMPMSolver(Solver):
         #
         # 316L is austenitic at all temperatures: unlike the AISI 4340 curve this
         # replaced, there is NO ferrite/austenite transformation, so no jump at ~1000 K.
+        # Knots from NIST SRM 1155a DSC (Pichler et al.); 293 K from datasheet.
         cp = gs.qd_float(500.0) # Baseline room temp
         if temp >= 1000.0:
-            cp = gs.qd_float(585.0) + (temp - gs.qd_float(1000.0)) * gs.qd_float(0.05)
+            cp = gs.qd_float(605.2) + (temp - gs.qd_float(1000.0)) * gs.qd_float(0.0743)
         elif temp >= 700.0:
             u = (temp - gs.qd_float(700.0)) / gs.qd_float(300.0)
-            cp = gs.qd_float(550.0) + u * gs.qd_float(35.0)
-        elif temp > 293.15:
-            u = (temp - gs.qd_float(293.15)) / gs.qd_float(406.85)
-            cp = gs.qd_float(500.0) + u * gs.qd_float(50.0)
+            cp = gs.qd_float(556.5) + u * gs.qd_float(48.7)
+        elif temp > 293.0:
+            u = (temp - gs.qd_float(293.0)) / gs.qd_float(407.0)
+            cp = gs.qd_float(500.0) + u * gs.qd_float(56.5)
         return cp
 
     @qd.func
@@ -448,15 +449,16 @@ class BaseMPMSolver(Solver):
         # the AISI 4340 curve this replaced FELL (44 -> 27). They differ ~3x at room
         # temperature and nearly coincide at forging temperature, so swapping materials
         # changes the heat-up transient far more than the steady state.
-        k = gs.qd_float(14.6)  # Baseline room temp
+        # Knots from Ho & Chu CINDAS recommended values for AISI 316 (DTIC ADA129160).
+        k = gs.qd_float(13.31)  # Baseline room temp
         if temp >= 1000.0:
-            k = gs.qd_float(23.6) + (temp - gs.qd_float(1000.0)) * gs.qd_float(0.0127)
+            k = gs.qd_float(24.16) + (temp - gs.qd_float(1000.0)) * gs.qd_float(0.0129)
         elif temp >= 700.0:
             u = (temp - gs.qd_float(700.0)) / gs.qd_float(300.0)
-            k = gs.qd_float(19.8) + u * gs.qd_float(3.8)
-        elif temp > 293.15:
-            u = (temp - gs.qd_float(293.15)) / gs.qd_float(406.85)
-            k = gs.qd_float(14.6) + u * gs.qd_float(5.2)
+            k = gs.qd_float(19.87) + u * gs.qd_float(4.29)
+        elif temp > 293.0:
+            u = (temp - gs.qd_float(293.0)) / gs.qd_float(407.0)
+            k = gs.qd_float(13.31) + u * gs.qd_float(6.56)
         return k
 
     @qd.func

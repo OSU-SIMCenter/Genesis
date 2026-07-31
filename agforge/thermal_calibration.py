@@ -17,6 +17,7 @@ import numpy as np
 
 from agforge.thermal import get_steel_cp_numpy
 from agforge.thermal_field import biot_savart_f_axial, skin_weight
+from agforge.material_properties import k_316l_seg
 
 STEFAN_BOLTZMANN = 5.67e-8  # W/(m^2 K^4)
 # 316L density. The old 7850 (AISI 4340) differed from the mechanical solver's 8000;
@@ -27,23 +28,11 @@ STEEL_RHO_THERMAL = 7980.0  # kg/m^3 — matches thermal kernels (mech uses 8000
 def get_steel_k_numpy(temp: np.ndarray | float) -> np.ndarray:
     """Thermal conductivity [W/mK] for 316L — mirrors ``get_steel_thermal_conductivity``.
 
-    Canonical curve and sources: ``agforge/material_properties.py::k_316l``.
-    Note this RISES with temperature; the AISI 4340 curve it replaced fell.
+    Delegates to ``material_properties.k_316l_seg`` (the kernel's 3-segment form) so
+    this cannot drift from the GPU path. Note the curve RISES with temperature; the
+    AISI 4340 curve it replaced fell.
     """
-    t = np.asarray(temp, dtype=np.float64)
-    k = np.full_like(t, 14.6)
-    mask_high = t >= 1000.0
-    if np.any(mask_high):
-        k[mask_high] = 23.6 + (t[mask_high] - 1000.0) * 0.0127
-    mask_mid = (t >= 700.0) & (t < 1000.0)
-    if np.any(mask_mid):
-        u = (t[mask_mid] - 700.0) / 300.0
-        k[mask_mid] = 19.8 + u * 3.8
-    mask_low = (t > 293.15) & (t < 700.0)
-    if np.any(mask_low):
-        u = (t[mask_low] - 293.15) / 406.85
-        k[mask_low] = 14.6 + u * 5.2
-    return k
+    return k_316l_seg(temp)
 
 
 @dataclass
