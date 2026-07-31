@@ -7,6 +7,8 @@ import genesis as gs
 from genesis.options.options import Options
 from genesis.options import ProfilingOptions, SimOptions, MPMOptions, VisOptions, ViewerOptions
 
+from agforge.material_properties import ACTIVE_MATERIAL
+
 ureg = UnitRegistry()
 
 import os
@@ -269,11 +271,17 @@ class AgilityForgeOptions(Options):
         # Thermal diffusion stability (3D explicit FTCS): substep_dt <= dx² / (6 · α_scaled)
         # where α_scaled = α_base · S_T.  Rearranging: S_T <= dx² / (6 · α_base · substep_dt)
         #
-        # Use worst-case (highest) thermal diffusivity — room-temp AISI 4340 steel:
-        #   k(293K) = 44 W/m·K,  ρ = 7850 kg/m³,  Cp(293K) = 450 J/kg·K
-        #   α_worst = k / (ρ · Cp) ≈ 1.245e-5 m²/s
-        # At forging temps (1000K+), α drops to ~4.6e-6, so room temp is the binding limit.
-        alpha_worst = 44.0 / (7850.0 * 450.0)  # ~1.245e-5 m²/s
+        # Use worst-case (highest) thermal diffusivity over the operating range.
+        #
+        # NOTE — this flipped when the billet material changed from AISI 4340 to 316L.
+        # For 4340, α was highest at ROOM temperature (1.245e-5) and fell to ~4.6e-6 when
+        # hot, so room temp was the binding limit. 316L is the other way round: its
+        # conductivity RISES with temperature, so α climbs from ~3.7e-6 (293 K) to
+        # ~6.0e-6 (1450 K) and the binding limit is now the FORGING end, not the cold end.
+        #
+        # Net effect: 316L is roughly half as diffusive as 4340 at its worst, so the
+        # thermal CFL is ~2x more permissive than it used to be.
+        alpha_worst = ACTIVE_MATERIAL.alpha_worst()  # 316L: ~6.05e-6 m²/s at ~1450 K
         S_T_max = dx**2 / (6.0 * alpha_worst * substep_dt)
         
         # Fraction of the explicit-diffusion CFL limit used as the thermal time-scale. Higher =
@@ -466,7 +474,17 @@ class TeleopOptions(AgilityForgeOptions):
     # steady-state ceiling, so q_peak must be high enough to beat them at ~1200C. Fine-tune the
     # exact value to the observed idle-heating plateau.
     heating_power: float = 2.5e8  # Peak volumetric power density [W/m^3]
-    skin_depth: Optional[float] = None # Calculated parametrically based on cylinder radius
+    skin_depth: Optional[float] = None  # Derived from material + coil_frequency_hz below
+
+    # Induction coil drive frequency [Hz].
+    # ⚠️ NOT MEASURED. Colton Wright supplied coil current (420.2 A) for the 2026-07-17
+    # calibration run but not frequency or kW rating. 3 kHz is inferred from induction
+    # design practice for a 38.1 mm bar (the d/delta ~= 4 through-heating efficiency knee),
+    # NOT from data. Replace with the real value once it is known.
+    coil_frequency_hz: float = 3000.0
+    # Temperature at which the material's electrical resistivity is evaluated for the skin
+    # depth. Resistivity rises with temperature, so a hot reference gives a deeper delta.
+    induction_reference_temp_k: float = 1273.15
     thermal_visual_fade: bool = True  # Display-only: fade held-end color to <=900K at the seam (physics unchanged)
     _slider_speed: float = 0.0034
     _hinge_speed: float = 0.08
@@ -516,9 +534,25 @@ class TeleopOptions(AgilityForgeOptions):
         # Override default
         self.strike.approach_speed = parametric_speed
         
-        # Skin depth = hot reference depth of a well-designed MF through-heating coil. Eddy-current
-        # power deposits as exp(-2d/delta) with delta = sqrt(rho_e/(pi*f*mu)); for hot (above-Curie,
-        # non-magnetic) steel at ~6-7 kHz this gives delta ~= R/2, i.e. the diameter/skin-depth ratio
-        # d/delta ~= 4 that Rudnev cites as the efficiency knee for billet through-heating.
-        self.skin_depth = self.robot.cylinder_radius / 2.0
+        # EM skin depth delta = sqrt(rho_e / (pi * f * mu0 * mu_r)) — a MATERIAL + FREQUENCY
+        # property. It does NOT depend on billet radius.
+        #
+        # This used to read `self.skin_depth = self.robot.cylinder_radius / 2.0`, justified as
+        # the d/delta ~= 4 through-heating efficiency knee Rudnev cites. That is a COIL DESIGN
+        # rule (choose f to suit the billet), not a material property, and tying delta to R had
+        # a silent failure mode: changing billet size rewrote the implied drive frequency
+        # without saying so. At the 1-inch sim billet, delta = R/2 implies ~6.6 kHz for hot
+        # 316L — which is what the old comment asserted. At Colton's 38.1 mm rod the identical
+        # rule implies ~2.9 kHz. Same line of code, different physics, no warning.
+        #
+        # Deriving delta from the material and an explicit frequency makes the assumption
+        # visible and overridable. See agforge/material_properties.py.
+        #
+        # ⚠️ coil_frequency_hz IS NOT MEASURED — see its declaration above. q_peak scales
+        # roughly as 1/delta, so a wrong frequency trades off directly against a wrong q_peak:
+        # total absorbed power stays well constrained by the measured heating curve, but the
+        # surface-intensity / penetration-depth split does not.
+        self.skin_depth = ACTIVE_MATERIAL.skin_depth_m(
+            self.coil_frequency_hz, temp_k=self.induction_reference_temp_k
+        )
 
