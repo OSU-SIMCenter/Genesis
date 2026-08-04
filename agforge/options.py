@@ -217,11 +217,15 @@ class RobotOptions(Options):
         # Self-similar grid: a fixed number of cells across the billet regardless of
         # its size. At 1.5" this gives dx = 5.46 mm.
         #
-        # Worth knowing for induction work: at 3 kHz in 316L the skin depth is ~10.2 mm
-        # against a 19.05 mm radius, i.e. d/delta ~= 3.7 — essentially Rudnev's
-        # through-heating efficiency knee. The deposition is therefore fairly volumetric
-        # rather than a thin surface skin, so ~3.5 cells from surface to axis is coarse
-        # but not obviously inadequate. It would be inadequate at a much higher frequency.
+        # 🚨 THIS IS NOW KNOWN TO BE INADEQUATE FOR INDUCTION. The previous note here
+        # reasoned that at an assumed 3 kHz the skin depth was ~10.2 mm against a
+        # 19.05 mm radius (d/delta ~= 3.7, Rudnev's through-heating knee), so deposition
+        # was near-volumetric and ~3.5 cells surface-to-axis was "coarse but not obviously
+        # inadequate" — while explicitly warning it "would be inadequate at a much higher
+        # frequency". Colton confirmed 2026-08-04 that the real drive is ~250 kHz, 83x
+        # higher, giving delta ~= 1.12 mm: the skin is ~4.9x FINER than one cell here.
+        # The induction deposition profile is therefore unresolved at this resolution.
+        # Do not read induction results at the default grid as converged.
         self.base_grid_density = int(self.grid_cells_across_billet / self.cylinder_diameter)
         dx = 1.0 / self.base_grid_density
         mpm_solver_padding = 3 * dx
@@ -545,11 +549,24 @@ class TeleopOptions(AgilityForgeOptions):
     skin_depth: Optional[float] = None  # Derived from material + coil_frequency_hz below
 
     # Induction coil drive frequency [Hz].
-    # ⚠️ NOT MEASURED. Colton Wright supplied coil current (420.2 A) for the 2026-07-17
-    # calibration run but not frequency or kW rating. 3 kHz is inferred from induction
-    # design practice for a 38.1 mm bar (the d/delta ~= 4 through-heating efficiency knee),
-    # NOT from data. Replace with the real value once it is known.
-    coil_frequency_hz: float = 3000.0
+    # ANSWERED by Colton Wright 2026-08-04: "coil frequency is adjusted by Ambrell's
+    # controller dynamically and it tends to sit around 250kHz for a 1.5" piece of 316L."
+    # This replaces an inferred 3 kHz, which was wrong by 83x.
+    #
+    # 🚨 The consequence is not a detail. delta = sqrt(rho_e/(pi*f*mu0)) scales as
+    # 1/sqrt(f), so delta collapses 10.22 mm -> 1.12 mm (at 1273 K) and R/delta goes
+    # 1.9 -> 17. This is the THIN-SKIN regime, not the through-heating regime the old
+    # comment assumed: only ~5% of the cross-section receives power directly, and the
+    # rest heats by conduction (skin->bulk equilibration is ~0.2 s).
+    #
+    # 🚨 AND THE GRID CANNOT RESOLVE IT. dx = 5.46 mm at the default 7 cells across the
+    # billet, so the skin is ~4.9x FINER THAN ONE CELL. The comment on base_grid_density
+    # above warned this scheme "would be inadequate at a much higher frequency" — that
+    # condition is now met, 83x over. Deposition is effectively a surface flux and
+    # arguably wants a surface boundary condition rather than a volumetric source.
+    # Treat any induction result at the default resolution as unresolved until this is
+    # addressed. See docs/DATASET_20260717_STRUCTURE.md.
+    coil_frequency_hz: float = 250000.0
     # Temperature at which the material's electrical resistivity is evaluated for the skin
     # depth. Resistivity rises with temperature, so a hot reference gives a deeper delta.
     induction_reference_temp_k: float = 1273.15

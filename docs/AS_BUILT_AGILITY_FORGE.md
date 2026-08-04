@@ -51,8 +51,41 @@ Override with `RobotOptions.billet_length_m` once the real number is known.
 | Current-path radius | **26 mm** | derived: outer radius − tube radius | medium |
 | `coil_radius_multiplier` | **1.365** | 26.0 / 19.05 | medium |
 | Coil current | **420.2 A** | `EMAIL-0717` | high |
-| Drive frequency | **UNKNOWN** | — | **none — assumed 3 kHz** |
-| Power rating (kW) | **UNKNOWN** | — | none |
+| Drive frequency | **~250 kHz** | `EMAIL-0804` | medium — dynamic, "tends to sit around" |
+| Power rating (kW) | **UNKNOWN** | — | none (and not needed — see below) |
+
+🚨 **Drive frequency answered 2026-08-04, and it was wrong by 83×.** Colton: *"coil frequency is
+adjusted by Ambrell's controller dynamically and it tends to sit around 250kHz for a 1.5" piece of
+316L."* We had inferred 3 kHz from through-heating design practice. At 250 kHz the skin depth
+collapses **10.22 mm → 1.12 mm** and R/δ goes **1.9 → 17**: this is a *thin-skin* process where only
+~5% of the cross-section receives power directly and the bulk heats by conduction. The grid
+(dx = 5.46 mm) cannot resolve a 1.12 mm skin — see `options.py` and
+[`DATASET_20260717_STRUCTURE.md`](./DATASET_20260717_STRUCTURE.md).
+
+Note "tends to sit around" — it is a dynamically-tracked resonant frequency, not a setpoint, so
+treat it as approximate and expect it to drift with load temperature and coupling.
+
+## Thermal camera — identified 2026-08-04
+
+| Parameter | Value | Source | Confidence |
+|---|---|---|---|
+| Make/model | **Optris PI 1M** (S/N 23022008) | `EMAIL-0804` + frame-size match | high |
+| Spectral range | **0.85–1.1 µm** (short-wave IR) | `LIT` datasheet | high |
+| Resolution / rate | **382×288 @ 27 Hz** (documented sub-frame mode) | `LIT` + `MCAP-0717` | high |
+| Measurement range | **450–1800 °C** (27 Hz mode) | `LIT` | high |
+| Emissivity setting | Optris **default for metals**, exact value unknown | `EMAIL-0804` | **low** |
+
+A second camera, an **Optris PI 640i** (S/N 26012117, LWIR 8–14 µm, max 900 °C), is also connected
+but is **not** the source of these frames: 382×288 is a documented PI 1M sub-frame mode, and the
+data reaches 1015 °C, above the 640i's ceiling.
+
+**This retires the dominant uncertainty.** The fear was LWIR, where a 2× emissivity error moves the
+reading ~440 K (37%). At 1 µm the same error moves it **~65 K (5.5%)** — the PI 1M is **6.7× less
+sensitive**, which is precisely why Optris sells it for hot metal. Emissivity is now a ~5% effect,
+not a ~2× effect.
+
+The exact emissivity value is still unknown; the acquisition code is in Colton's HMR repo at
+`HMR/cpp/optris_cam` (access granted 2026-08-04).
 
 The photos are handheld, with the tape at a different depth than the coil and no
 orthogonal reference. Treat all photo-derived dimensions as **±10–15%**.

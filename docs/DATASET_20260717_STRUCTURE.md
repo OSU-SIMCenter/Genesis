@@ -10,6 +10,85 @@ provenance), [`measured_heating_curve_20260717.csv`](./measured_heating_curve_20
 
 ---
 
+## 0. UPDATE 2026-08-04 — Colton answered, and it changes three things
+
+His reply (`EMAIL-0804`) identified the cameras and the drive frequency. Read this before the rest.
+
+### The camera is short-wave, not LWIR — the dominant uncertainty is retired
+
+**Optris PI 1M**, 0.85–1.1 µm, 382×288 @ 27 Hz (a documented sub-frame mode — an exact match to
+these frames), range 450–1800 °C. A PI 640i (LWIR, ≤900 °C) is also connected but cannot be the
+source: our data reaches 1015 °C.
+
+The whole calibration was gated on the fear that this was LWIR, where a 2× emissivity error moves
+the reading ~438 K (37%) and could inflate fitted `q_peak` ~2×. **At 1 µm the same error moves it
+~65 K (5.5%)** — 6.7× less sensitive, which is exactly why Optris sells this camera for hot metal.
+Emissivity is now a **~5% effect**. Colton uses "the default settings for metals"; the exact value
+is in his HMR repo at `HMR/cpp/optris_cam`.
+
+### The 450 °C floor explains the "camera floor" — and kills episode 1
+
+The PI 1M cannot measure below **450 °C**. The 280.95 °C value on 672/1212 sampled frames is an
+**out-of-range indicator, not a temperature**. Consequences:
+
+- **Episode 1 peaked at 447 °C ⇒ it is entirely at/below the floor and is not a usable
+  measurement at all.**
+- Any reading below ~450 °C anywhere must be discarded, including the very start of episode 3
+  (484 °C, only just above).
+- ⚠️ It also means *"no hot metal in view"* and *"rod present but below 450 °C"* are
+  indistinguishable in the thermal feed. The episode structure in §2 survives only because the
+  **Tormach X axis** independently confirms the rod was retracted — see §2.
+
+### 🚨 The drive frequency was wrong by 83×, and it retracts a headline
+
+Colton: *"coil frequency is adjusted by Ambrell's controller dynamically and it tends to sit
+around 250kHz for a 1.5" piece of 316L."* We had assumed **3 kHz**.
+
+| | 3 kHz (assumed) | **250 kHz (actual)** |
+|---|---|---|
+| skin depth δ @1273 K | 10.22 mm | **1.12 mm** |
+| R/δ | 1.9 | **17** |
+| fraction of cross-section heated directly | 38% | **5.3%** |
+| skin→bulk equilibration | 19.5 s | **0.23 s** |
+
+This is a **thin-skin** process, not through-heating. And **the grid cannot resolve it**:
+dx = 5.46 mm makes the skin ~4.9× finer than one cell. `options.py`'s own note warned this scheme
+"would be inadequate at a much higher frequency" — that condition is now met.
+
+**RETRACTED: "`q_peak` is 14.3× too hot".** That compared the *surface* deposition rate
+`q_peak/(ρCp)` against a *bulk* measured rise — fair only when δ ~ R, which 3 kHz implied. At
+250 kHz the skin equilibrates in 0.23 s, so the bar heats at the **volume-averaged** rate:
+
+- volume-averaged rate at `q_peak = 2.5e8`: **2.93 K/s** vs measured **3.84 K/s** ⇒ **0.76×**
+- i.e. the committed value is ~24% **too LOW**, not 14× too high
+- implied `q_peak` ≈ **3.28e8**, which lands close to the independent physics-derived ~3e8 from the
+  2026-06-19 review
+
+A good reminder that a confident ratio is only as good as the regime assumption underneath it.
+
+### The resolution problem, demonstrated rather than argued [measured]
+
+Re-running the induction smoke test with the corrected frequency:
+
+| | δ = 10.22 mm (assumed) | δ = 1.12 mm (actual) |
+|---|---|---|
+| heating rate | 12.9 K/s | **1.01 K/s** |
+| ΔT over 80 steps | 1796 K | **134 K** |
+
+A **13× drop**. Roughly 9.1× of that is genuine physics (the effective absorption depth is δ/2).
+The remainder is **discretization**: particle spacing is ~2.7 mm, so the outermost particle centres
+sit ~1.37 mm below the surface, where `w_skin = exp(−2·1.37/1.12) ≈ 0.087`. **No particle ever
+samples the peak of the exponential**, so the deposition is under-integrated — a crude
+layer estimate puts that loss near 2×, which combined with the 9.1× is the right order for the
+observed 13×.
+
+So the model now *under*-heats for a numerical reason, on top of `q_peak` itself being ~24% low.
+Do not tune `q_peak` upward to compensate — that would bake a discretization error into a physical
+constant. Fix the sampling first. (The layer estimate is analytic; actual particle depths were not
+instrumented.)
+
+---
+
 ## 1. The file is not just a thermal feed [measured]
 
 | topic | rate | payload |
@@ -35,13 +114,25 @@ Two consequences worth stating plainly:
 Scanning all chunks at ~1.5 Hz (1212 frames), classifying a frame as "hot metal in view" when
 >1% of pixels exceed 400 °C:
 
-| | window | duration | p99 range |
-|---|---|---|---|
-| **Episode 1** | 21.5 – 72.8 s | 51 s | 400 → 447 °C |
-| *gap A — rod out of frame* | 74 – 225 s | 151 s | — |
-| **Episode 2** | 226.1 – 285.0 s | 59 s | 402 → **941 °C** |
-| *gap B — rod out of frame* | 286 – 370 s | 84 s | — |
-| **Episode 3** — Colton's window | 371.2 – 568.4 s | 197 s | 484 → 925 °C |
+| | window | duration | p99 range | **Tormach X** |
+|---|---|---|---|---|
+| **Episode 1** | 21.5 – 72.8 s | 51 s | 400 → 447 °C | ~290–316 mm |
+| *gap A — rod withdrawn* | 74 – 225 s | 151 s | — | **0.0 mm** |
+| **Episode 2** | 226.1 – 285.0 s | 59 s | 402 → **941 °C** | **290.5 mm** |
+| *gap B — rod withdrawn* | 286 – 370 s | 84 s | — | **0.0 mm** |
+| **Episode 3** — Colton's window | 371.2 – 568.4 s | 197 s | 484 → 925 °C | **350.0 mm** |
+
+The X column is what makes this reading safe. Since the PI 1M cannot see below 450 °C (§0), the
+thermal feed alone cannot distinguish "rod removed" from "rod present but cool" — but the Tormach
+log puts X at **exactly 0.0 mm** through both gaps, so they are genuine withdrawals.
+
+⚠️ **Episode 2 was at a DIFFERENT axial position: X = 290.5 mm against episode 3's 350.0 mm —
+59.5 mm less insertion.** An earlier version of this doc called episode 2 a second dataset at the
+same drive state on the strength of the shared `heater_on` block. The heater state *is* shared, but
+the geometry is not, so it is **not a replicate**. That may be a feature — different coil/rod
+overlap samples `f_axial` differently and carries independent information — but it must be modelled
+as a different configuration, not averaged with episode 3. **Episode 1 is unusable regardless**
+(entirely below the camera floor).
 
 The two gaps are the ~235 s of "black" frames: the rod is simply not in view. The earlier
 characterisation of everything before 380 s as *"unrelated activity"* undersold it — **episode 2
@@ -236,13 +327,22 @@ the filled values. Dips sit near y≈54 and y≈157.
 
 ### Still open
 
-- **Camera make/model + whether the deci-kelvin matrix is emissivity-corrected** — still the
-  biggest single lever (LWIR worst case would make the true rise only 52–69% of measured).
-- **Coil drive frequency** — sets δ; currently assumed 3 kHz.
-- **Were episodes 1 and 2 at the same 420.2 A?** Colton quotes that current for "this" run.
-  `heater_on` proves the *enable* was continuous, not that the *setpoint* was unchanged.
+- ✅ ~~Camera make/model~~ — **answered**: Optris PI 1M, 0.85–1.1 µm. See §0.
+- ✅ ~~Coil drive frequency~~ — **answered**: ~250 kHz. See §0.
+- **The exact emissivity setting** — Colton uses "the default settings for metals" and the
+  calibration is pulled from Optris servers at runtime. The value is recoverable from his HMR repo
+  (`HMR/cpp/optris_cam`, access granted 2026-08-04). Now a ~5% effect rather than a ~2× one, so
+  worth having but no longer blocking.
+- **🚨 Grid resolution vs a 1.12 mm skin** — new, and the most serious modelling issue on the
+  table. dx = 5.46 mm. Deposition is effectively a surface flux; a volumetric source on this grid
+  cannot represent it. Options: refine locally, or reformulate as a surface boundary condition.
+- **Was episode 2 at the same 420.2 A?** Colton quotes that current for "this" run. `heater_on`
+  proves the *enable* was continuous, not that the *setpoint* was unchanged — and we now know the
+  rod position differed, so episode 2 needs its own treatment either way.
 - **Same rod throughout?** Nothing in the log says so.
 - Confirmation that `heater_ready` is a heartbeat rather than a power signal.
+- The frequency "tends to sit around" 250 kHz — it is a dynamically tracked resonance, not a
+  setpoint, so δ drifts with load temperature and coupling during the run.
 
 ---
 
