@@ -115,17 +115,23 @@ full 26.0–28.6 mm range implied by both OD readings moves L_eff by **<1%**.
 the comment beside it cited ASM practice of 110–125%. The measured bore/OD is ~1.18,
 inside that range; the code value was not.
 
-**Frequency is the single most consequential unknown.** It is not in the mcap —
-`hmr/ard/state` exposes the induction supply only as the digital flags `heater_on`,
-`heater_ready`, `heater_fault`, with analog channels limited to air pressure and ram
-position. There is no current, power or frequency telemetry anywhere in the file. It has
-to come from Colton. 3 kHz is inferred from design practice for a 38.1 mm bar (the
-d/δ ≈ 4 through-heating efficiency knee), **not measured**.
+**Frequency is not in the mcap and never will be.** `hmr/ard/state` exposes the induction
+supply only as the digital flags `heater_on`, `heater_ready`, `heater_fault`, with analog
+channels limited to air pressure and ram position. There is no current, power or frequency
+telemetry anywhere in the file — which is why it had to come from Colton, and why it cannot
+be recovered retrospectively for the earlier episodes.
 
-At 3 kHz in 316L, δ ≈ 10.2 mm against a 19.05 mm radius — d/δ ≈ 3.7. The deposition is
-therefore fairly volumetric rather than a thin surface skin, which is why ~3.5 grid cells
-from surface to axis is coarse but not obviously inadequate. That would stop being true at
-a much higher frequency.
+~~3 kHz is inferred from design practice for a 38.1 mm bar (the d/δ ≈ 4 through-heating
+efficiency knee), not measured. At 3 kHz in 316L, δ ≈ 10.2 mm against a 19.05 mm radius —
+d/δ ≈ 3.7, so deposition is fairly volumetric rather than a thin surface skin, which is why
+~3.5 grid cells from surface to axis is coarse but not obviously inadequate. That would stop
+being true at a much higher frequency.~~
+
+🚨 **SUPERSEDED 2026-08-04 — and the struck-through paragraph's own escape clause is what
+happened.** The real drive is **~250 kHz**, 83× higher. δ ≈ **1.12 mm**, d/δ ≈ **17**: a thin
+surface skin, not volumetric deposition, and ~3.5 grid cells surface-to-axis is now
+**definitely inadequate** — the skin is 4.9× finer than a single cell. See the frequency row
+above and `DATASET_20260717_STRUCTURE.md` §0.
 
 ## Kinematics
 
