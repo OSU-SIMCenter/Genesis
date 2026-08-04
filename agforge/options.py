@@ -35,13 +35,47 @@ class MaterialOptions(Options):
     rho: float = 8000.
     von_mises_yield_stress: float = 190.e6 * 0.1
 
-    # Johnson-Cook Parameters (Hot Steel ~1200C)
+    # ---------------------------------------------------------------- #
+    # Johnson-Cook parameters.
+    #
+    # PROVENANCE: this block descends from the canonical Johnson & Cook (1983)
+    # parameter set for AISI 4340 (A=792 MPa, B=510 MPa, n=0.26, C=0.014,
+    # m=1.03, T_melt=1793 K). Only A and B were ever hand-scaled, to stand in
+    # for hot steel; n and C are still 4340's values. The billet is 316L.
+    #
+    # Sourced 316L replacements at 1000 C are derived in
+    # ``agforge/material_properties_mechanical.py`` and documented in
+    # ``docs/316L_MECHANICAL_PROPERTIES.md``. They are NOT applied here yet:
+    # switching them roughly doubles the flow stress, which is a live change to
+    # a sim the accuracy workstream is actively debugging. To adopt:
+    #
+    #     from agforge.material_properties_mechanical import isothermal_card
+    #     card = isothermal_card(strain_rate=1.0)   # -> jc_A/jc_B/jc_n, E, rho
+    #
+    # Note ``E`` and ``rho`` also feed the CFL timestep (dt ~ dx*sqrt(rho/E)),
+    # so correcting those costs ~1.56x in dt; jc_A/jc_B/jc_n do not.
+    # ---------------------------------------------------------------- #
     use_johnson_cook: bool = True
-    jc_A: float = 40.e6   # ~40 MPa (Very Hot)
-    jc_B: float = 100.e6  # Reduced hardening
-    jc_n: float = 0.26
-    jc_C: float = 0.014
+    jc_A: float = 40.e6   # ~40 MPa (Very Hot) - NOT sourced; see above
+    jc_B: float = 100.e6  # Reduced hardening  - NOT sourced; see above
+    jc_n: float = 0.26    # 4340's value, un-converted
+    jc_C: float = 0.014   # 4340's value, un-converted. NOTE: currently INERT -
+                          # the kernel never reads C, and its signature carries
+                          # no strain rate, so it cannot. See the docs.
     jc_eps0: float = 1.0
+
+    # Thermal-softening terms. These previously sat hardcoded at the
+    # JohnsonCookPlasticity call site in environment.py rather than here, which
+    # is why the 316L conversion missed them and left 4340's values in place.
+    jc_T_ref: float = 293.15
+    #: Read from the material module so it cannot drift. 316L solidus = 1675 K;
+    #: the old hardcoded 1793 K was AISI 4340's melting point.
+    jc_T_melt: float = ACTIVE_MATERIAL.t_melt_k
+    #: UNVERIFIED for 316L. 1.03 is 4340's exponent; austenitic stainless is
+    #: usually quoted lower (~0.5-0.7) but no source was traced. Currently inert:
+    #: runs are isothermal, so T* ~ 0 and the softening factor is ~1.0 whatever
+    #: this is. Source it before enabling thermal softening.
+    jc_m: float = 1.03
 
 class EnvOptions(Options):
     """Parameters related to the RL environment and task."""
