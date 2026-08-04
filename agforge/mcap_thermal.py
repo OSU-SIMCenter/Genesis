@@ -56,6 +56,22 @@ MAGIC = b"\x89MCAP0\r\n"
 THERMAL_TOPIC = "hmr/sensors/thermalcam"
 DECI_KELVIN = 10.0
 
+#: Usable heating window for `20260717_135009.mcap`, seconds from the first message.
+#: Colton said "380s into the mcap to the end". The START is his and is right; "the
+#: end" is NOT. Reading every frame at full rate shows p99 surface temperature
+#: falling 925 -> 400 C between 568.4 s and 570.4 s, then flat at ~400 C until the
+#: file ends at 573.3 s.
+#:
+#: That collapse is ~200 K/s. Radiative cooling of a 38.1 mm 316L rod at 925 C is
+#: only ~1 K/s — eps*sigma*(T^4 - T_inf^4) * (2/r) / (rho*Cp) — so it is ~200x too
+#: fast to be the rod cooling in place. The rod leaves the field of view and the
+#: flat tail is background, not metal. Fitting to "the end" fits the withdrawal.
+#:
+#: NOTE this is emphatically NOT the power-off cooling curve worth requesting from
+#: Colton: far too fast to carry loss information. Worth asking what happens here.
+HEAT_START_S = 380.0
+HEAT_END_S = 568.4
+
 
 def _decompress_zstd(data: bytes, size_hint: int) -> bytes:
     """zstandard if installed, else shell out to the zstd CLI."""
