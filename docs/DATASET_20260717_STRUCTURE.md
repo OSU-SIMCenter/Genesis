@@ -182,7 +182,27 @@ Committed `coil_length` is 88.9 mm (3.5 in) — within **3%** of the 3.5-turn re
 ⚠️ The scale still assumes the hot band's edge is the rod's edge, and thermal blooming widens it —
 which biases the scale **high**. So treat **3.88–4.17 px/mm** as the bracket (Colton's June figure
 3.8791 is the lower end, though the camera may have moved between June and July). That is a
-material tightening on the previous ±25%, but it is not resolved.
+material tightening on the previous ±25%, but it is **not resolved**.
+
+### Two attempts to confirm the scale from motion — both FAILED [measured]
+
+The withdrawal is a *known* 158.7 mm displacement at a logged 50 mm/s, which looked like a way to
+get the scale with no dependence on edges at all. Recording the failures because each one says
+something about the scene, and because the temptation is to keep fishing until a number appears:
+
+1. **Whole-pattern cross-correlation of consecutive frames: no shift at all.** The axial profile
+   does not move while X travels 86 mm. Expected in hindsight — a uniform cylinder sliding **along
+   its own axis** is translationally invariant, so there is nothing to correlate. It also confirms
+   the periodic dips are **static**, consistent with them being the coil rather than the rod.
+2. **Tracking the rod's trailing end as a sweeping thermal edge: R² = 0.31, residual 14 px.** No
+   clean edge crosses the frame. Instead `hot` falls 620 → 411 °C while `cold` falls 430 → 379 °C:
+   the whole scene **dims together** rather than an edge sweeping through it.
+
+Taken together these say the field of view is dominated by the coil and its surroundings, with the
+rod seen through it — which reinforces §5.2 and means the identification of the 159 px band as
+*the rod* is **plausible but unconfirmed**. If that band is instead the coil bore (~45 mm) the
+scale would be ~3.5 px/mm. Resolving this still needs Colton's pixel-mapping code, or a frame with
+a known reference edge.
 
 **The profile itself.** Temperature falls monotonically from the top of the frame downward; the
 peak sits at or above y=0, i.e. **the coil centre is outside the field of view** and we are seeing
