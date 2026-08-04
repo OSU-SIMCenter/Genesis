@@ -142,10 +142,20 @@ class RobotOptions(Options):
     #: Grid cells across the billet diameter. Drives base_grid_density.
     grid_cells_across_billet: int = 7
 
-    # Induction coil. Length from Colton ("the coil is ~3\" in length"), corroborated
-    # by the tape-measure photos IMG_9854/9855/9856 shipped with the 07-17 dataset.
+    # Induction coil. Colton's email says "the coil is ~3\" in length"; a direct
+    # count off the tape-measure photos IMG_9854/9855/9856 gives 4 turns (possibly
+    # 3.5) spanning ~3.5", i.e. a pitch of ~22 mm. That pitch is corroborated by the
+    # coil-shadow spacing in the thermal frames (~24 mm) and refutes an earlier
+    # photo-derived reading of ~17 mm / ~5 turns.
+    #
+    # 3.5" is the extent of the CURRENT SHEET (turns x pitch), which is what the
+    # finite-solenoid f_axial actually models; Colton's "~3" is approximate and may
+    # describe the helical body without leads. The difference is not cosmetic:
+    # 3.0" -> 3.5" raises the effective heated length (integral of f_axial along the
+    # rod) by 15%, and fitted q_peak scales as ~1/L_eff, so it moves the fit by 15%.
+    # Treat this as the dominant remaining GEOMETRIC uncertainty in the fit.
     coil_offset_x: float = -0.129891413331031800
-    coil_length: float = 0.0762  # 3 inch
+    coil_length: float = 0.0889  # 3.5 inch — see above; was 0.0762 (3")
     # Effective solenoid radius = multiplier × billet radius. For close-coupled forging
     # coils the bore is typically ~110–125% of workpiece OD (ASM / induction heating practice).
     #
@@ -157,6 +167,13 @@ class RobotOptions(Options):
     # ~1.18, inside the ASM range.
     #
     # Handheld photos with the tape at a different depth than the coil: treat as ±10–15%.
+    #
+    # A later direct reading off the same photos put the coil OD at ~2.5" (63.5 mm)
+    # rather than the 58–61 mm measured here, which would imply a multiplier of
+    # ~1.42–1.50. Deliberately NOT changed: sweeping the current-path radius from
+    # 26.0 to 28.6 mm moves the effective heated length by <1%, so it is far below
+    # the coil-LENGTH uncertainty above and not worth churning a committed number.
+    # The two readings agree to within 5–9%, which is inside the ±10–15% band.
     coil_radius_multiplier: float = 1.365
     coil_radius: Optional[float] = None  # computed in model_post_init
     coup_softness: float = 5e-4

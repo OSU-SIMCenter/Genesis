@@ -43,9 +43,9 @@ Override with `RobotOptions.billet_length_m` once the real number is known.
 
 | Parameter | Value | Source | Confidence |
 |---|---|---|---|
-| Length | **76.2 mm** (3 in) | `EMAIL-0629` "coil is ~3\" in length", corroborated `PHOTO` | high |
-| Turns | ~5 (but see below) | `PHOTO` | **low — unresolved** |
-| Outer diameter | ~58–61 mm | `PHOTO` (IMG_9856, tape across the bore) | medium |
+| Length | **88.9 mm** (3.5 in) | `PHOTO` direct count (see below); `EMAIL-0629` says "~3\"" | medium |
+| Turns | **4** (possibly 3.5) | `PHOTO` direct count, corroborated by thermal-frame pitch | medium |
+| Outer diameter | ~58–64 mm | `PHOTO` (IMG_9856 tape ~58–61; later direct read ~2.5 in) | medium |
 | Tube outer diameter | ~1/4–3/8 in | `PHOTO` | low |
 | Bore | ~45 mm | derived: OD − 2 × tube OD | medium |
 | Current-path radius | **26 mm** | derived: outer radius − tube radius | medium |
@@ -57,13 +57,26 @@ Override with `RobotOptions.billet_length_m` once the real number is known.
 The photos are handheld, with the tape at a different depth than the coil and no
 orthogonal reference. Treat all photo-derived dimensions as **±10–15%**.
 
-⚠️ **The turn count is not settled.** Counting copper crossings against the tape in IMG_9854
-gives ~5 turns at ~17 mm pitch. But the thermal frames show the coil turns as cool bars
-occluding the rod, spaced ~24 mm apart at the measured pixel scale — implying 3–4 turns over
-the 76 mm coil. The two disagree by ~1.4× and this was not chased down, because **turn count
-does not enter the simulation**: `f_axial` is a *peak-normalised* Biot–Savart profile, so
-turns, current and kW all cancel into `q_peak`. It would only matter if you wanted to predict
-`q_peak` from first principles instead of fitting it.
+✅ **The turn count is now resolved: 4 turns** (possibly 3.5, leaning 4), read directly off the
+coil photos, spanning ~3.5 in — a pitch of ~22 mm. That independently matches the thermal
+frames, where the turns appear as cool bars occluding the rod spaced **~24 mm** apart. An
+earlier reading of ~5 turns at ~17 mm pitch, taken by counting copper crossings against the
+tape in IMG_9854, is **refuted** — it was the outlier of the three estimates.
+
+Turn count still **does not enter the simulation**: `f_axial` is a *peak-normalised*
+Biot–Savart profile, so turns, current and kW all cancel into `q_peak`. It would only matter
+for predicting `q_peak` from first principles instead of fitting it. What the count bought us
+is the **length**, via pitch × turns.
+
+⚠️ **Coil length is now the dominant geometric uncertainty.** Colton's email says "~3\"";
+the direct photo count gives ~3.5" for the current-sheet extent (4 × 22 mm), which is what
+the finite-solenoid `f_axial` actually models — his "~3" may describe the helical body
+without leads. `coil_length` is set to **3.5"**. The difference is not cosmetic: going
+3.0 → 3.5 in raises the effective heated length (∫`f_axial` along the rod) by **15%**, and
+fitted `q_peak` scales as ~1/L_eff, so it moves the fit by 15%. Worth confirming with Colton.
+
+By contrast the coil *radius* barely matters: sweeping the current-path radius across the
+full 26.0–28.6 mm range implied by both OD readings moves L_eff by **<1%**.
 
 `coil_radius_multiplier` was **2.0**, which places the bore at 200% of workpiece OD while
 the comment beside it cited ASM practice of 110–125%. The measured bore/OD is ~1.18,
