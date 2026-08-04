@@ -296,18 +296,58 @@ here, so a confident-looking citation is not sufficient — check the test windo
    traced. It is inert under isothermal running (T* ≈ 0), so this is a landmine
    rather than a live bug — but it must be sourced before thermal softening is
    switched on.
-4. **`options.py` still carries 4340's `jc_n=0.26` and `jc_C=0.014`** unchanged —
-   the whole JC block descends from the canonical Johnson-Cook 1983 4340 set
-   (`A=792, B=510, n=0.26, C=0.014, m=1.03, T_melt=1793`), with only A and B
-   hand-scaled. The provenance is now recorded in the file itself.
-   **The sourced replacements are deliberately NOT applied**: switching jc_A/jc_B
-   roughly doubles flow stress, which is a live change to a sim the accuracy
-   workstream is mid-debug on. `options.py` documents the one-line adoption path.
+4. ✅ **APPLIED — every parameter in `MaterialOptions` is now sourced.**
+
+   | parameter | was | now | note |
+   |---|---|---|---|
+   | `E` | 50 GPa | **121.5 GPa** | costs 1.56× in CFL timestep |
+   | `rho` | 8000 | **7334** | |
+   | `nu` | 0.28 | **0.329** | low confidence |
+   | `jc_A` | 40 MPa | **100.3 MPa** | pinned, not fitted |
+   | `jc_B` | 100 MPa | **195.0 MPa** | |
+   | `jc_n` | 0.26 | **0.417** | 0.26 was 4340's |
+   | `jc_C` | 0.014 | **0.120** | 0.014 was 4340's *room-temperature* value, ~9× low |
+   | `jc_eps0` | 1.0 | **1.0** | now explicitly the calibration rate |
+   | `jc_T_ref` | 293.15 | **1273.15** | so the card is not softened twice |
+   | `jc_T_melt` | 1793 | **1675** | reads `ACTIVE_MATERIAL.t_melt_k` |
+   | `jc_m` | 1.03 | **1.0** | the one unsourced value left |
+   | `von_mises_yield_stress` | 19 MPa | **213.4 MPa** | was ~11× low |
+
+   A joint 5-parameter JC fit across 800–1000 °C × 0.1–100 s⁻¹ was attempted and
+   **rejected**: 24.7% worst-case error with `m` driven to its bound. That is the
+   structural failure reproducing itself, not a tuning problem. Calibrating *at
+   the operating point* instead makes the model exact where the sim runs.
 5. **Poisson's ratio at forging temperature is genuinely unresolved.** Published
    values scatter non-monotonically. Low impact, but do not treat 0.329 as solid.
-6. **Is the forged billet actually 316L?** `material_properties.py` documents 316L
-   as the material of the 2026-07-17 calibration run. Whether the 17-hit forging
-   sequence used the same stock was not confirmed here.
+6. ✅ **RESOLVED — the billet is 316L.** Confirmed directly by the project owner.
+   An earlier note claiming the forged material was *not* 316L is **wrong** and
+   should not be propagated.
+
+7. 🔴 **The real fix: replace Johnson-Cook with hyperbolic-sine Arrhenius in the
+   kernel.** Everything above is JC calibrated to be exact at one operating
+   point, which is the best JC can do. Three concrete failures remain, all
+   structural:
+
+   - **No strengthening on cooling.** `T*` clamps at 0 below `T_ref`, so the
+     billet does not stiffen as it cools. Real 316L gains **~43% per 100 °C**
+     drop. Inert while `thermal_enabled = False`; wrong the moment it is not.
+   - **Rate dependence is a dead term.** `jc_C` is now correct but the kernel
+     never reads it (see item 8), and even when wired, JC's `1 + C·ln(ε̇*)` only
+     holds locally — the true C runs 0.155 → 0.101 across 0.1–100 s⁻¹.
+   - **No DRX softening.** JC hardening is monotonic; past strain 0.30 it
+     diverges to **+26%** while the real material softens.
+
+   The Arrhenius form `σ = (1/α)·asinh[(Z/A)^(1/n)]`, `Z = ε̇·exp(Q/RT)` fixes all
+   three at once — it couples temperature and rate inherently, reproduces the
+   peak-then-soften shape, and is the model the literature endorses for 316L
+   (**7.7% AARE vs 48%**). `material_properties_mechanical` already implements
+   and validates it on CPU; porting it into the MPM kernel is the work.
+
+8. **`jc_C` is still dead code in the kernel.** The value is now right, but
+   `_update_F_S_Jp_jc` never reads `self.C` and its signature
+   `(J, F_tmp, U, S, V, Jp, temp)` carries no rate information. Wiring it needs
+   the velocity gradient (or `delta_gamma/dt`) plumbed through the dispatch in
+   `base_mpm_solver.py`.
 7. **One lead worth chasing.** A 2025 MDPI paper, "Experimental and Numerical Study
    of Behavior of Additively Manufactured 316L Steel Under Challenging Conditions",
    reports hot compression at **900 / 1000 / 1100 / 1250 °C × 0.1 / 1 / 10 / 100 s⁻¹**

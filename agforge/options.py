@@ -29,53 +29,89 @@ def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> 
     return quantity.to(str(quantity.to_base_units().units).replace('second', time_unit_str)).magnitude
 
 class MaterialOptions(Options):
-    """Parameters for the elasto-plastic material."""
-    E: float = 200.e9 * 0.25
-    nu: float = 0.28
-    rho: float = 8000.
-    von_mises_yield_stress: float = 190.e6 * 0.1
+    """Parameters for the elasto-plastic material: 316L at forging temperature.
+
+    Every value here is now sourced. See ``agforge/material_properties_mechanical.py``
+    for the derivations and ``docs/316L_MECHANICAL_PROPERTIES.md`` for the sources,
+    confidence levels and error budget.
+
+    Operating point: **1000 C, 1 /s**, isothermal.
+    """
+    #: [BAM2023] dynamic resonance to 900 C, extrapolated 100 C further; Andrews
+    #: independently gives 118.7 GPa at 1270 K. Was 50 GPa (200e9*0.25), a
+    #: numerical choice that was 2.4x low. NOTE: this raises the wave speed and
+    #: therefore TIGHTENS the CFL timestep by ~1.56x versus the old value.
+    E: float = 121.5e9
+    #: Rises with temperature for austenitics [ISIJ1993]. LOW confidence - the
+    #: published elevated-temperature values scatter non-monotonically.
+    nu: float = 0.329
+    #: [NIST2021] SRM 1155a, D(T) = 8052 - 0.564 T, at 1273.15 K. Was 8000
+    #: (a room-temperature figure). Inter-lab spread puts the band at 7330-7570.
+    rho: float = 7334.
+    #: Only used when use_johnson_cook is False. Set to the 316L peak flow stress
+    #: at the operating point so the two paths no longer disagree by ~11x.
+    von_mises_yield_stress: float = 213.4e6
 
     # ---------------------------------------------------------------- #
-    # Johnson-Cook parameters.
+    # Johnson-Cook parameters for 316L, calibrated AT THE OPERATING POINT
+    # (1000 C, 1 /s) rather than globally.
     #
-    # PROVENANCE: this block descends from the canonical Johnson & Cook (1983)
-    # parameter set for AISI 4340 (A=792 MPa, B=510 MPa, n=0.26, C=0.014,
-    # m=1.03, T_melt=1793 K). Only A and B were ever hand-scaled, to stand in
-    # for hot steel; n and C are still 4340's values. The billet is 316L.
+    # This block previously descended, essentially unchanged, from the canonical
+    # Johnson & Cook (1983) set for AISI 4340 (A=792, B=510, n=0.26, C=0.014,
+    # m=1.03, T_melt=1793 K) - only A and B had ever been hand-scaled. The billet
+    # is 316L. All five are now derived from measured 316L data.
     #
-    # Sourced 316L replacements at 1000 C are derived in
-    # ``agforge/material_properties_mechanical.py`` and documented in
-    # ``docs/316L_MECHANICAL_PROPERTIES.md``. They are NOT applied here yet:
-    # switching them roughly doubles the flow stress, which is a live change to
-    # a sim the accuracy workstream is actively debugging. To adopt:
-    #
-    #     from agforge.material_properties_mechanical import isothermal_card
-    #     card = isothermal_card(strain_rate=1.0)   # -> jc_A/jc_B/jc_n, E, rho
-    #
-    # Note ``E`` and ``rho`` also feed the CFL timestep (dt ~ dx*sqrt(rho/E)),
-    # so correcting those costs ~1.56x in dt; jc_A/jc_B/jc_n do not.
+    # WHY "at the operating point" and not a global fit: a joint 5-parameter fit
+    # over 800-1000 C x 0.1-100 /s was tried and REJECTED - it reached 24.7%
+    # worst-case error and drove m to its bound. That is not a tuning failure, it
+    # is the known structural one: JC multiplies three uncoupled terms and cannot
+    # represent the coupled, softening response of 316L in the DRX regime
+    # (48% AARE vs 7.7% for Arrhenius - see the docs). Calibrating locally makes
+    # the model exact where the sim actually runs.
     # ---------------------------------------------------------------- #
     use_johnson_cook: bool = True
-    jc_A: float = 40.e6   # ~40 MPa (Very Hot) - NOT sourced; see above
-    jc_B: float = 100.e6  # Reduced hardening  - NOT sourced; see above
-    jc_n: float = 0.26    # 4340's value, un-converted
-    jc_C: float = 0.014   # 4340's value, un-converted. NOTE: currently INERT -
-                          # the kernel never reads C, and its signature carries
-                          # no strain rate, so it cannot. See the docs.
+    #: Derived in material_properties_mechanical.isothermal_card(1.0). A is PINNED,
+    #: not fitted: the residual is nearly flat in it, but the solver evaluates
+    #: A + B eps^n from eps_p = 0, so A is the initial yield stress the sim sees.
+    #: Was 40 MPa.
+    jc_A: float = 100.3e6
+    jc_B: float = 195.0e6   # was 100 MPa
+    jc_n: float = 0.417     # was 0.26, which was 4340's exponent
+    #: Derived from the validated Arrhenius model at 1000 C over the 0.1-10 /s
+    #: band: C = (sigma_hi/sigma_lo - 1)/ln(rate ratio) gives 0.114 and 0.125
+    #: either side of nominal. Was 0.014 - AISI 4340's ROOM-TEMPERATURE value,
+    #: ~9x too low, because rate sensitivity rises steeply with temperature.
+    jc_C: float = 0.120
+    #: Reference rate = the nominal forging rate, so the rate term is exactly 1.0
+    #: at nominal (where A and B are calibrated) and only corrects DEVIATION from
+    #: it. Change this together with the rate used for jc_A/jc_B/jc_n.
     jc_eps0: float = 1.0
 
-    # Thermal-softening terms. These previously sat hardcoded at the
-    # JohnsonCookPlasticity call site in environment.py rather than here, which
-    # is why the 316L conversion missed them and left 4340's values in place.
-    jc_T_ref: float = 293.15
+    # ---- thermal softening -------------------------------------------------
+    # These used to sit hardcoded at the JohnsonCookPlasticity call site in
+    # environment.py rather than here, which is why the 316L conversion missed
+    # them and left 4340's values in place.
+    #
+    # T_ref is the FORGING temperature, not room temperature, because jc_A/jc_B
+    # are already the 1000 C values. That makes T* = 0 and the softening factor
+    # exactly 1.0 at the operating point, so the calibrated card is reproduced
+    # exactly instead of being softened a second time.
+    #
+    # LIMITATION, and the reason to replace this model: the kernel clamps T* to
+    # [0, 1], so BELOW 1000 C the factor pins at 1.0 and the billet gets NO
+    # stronger as it cools. Real 316L stiffens ~43% for a 100 C drop. That is
+    # inert today (thermal_enabled = False) but it is wrong the moment thermal
+    # is switched on, and JC cannot be patched into correctness here - see the
+    # Arrhenius recommendation in the docs.
+    jc_T_ref: float = 1273.15
     #: Read from the material module so it cannot drift. 316L solidus = 1675 K;
     #: the old hardcoded 1793 K was AISI 4340's melting point.
     jc_T_melt: float = ACTIVE_MATERIAL.t_melt_k
-    #: UNVERIFIED for 316L. 1.03 is 4340's exponent; austenitic stainless is
-    #: usually quoted lower (~0.5-0.7) but no source was traced. Currently inert:
-    #: runs are isothermal, so T* ~ 0 and the softening factor is ~1.0 whatever
-    #: this is. Source it before enabling thermal softening.
-    jc_m: float = 1.03
+    #: Governs softening between the forging temperature and the solidus. Linear
+    #: decay to zero at melting. No 316L flow-stress data above 1000 C was found
+    #: to fit this against, so it is a physically-reasonable choice rather than a
+    #: measured one - the one value in this block that is not sourced.
+    jc_m: float = 1.0
 
 class EnvOptions(Options):
     """Parameters related to the RL environment and task."""

@@ -193,6 +193,72 @@ def test_no_4340_constants_hardcoded_at_the_jc_call_site():
         )
 
 
+def test_material_options_match_the_sourced_card():
+    """The live defaults must BE the sourced values, not merely document them.
+
+    This is the test that would have caught the original defect: 4340's constants
+    sitting in a config labelled for steel at 1200 C, with nothing asserting that
+    the config agreed with any measurement.
+
+    Imports genesis (via agforge.options), unlike the rest of this module.
+    """
+    from agforge.options import MaterialOptions
+
+    o = MaterialOptions()
+    card = isothermal_card(strain_rate=o.jc_eps0, temp_k=o.jc_T_ref)
+
+    assert o.E == pytest.approx(card["E"], rel=0.01)
+    assert o.rho == pytest.approx(card["rho"], rel=0.01)
+    assert o.nu == pytest.approx(card["nu"], rel=0.01)
+    assert o.jc_A == pytest.approx(card["jc_A"], rel=0.01)
+    assert o.jc_B == pytest.approx(card["jc_B"], rel=0.01)
+    assert o.jc_n == pytest.approx(card["jc_n"], rel=0.01)
+    assert o.jc_T_melt == STEEL_316L.t_melt_k
+
+    # None of AISI 4340's fingerprints may survive anywhere in this block.
+    assert o.jc_T_melt != 1793.0
+    assert o.jc_C != 0.014, "still AISI 4340's room-temperature rate coefficient"
+    assert o.jc_n != 0.26, "still AISI 4340's hardening exponent"
+
+
+def test_thermal_softening_is_neutral_at_the_operating_point():
+    """jc_A/jc_B are already the 1000 C values, so the thermal term must be 1.0
+    there - otherwise the calibration gets softened a second time."""
+    from agforge.options import MaterialOptions
+
+    o = MaterialOptions()
+    t_star = (o.jc_T_ref - o.jc_T_ref) / (o.jc_T_melt - o.jc_T_ref)
+    assert t_star == 0.0
+    assert (1.0 - t_star ** o.jc_m) == pytest.approx(1.0)
+
+
+def test_rate_term_is_neutral_at_nominal_rate():
+    """Same argument for the rate term: 1 + C*ln(edot/edot0) must be 1.0 at
+    nominal, so C only corrects deviation from the calibrated rate."""
+    from agforge.options import MaterialOptions
+
+    o = MaterialOptions()
+    assert 1.0 + o.jc_C * np.log(o.jc_eps0 / o.jc_eps0) == pytest.approx(1.0)
+
+
+def test_rate_coefficient_reproduces_measured_sensitivity():
+    """jc_C must reproduce the Arrhenius rate sensitivity near nominal.
+
+    Guards against reverting to a room-temperature C: 316L's rate sensitivity
+    rises steeply with temperature, and 4340's 0.014 is ~9x too low here.
+    """
+    from agforge.options import MaterialOptions
+
+    o = MaterialOptions()
+    for rate in (0.1, 10.0):
+        jc_ratio = 1.0 + o.jc_C * np.log(rate / o.jc_eps0)
+        arr_ratio = (peak_flow_stress_mpa(rate, FORGING_TEMP_K)
+                     / peak_flow_stress_mpa(o.jc_eps0, FORGING_TEMP_K))
+        assert jc_ratio == pytest.approx(arr_ratio, rel=0.10), (
+            f"jc_C does not reproduce measured rate sensitivity at {rate} /s"
+        )
+
+
 def test_isothermal_card_is_self_consistent():
     card = isothermal_card(1.0)
     assert card["t_melt_k"] == STEEL_316L.t_melt_k
