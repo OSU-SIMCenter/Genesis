@@ -148,6 +148,60 @@ bare helix is visible as diagonal zigzags.
 
 ---
 
+## 5b. The axial profile, and a better pixel scale [measured]
+
+Committed as [`measured_axial_profile_20260717.csv`](./measured_axial_profile_20260717.csv):
+16 profiles at 12 s intervals across episode 3, 288 rows each (one per image row).
+
+**Orientation was measured, not assumed.** The row-wise profile carries a strong periodic
+signature (autocorrelation **+0.47 at ~103 px**); the column-wise profile carries none. So image
+rows are the rod axis, and the periodic dips are coil turns occluding the rod.
+
+**Pixel scale, from the frame rather than from guessing at rod edges:**
+
+| quantity | value | spread over 6 frames |
+|---|---|---|
+| coil-turn dip spacing | **102.5 px** | 102–103 |
+| rod width (largest contiguous run above half-range) | **159 px** | 157–163 |
+| ⇒ pixel scale | **4.173 px/mm** | ±2% |
+| ⇒ coil pitch = (102.5/159) × 38.1 mm | **24.56 mm** | — |
+
+The pitch is a **scale-free ratio** against the rod's exactly-known 38.1 mm, so it does not inherit
+the scale's error. What it implies:
+
+| turns | coil length |
+|---|---|
+| 3.0 | 73.7 mm (2.90 in) |
+| **3.5** | **86.0 mm (3.38 in)** |
+| 4.0 | 98.2 mm (3.87 in) |
+
+Committed `coil_length` is 88.9 mm (3.5 in) — within **3%** of the 3.5-turn reading. Note that
+"4 turns" and "~3.5 in overall" are **mutually inconsistent** at this pitch: 4 turns requires
+3.87 in. The photo count and the length estimate cannot both sit at their leaned values. [open]
+
+⚠️ The scale still assumes the hot band's edge is the rod's edge, and thermal blooming widens it —
+which biases the scale **high**. So treat **3.88–4.17 px/mm** as the bracket (Colton's June figure
+3.8791 is the lower end, though the camera may have moved between June and July). That is a
+material tightening on the previous ±25%, but it is not resolved.
+
+**The profile itself.** Temperature falls monotonically from the top of the frame downward; the
+peak sits at or above y=0, i.e. **the coil centre is outside the field of view** and we are seeing
+the downhill side plus, presumably, part of the 50 mm of rod Colton says protrudes.
+
+| | top of frame | bottom of frame | drop across the 69 mm in view |
+|---|---|---|---|
+| start of window (380 s) | 498 °C | 281 °C | **217 °C** |
+| end of window (568 s) | 908 °C | 583 °C | **324 °C** |
+
+This is the measurement that constrains **axial conduction**, and it is a far stronger constraint
+than the single-point heating curve — but using it needs one thing we do not yet have: **where the
+image window sits relative to the coil centre.** That registration offset is a new free parameter.
+`forge/state/x_offset_mm = 128.2` and the Tormach `X = 350.0` heat position are the numbers most
+likely to pin it. [open]
+
+⚠️ Rows within ±18 px of a detected coil dip are **interpolated**, not measured — the CSV carries
+the filled values. Dips sit near y≈54 and y≈157.
+
 ## 6. What this means for calibration
 
 - **Episode 2 is a genuine second dataset**, sharing a continuous heater-on block with episode 3.
