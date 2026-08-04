@@ -286,6 +286,49 @@ class ForgeMcap:
                          np.percentile(c, 95), np.median(c), c.min()])
         return np.array(rows)
 
+    def state_series(self, topic: str, start_s: float = 0.0,
+                     end_s: float | None = None):
+        """Yield ``(t_s, obj)`` for a JSON-encoded state topic.
+
+        The file carries far more than the thermal feed, and the rest is plain
+        JSON. Rates measured on the 07-17 file:
+
+        =========================  ======  ==========================================
+        topic                      rate    the fields that matter
+        =========================  ======  ==========================================
+        ``hmr/torm/state``         22 Hz   ``actual_position`` = [X, Y, Z, A, ...],
+                                           ``command`` (live G-code). A is the rotary
+                                           axis Colton scrolls to even out the heat.
+        ``hmr/ard/state``          35 Hz   ``digital.heater_on`` / ``heater_ready`` /
+                                           ``heater_fault``, door, e-stop
+        ``hmr/press/state``       420 Hz   ``live_force_kn``, ``live_stroke_mm``,
+                                           ``live_position_mm``
+        ``forge/state/x_offset_mm``    1   static config, 128.2 mm
+        =========================  ======  ==========================================
+
+        ``heater_on`` is what bounds a heating episode; see
+        ``docs/DATASET_20260717_STRUCTURE.md`` for the episode table it produces.
+        """
+        import json
+
+        cid = self._channel_id(topic)
+        lo = self.t0_ns + int(start_s * 1e9)
+        hi = self.t1_ns if end_s is None else self.t0_ns + int(end_s * 1e9)
+        for ms, me, off, ln in self.chunks:
+            if me < lo or ms > hi:
+                continue
+            for op, payload in _records(self._load_chunk(off, ln)):
+                if op != 0x05 or struct.unpack_from("<H", payload, 0)[0] != cid:
+                    continue
+                log_time = struct.unpack_from("<Q", payload, 6)[0]
+                if not (lo <= log_time <= hi):
+                    continue
+                try:
+                    obj = json.loads(payload[22:].decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                yield (log_time - self.t0_ns) / 1e9, obj
+
 
 def pixels_per_mm(frame: ThermalFrame, rod_diameter_mm: float = 38.1) -> float:
     """Self-calibrate the image scale from the rod's known diameter.
