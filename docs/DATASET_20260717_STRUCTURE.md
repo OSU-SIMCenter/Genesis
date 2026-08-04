@@ -301,8 +301,8 @@ the downhill side plus, presumably, part of the 50 mm of rod Colton says protrud
 
 | | top of frame | bottom of frame | drop across the 69 mm in view |
 |---|---|---|---|
-| start of window (380 s) | 498 °C | 281 °C | **217 °C** |
-| end of window (568 s) | 908 °C | 583 °C | **324 °C** |
+| start of window (380 s) | 498 °C | 281 °C | ~~217 °C~~ **INVALID — see the floor warning below** |
+| end of window (568 s) | 908 °C | 583 °C | **324 °C** (valid) |
 
 This is the measurement that constrains **axial conduction**, and it is a far stronger constraint
 than the single-point heating curve — but using it needs one thing we do not yet have: **where the
@@ -312,6 +312,31 @@ likely to pin it. [open]
 
 ⚠️ Rows within ±18 px of a detected coil dip are **interpolated**, not measured — the CSV carries
 the filled values. Dips sit near y≈54 and y≈157.
+
+### 🚨 HALF THE AXIAL PROFILES ARE PARTLY BELOW THE CAMERA FLOOR
+
+Found during the 08-04 closeout, *after* this CSV was committed. The profile was extracted before
+we knew the PI 1M cannot read below **450 °C** (§0), so the cold end of each early profile is the
+out-of-range floor, not the rod:
+
+| t [s] | top °C | bottom °C | rows < 450 °C | valid rows |
+|---|---|---|---|---|
+| 380 | 498 | 281 | **233** | 55 |
+| 428 | 685 | 378 | 53 | 235 |
+| 464 | 786 | 440 | 20 | 268 |
+| **476 →** | 802 | 465 | **0** | **288** |
+
+**Only 8 of the 16 profiles (t ≥ 476 s) are fully valid.** At t = 380 s, **81% of the profile is
+floor**, not measurement.
+
+⇒ The "axial drop of **217 °C** at the start of the window" quoted above is **wrong** — most of
+that span is clamped at the floor. The **324 °C at the end of the window is valid.** Any fit
+against this file must either restrict to t ≥ 476 s or mask cells below 450 °C; the CSV stores raw
+values with no mask, deliberately, so the successor can choose.
+
+By contrast `measured_heating_curve_20260717.csv` is **unaffected inside the usable window**: 0 of
+its 69 samples in 380–568.4 s fall below the floor (54% of the *whole-file* samples do, but those
+are outside the window anyway).
 
 ## 6. What this means for calibration
 
