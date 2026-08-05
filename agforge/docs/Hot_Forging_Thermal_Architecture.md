@@ -73,6 +73,15 @@ When using the `JohnsonCookPlasticity` material configured for Steel ($E = 50$ G
 *   **The Symptom:** Visual "freezing" on frame 1, and the cylinders instantly turned pure red (1000K to 7000K+). The numerical instability caused particles to explode outward at 10 m/s. The Johnson-Cook thermal model converted this massive false "plastic work" into adiabatic heat.
 *   **The Fix:** Artificially soften the elasticity (e.g., $E = 10$ MPa) for the visualization benchmark to satisfy the CFL condition without mass scaling.
 
+> **Note (2026-08-05):** the $E = 50$ GPa above is historical. It was never a 316L
+> value — it came from a hand-set `200e9 * 0.25`. The billet is now the sourced
+> 316L card at $E = 121.5$ GPa, $\rho = 7334$ (see
+> `docs/316L_MECHANICAL_PROPERTIES.md`), which puts $c = \sqrt{E/\rho}$ at
+> 4070 m/s and $dt_{CFL}$ at $1.34 \times 10^{-6}$ s. This is **not** a CFL hazard:
+> `substep_dt` is *derived* from $dx/c$ at a fixed 0.90 safety ratio in
+> `MaterialOptions.model_post_init`, so it self-adjusts. The cost is wall-clock
+> only. The scenario above is retained as a record of the original failure mode.
+
 ### 2. Poisson Disk Sampling Collisions
 When material entities are initialized with `sampler="pbs"` (Poisson Disk Sampling) combined with extreme material stiffness, even microscopic initial particle overlaps resolve as near-infinite restorative forces on step 1, triggering compounding explosions.
 
