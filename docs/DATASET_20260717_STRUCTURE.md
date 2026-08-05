@@ -254,26 +254,70 @@ rows are the rod axis, and the periodic dips are coil turns occluding the rod.
 |---|---|---|
 | coil-turn dip spacing | **102.5 px** | 102–103 |
 | rod width (largest contiguous run above half-range) | **159 px** | 157–163 |
-| ⇒ pixel scale | **4.173 px/mm** | ±2% |
-| ⇒ coil pitch = (102.5/159) × 38.1 mm | **24.56 mm** | — |
 
-The pitch is a **scale-free ratio** against the rod's exactly-known 38.1 mm, so it does not inherit
-the scale's error. What it implies:
+## ✅ RESOLVED 2026-08-05: the pixel scale is 3.8791 px/mm, from Colton
 
-| turns | coil length |
-|---|---|
-| 3.0 | 73.7 mm (2.90 in) |
-| **3.5** | **86.0 mm (3.38 in)** |
-| 4.0 | 98.2 mm (3.87 in) |
+Verified at source, not inferred. `pcloud:AgilityForge/2026-06-15_T4_bulk/README.md` quotes his
+2026-06-29 email verbatim:
 
-Committed `coil_length` is 88.9 mm (3.5 in) — within **3%** of the 3.5-turn reading. Note that
-"4 turns" and "~3.5 in overall" are **mutually inconsistent** at this pitch: 4 turns requires
-3.87 in. The photo count and the length estimate cannot both sit at their leaned values. [open]
+> This is 1.5" 316L Stainless Steel.
+> The thermal camera has about **3.8791 pixels per mm** in the plane of the workpiece.
+> Note that the coil is **~3" in length** and you can only see **1–1.5"** in the thermal frame.
 
-⚠️ The scale still assumes the hot band's edge is the rod's edge, and thermal blooming widens it —
-which biases the scale **high**. So treat **3.88–4.17 px/mm** as the bracket (Colton's June figure
-3.8791 is the lower end, though the camera may have moved between June and July). That is a
-material tightening on the previous ±25%, but it is **not resolved**.
+⚠️ Stated for the **06-15** run. Applying it to 07-17 assumes the optics did not move between
+June and July — unconfirmed, but nothing in the frames contradicts it.
+
+**This retires the previous 4.173 px/mm figure, which was over-claimed three separate times.**
+The true value is the *bottom* of the 3.88–4.17 bracket. Two consequences follow, and both settle
+questions this document previously left open:
+
+**1. The "159 px band is the rod" identification is CONFIRMED, and the coil-bore alternative is
+refuted.** At 3.8791 px/mm the band measures **41.0 mm** against a rod of exactly 38.1 mm — a 7.6%
+overshoot, which is what thermal blooming should do, and it is the same direction the old §5b
+warning predicted. The alternative reading (that the band was the ~45 mm coil bore) would require
+3.53 px/mm and is now **excluded** by ~9%.
+
+**2. The coil pitch is now direct, and it was biased LOW.** It no longer needs the rod as a ruler:
+
+| | old (scale-free ratio) | corrected (direct) |
+|---|---|---|
+| coil-turn pitch | 24.56 mm | **26.42 mm** (= 102.5 px ÷ 3.8791) |
+
+The old ratio method silently assumed the 159 px band was *exactly* 38.1 mm, so it inherited the
+blooming error and came out 7.6% low — exactly the observed gap (24.56 × 1.076 = 26.43 ✓).
+
+**26.42 mm = 1.04 in per turn independently matches the user's photo read** ("a little over an inch
+per turn"), which is a genuine third-party confirmation of both the pitch and the scale.
+
+### ⚠️ But `coil_length` is now MORE uncertain, not less — and the sign is disputed
+
+The convention matters, and the two defensible ones straddle the committed value:
+
+| reading | coil length | vs Colton's "~3 in" (76.2 mm) |
+|---|---|---|
+| first-to-last turn centre, 4 turns = 3 × 26.42 | **79.3 mm** (3.12 in) | **+4% — agrees** |
+| committed | 88.9 mm (3.50 in) | +17% |
+| current-sheet smearing, 4 × 26.42 | **105.7 mm** (4.16 in) | +39% |
+
+The kernel (`base_mpm_solver.py:517`) models a **continuous current sheet** of full length
+`coil_length`, and the rigorous smearing of N discrete turns onto a sheet is N × pitch — which
+would argue for 105.7 mm. But that disagrees with Colton's physical "~3 inch" by 39%, whereas the
+turn-centre span agrees to 4%.
+
+**Committed `coil_length` = 88.9 mm is left unchanged**, because it sits near the middle of a
+76–106 mm bracket that the evidence genuinely does not close. Moving it to either end would be
+over-claiming again, which is the exact failure this section is correcting. `q_peak` fits roughly
+1:1 against `L_eff`, so this is a **±17% band on any fitted `q_peak`** and is now the dominant
+*geometric* uncertainty. [open — needs Colton's pixel-mapping code, or a turn count from the photos
+at known scale]
+
+### "You can only see 1–1.5 inch in the thermal frame"
+
+Colton's own words, and they constrain the observation model hard. The 382 px frame spans
+**98.5 mm** at 3.8791 px/mm, yet only **25–38 mm** of *workpiece* is visible — so **most of the
+frame is coil and background, not rod**. This independently corroborates §5.2 (from ~480 s onward
+98–100% of the frame exceeds 400 °C) and the two failed motion checks below, and it is why a
+synthetic-camera observation model is mandatory rather than optional.
 
 ### Two attempts to confirm the scale from motion — both FAILED [measured]
 
@@ -290,16 +334,19 @@ something about the scene, and because the temptation is to keep fishing until a
    the whole scene **dims together** rather than an edge sweeping through it.
 
 Taken together these say the field of view is dominated by the coil and its surroundings, with the
-rod seen through it — which reinforces §5.2 and means the identification of the 159 px band as
-*the rod* is **plausible but unconfirmed**. If that band is instead the coil bore (~45 mm) the
-scale would be ~3.5 px/mm. Resolving this still needs Colton's pixel-mapping code, or a frame with
-a known reference edge.
+rod seen through it — which reinforces §5.2, and which Colton's "you can only see 1–1.5 inch in the
+thermal frame" independently confirms.
+
+~~The identification of the 159 px band as *the rod* is plausible but unconfirmed. If that band is
+instead the coil bore (~45 mm) the scale would be ~3.5 px/mm.~~ **✅ SETTLED 2026-08-05 — the band
+is the rod.** Colton's 3.8791 px/mm puts it at 41.0 mm against the rod's 38.1 mm (blooming), and
+excludes a 45 mm coil bore by ~9%. See the resolved-scale section above.
 
 **The profile itself.** Temperature falls monotonically from the top of the frame downward; the
 peak sits at or above y=0, i.e. **the coil centre is outside the field of view** and we are seeing
 the downhill side plus, presumably, part of the 50 mm of rod Colton says protrudes.
 
-| | top of frame | bottom of frame | drop across the 69 mm in view |
+| | top of frame | bottom of frame | drop across the 74.2 mm in view |
 |---|---|---|---|
 | start of window (380 s) | 498 °C | 281 °C | ~~217 °C~~ **INVALID — see the floor warning below** |
 | end of window (568 s) | 908 °C | 583 °C | **324 °C** (valid) |
