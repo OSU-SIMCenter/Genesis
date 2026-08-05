@@ -76,11 +76,18 @@ class ThermalCalibrationConfig:
     substeps: int = 8
     thermal_time_scale: float = 1.0
 
-    # Coefficients
-    q_peak_w_m3: float = 2.0e8
+    # Coefficients. These defaults only apply to a bare ThermalCalibrationConfig();
+    # load_config_from_teleop() overrides every one of them from TeleopOptions, which is
+    # the live path. They had drifted away from those options and are re-synced here so a
+    # bare instance is not quietly a different machine.
+    q_peak_w_m3: float = 2.5e8  # matches TeleopOptions.heating_power
     h_air_w_m2k: float = 15.0
     h_contact_w_m2k: float = 5000.0
-    emissivity: float = 0.8
+    # 0.40 is the sourced 316L value (Balat-Pichelin et al.) carried by MPMOptions.emissivity.
+    # This used to default to 0.80, which is oxidized *carbon* steel — 2x the real figure, and
+    # it fed radiative cooling directly. Not to be confused with the thermal CAMERA's emissivity
+    # setting, which is a different parameter belonging to the observation model, not the physics.
+    emissivity: float = 0.40
     fixed_end_conduction_length_m: float = 0.05
     fixed_end_ambient_k: float = 293.15
 
@@ -397,9 +404,12 @@ def analyze(
     t_ss = estimate_steady_surface_temp_k(cfg, targets, f_axial=f_ax)
 
     literature = {
-        "skin_depth_rule": "cylinder_radius / 3 (through-heating rule of thumb)",
+        # The radius/3 rule is GONE — skin depth is now derived from the material and an
+        # explicit drive frequency (see TeleopOptions.model_post_init). At the reported
+        # 250 kHz this is a thin-skin process, R/delta ~ 17, not through-heating.
+        "skin_depth_rule": "sqrt(rho_e / (pi * f * mu0 * mu_r)) — material + frequency, not radius",
         "h_air_natural_convection": "5–25 W/m²K; default 15",
-        "emissivity_oxidized_steel": "0.75–0.85; default 0.80",
+        "emissivity_316l": "0.40 sourced (Balat-Pichelin et al.); 0.75–0.85 is oxidized CARBON steel",
         "h_contact_range": "1000–10000+ W/m²K depending on die pressure",
         "l_eff_formula": "sqrt(pi * alpha * t_char)",
     }

@@ -709,10 +709,12 @@ class TeleopOptions(AgilityForgeOptions):
         # Deriving delta from the material and an explicit frequency makes the assumption
         # visible and overridable. See agforge/material_properties.py.
         #
-        # ⚠️ coil_frequency_hz IS NOT MEASURED — see its declaration above. q_peak scales
-        # roughly as 1/delta, so a wrong frequency trades off directly against a wrong q_peak:
-        # total absorbed power stays well constrained by the measured heating curve, but the
-        # surface-intensity / penetration-depth split does not.
+        # ⚠️ coil_frequency_hz is REPORTED, not measured — Colton gave ~250 kHz (see its
+        # declaration above), but it is a dynamically tracked resonance, not a setpoint, so
+        # the true value drifts with load during a run. q_peak scales roughly as 1/delta, so
+        # a wrong frequency trades off directly against a wrong q_peak: total absorbed power
+        # stays well constrained by the measured heating curve, but the surface-intensity /
+        # penetration-depth split does not.
         self.skin_depth = ACTIVE_MATERIAL.skin_depth_m(
             self.coil_frequency_hz, temp_k=self.induction_reference_temp_k
         )
