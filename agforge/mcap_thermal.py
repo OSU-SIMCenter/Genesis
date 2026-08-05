@@ -301,10 +301,18 @@ class ForgeMcap:
                                            axis Colton scrolls to even out the heat.
         ``hmr/ard/state``          35 Hz   ``digital.heater_on`` / ``heater_ready`` /
                                            ``heater_fault``, door, e-stop
-        ``hmr/press/state``       420 Hz   ``live_force_kn``, ``live_stroke_mm``,
-                                           ``live_position_mm``
+        ``hmr/press/state``       634 Hz   ``live_force_kn``, ``live_stroke_mm``,
+                                           ``live_position_mm`` — see the warning below
         ``forge/state/x_offset_mm``    1   static config, 128.2 mm
         =========================  ======  ==========================================
+
+        ⚠️ **The press channel carries no motion in this file.** Measured over all
+        363,496 samples: ``live_stroke_mm`` and ``live_position_mm`` both have range
+        **exactly 0.0000** (parked at 0.4484 mm / 227.3016 mm), and ``live_force_kn``
+        only drifts 2.296–2.548 kN, which is load-cell tare, not contact. The 07-17
+        run is pure induction heating with **no blows at all**, so nothing here yields
+        a strain rate. That needs an mcap recorded during a forging cycle — see
+        ``docs/DATASET_20260717_STRUCTURE.md``.
 
         ``heater_on`` is what bounds a heating episode; see
         ``docs/DATASET_20260717_STRUCTURE.md`` for the episode table it produces.
