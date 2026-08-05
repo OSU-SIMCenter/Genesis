@@ -39,8 +39,14 @@ class MaterialOptions(Options):
     """
     #: [BAM2023] dynamic resonance to 900 C, extrapolated 100 C further; Andrews
     #: independently gives 118.7 GPa at 1270 K. Was 50 GPa (200e9*0.25), a
-    #: numerical choice that was 2.4x low. NOTE: this raises the wave speed and
-    #: therefore TIGHTENS the CFL timestep by ~1.56x versus the old value.
+    #: numerical choice that was 2.4x low.
+    #:
+    #: STABILITY: this is NOT a CFL hazard. substep_dt is DERIVED from
+    #: dx/sqrt(E/rho) at a fixed 0.90 safety ratio in model_post_init below, so
+    #: the timestep self-adjusts and the assertions still hold. What it costs is
+    #: wall-clock: c goes 2500 -> 4070 m/s, so 1.63x more substeps buy the same
+    #: physical time. (Not 1.56x as first quoted - that ignored the density drop;
+    #: the ratio is sqrt((E/rho)_new / (E/rho)_old), and rho fell too.)
     E: float = 121.5e9
     #: Rises with temperature for austenitics [ISIJ1993]. LOW confidence - the
     #: published elevated-temperature values scatter non-monotonically.

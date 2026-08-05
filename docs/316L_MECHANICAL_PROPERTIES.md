@@ -46,12 +46,28 @@ too soft, the simulated forging force on the real 17-hit sequence should be
 correspondingly *low*, not high. That is a discriminating check against measured
 per-hit force.
 
-### The stability coupling is real and now quantified
+### The stability coupling — measured, and less alarming than expected
 
-`E` and the timestep are linked through CFL: `dt ∝ dx/√(E/ρ)`. Correcting E from
-50 → 121.5 GPa cuts the timestep by **1.56×**. This confirms the previously
-inherited "~1.6×" estimate. Material correction and higher fidelity compete for
-the same stability budget.
+`E` and the timestep are linked through CFL: `dt ∝ dx/√(E/ρ)`. Correcting E moves
+the wave speed **2500 → 4070 m/s**, so the timestep shrinks **1.63×**.
+
+**This is not a stability hazard.** `substep_dt` is *derived* in
+`MaterialOptions.model_post_init` as `0.90 × dx/c`, so it self-adjusts to any
+`E`/`rho` and the CFL assertions still pass — verified: ratio 0.9000,
+`substep_dt = 1.208e-6 s` against `dt_cfl = 1.342e-6 s`. Nothing to violate.
+
+What it actually costs is **wall-clock: 1.63× more substeps** for the same
+physical time.
+
+⚠️ Two corrections to earlier statements in this document's own history: the cost
+is 1.63×, not the 1.56× first quoted — that figure used √(E_new/E_old) and ignored
+that `rho` fell as well; the correct ratio is √((E/ρ)_new /(E/ρ)_old). And the
+inherited "~1.6×" estimate it appeared to confirm was right for the wrong reason.
+
+Separately, the material is now ~2× stiffer in *flow stress*, which does not enter
+the CFL bound at all but does change forces and the return-mapping. Whether the
+17-hit sequence still completes is an empirical question needing a run — but it is
+a physics question, not a stability one.
 
 ## 3. Why Johnson-Cook is the wrong model here — quantified
 
@@ -300,7 +316,7 @@ here, so a confident-looking citation is not sufficient — check the test windo
 
    | parameter | was | now | note |
    |---|---|---|---|
-   | `E` | 50 GPa | **121.5 GPa** | costs 1.56× in CFL timestep |
+   | `E` | 50 GPa | **121.5 GPa** | 1.63× more substeps; NOT a CFL hazard, see below |
    | `rho` | 8000 | **7334** | |
    | `nu` | 0.28 | **0.329** | low confidence |
    | `jc_A` | 40 MPa | **100.3 MPa** | pinned, not fitted |
