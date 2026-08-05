@@ -9,7 +9,7 @@ from agforge.options import (
     RobotOptions,
     GENERATED_ROBOT_XML_PATH,
 )
-from agforge.materials import JohnsonCookPlasticity
+from agforge.materials import ArrheniusPlasticity, JohnsonCookPlasticity
 from agforge.profiling_util import teleop_profile
 
 def resource_path(relative_path):
@@ -280,17 +280,32 @@ class AgilityForgeEnv:
         if custom_sampler is not None:
             material_kwargs["sampler"] = custom_sampler
 
-        self.mpm_entity = self.scene.add_entity(
-            material=gs.materials.MPM.ElastoPlastic(
-                von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress,
+        # Constitutive model selection. Arrhenius takes precedence over
+        # Johnson-Cook; both fall back to plain von Mises elastoplasticity.
+        if getattr(self.cfg.mat, 'use_arrhenius', False):
+            billet_material = ArrheniusPlasticity(
+                # substep_dt is derived, not configured: the material needs it to
+                # turn the plastic strain increment into a strain rate, and it must
+                # track the CFL-derived timestep rather than a stale constant.
+                substep_dt=self.cfg.sim.dt / self.cfg.sim.substeps,
                 **material_kwargs,
-            ) if not getattr(self.cfg.mat, 'use_johnson_cook', False) else JohnsonCookPlasticity(
+            )
+        elif getattr(self.cfg.mat, 'use_johnson_cook', False):
+            billet_material = JohnsonCookPlasticity(
                 A=self.cfg.mat.jc_A, B=self.cfg.mat.jc_B, n=self.cfg.mat.jc_n,
                 C=self.cfg.mat.jc_C, eps0=self.cfg.mat.jc_eps0,
                 T_ref=self.cfg.mat.jc_T_ref, T_melt=self.cfg.mat.jc_T_melt,
                 jc_m=self.cfg.mat.jc_m,
                 **material_kwargs,
-            ),
+            )
+        else:
+            billet_material = gs.materials.MPM.ElastoPlastic(
+                von_mises_yield_stress=self.cfg.mat.von_mises_yield_stress,
+                **material_kwargs,
+            )
+
+        self.mpm_entity = self.scene.add_entity(
+            material=billet_material,
             morph=gs.morphs.Cylinder(
                 radius=self.cfg.robot.cylinder_radius, height=self.cfg.robot.cylinder_height, pos=self.cfg.robot.cylinder_pos, euler=self.cfg.robot.cylinder_euler
             ),

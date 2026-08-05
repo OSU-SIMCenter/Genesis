@@ -76,6 +76,26 @@ class MaterialOptions(Options):
     # the model exact where the sim actually runs.
     # ---------------------------------------------------------------- #
     use_johnson_cook: bool = True
+
+    #: Use the strain-compensated hyperbolic-sine Arrhenius flow rule instead of
+    #: Johnson-Cook. Takes precedence over use_johnson_cook when True.
+    #:
+    #: This is the model the literature endorses for 316L in the DRX regime
+    #: (~7.7% AARE vs JC's ~48%), and unlike the JC path here it is genuinely
+    #: rate- AND temperature-coupled: it strengthens on cooling, it reads the
+    #: plastic strain rate, and it reproduces the DRX peak-then-soften curve.
+    #:
+    #: DEFAULT OFF, deliberately. The fit is a HOT-WORKING model valid over
+    #: 800-1000 C, but the billet currently starts at room temperature
+    #: (default_initial_temperature = 293.0 below). Arrhenius extrapolated to
+    #: 293 K returns ~3.8 GPa - about 18x the forging-temperature flow stress -
+    #: so ArrheniusPlasticity clamps temperature into the fit window as a
+    #: numerical guard. At 293 K that clamp yields the 800 C value (~394 MPa at
+    #: eps_p = 0.2), roughly 1.85x the Johnson-Cook card. Turning this on before
+    #: the billet actually runs hot therefore changes the answer without making
+    #: it more true. Switch it on together with a forging-temperature billet.
+    use_arrhenius: bool = False
+
     #: Derived in material_properties_mechanical.isothermal_card(1.0). A is PINNED,
     #: not fitted: the residual is nearly flat in it, but the solver evaluates
     #: A + B eps^n from eps_p = 0, so A is the initial yield stress the sim sees.
