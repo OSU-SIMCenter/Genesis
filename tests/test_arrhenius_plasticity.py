@@ -241,10 +241,15 @@ def test_the_sourced_poisson_ratio_would_cross_the_measured_stability_cliff():
     assert ratio_for(0.34) < 1.13, "nu=0.34 was measured stable"
     assert ratio_for(0.35) > 1.13, "nu=0.35 was measured to break"
     assert ratio_for(0.3823) > 1.2, "the BAM-derived nu is far past the cliff"
-    assert m.nu < 0.35, (
-        "nu was raised past the measured stability cliff; the timestep must be "
-        "derived from the P-wave speed first"
-    )
+
+    # The cliff only applies while the timestep comes from the bar wave. Raising
+    # nu is CORRECT once cfl_use_pwave is on - that is the whole point of the
+    # flag - so this guard must not fire on that (currently non-default) config.
+    if not m.cfl_use_pwave:
+        assert m.nu < 0.35, (
+            "nu was raised past the measured stability cliff while the timestep "
+            "is still derived from the bar wave; set cfl_use_pwave first"
+        )
 
 
 def test_pwave_cfl_option_is_off_by_default():
