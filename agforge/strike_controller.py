@@ -136,16 +136,24 @@ class StrikeController:
         self._pending_sdf_upload = False
         self._temp_particle_renderer = None
 
-        # Initialize billet to physical room temperature (293.0 K)
+        # Initialize the billet thermal baseline from the CONFIGURED temperature.
+        #
+        # This used to hardcode 293.0 K, described as "physical room temperature".
+        # That silently overrode MPMOptions.default_initial_temperature, so the
+        # billet temperature was not settable at all - assigning it had no effect
+        # and no warning. It also encodes the wrong assumption for a forging
+        # scenario: a real billet is at forging heat, not room temperature, and
+        # the material card is calibrated for ~1000 C.
+        base_temp_k = getattr(self.env.cfg.mpm, 'default_initial_temperature', 293.0)
         try:
             if hasattr(self.env, 'mpm_entity') and hasattr(self.env.mpm_entity, 'get_particles_temp'):
                 current_temps = self.env.mpm_entity.get_particles_temp()
                 if current_temps is not None:
-                    base_temps = torch.ones_like(current_temps) * 293.0
+                    base_temps = torch.ones_like(current_temps) * base_temp_k
                     self.env.mpm_entity.set_particles_temp(base_temps)
                     import quadrants as qd  # type: ignore
                     qd.sync()
-                    gs.logger.info("Initialized billet thermal baseline to 293.0 K")
+                    gs.logger.info(f"Initialized billet thermal baseline to {base_temp_k:.1f} K")
         except Exception as e:
             gs.logger.warning(f"Could not initialize base temperatures: {e}")
 
@@ -1771,16 +1779,20 @@ class StrikeController:
                 
             self.env.reset()
             
-            # Re-initialize room temperature (reset wipes custom states)
+            # Re-establish the thermal baseline (reset wipes custom states).
+            # Reads the CONFIGURED temperature; this was a second hardcoded 293.0,
+            # and it silently undid the one set in __init__ - which is why setting
+            # MPMOptions.default_initial_temperature appeared to do nothing at all.
+            reset_temp_k = getattr(self.env.cfg.mpm, 'default_initial_temperature', 293.0)
             try:
                 if hasattr(self.env, 'mpm_entity') and hasattr(self.env.mpm_entity, 'get_particles_temp'):
                     current_temps = self.env.mpm_entity.get_particles_temp()
                     if current_temps is not None:
-                        base_temps = torch.ones_like(current_temps) * 293.0
+                        base_temps = torch.ones_like(current_temps) * reset_temp_k
                         self.env.mpm_entity.set_particles_temp(base_temps)
-                        gs.logger.info(f"Initialized room temp: {base_temps.shape}, mean: {base_temps.mean().item()} K")
+                        gs.logger.info(f"Thermal baseline: {base_temps.shape}, mean: {base_temps.mean().item()} K")
             except Exception as e:
-                gs.logger.error(f"Failed to set room temperature: {e}")
+                gs.logger.error(f"Failed to set thermal baseline: {e}")
 
             import quadrants as qd  # type: ignore
             qd.sync()
