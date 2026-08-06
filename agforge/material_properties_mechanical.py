@@ -204,6 +204,26 @@ def poisson_ratio(temp_k):
     What IS well established ([ISIJ1993]) is that nu RISES with temperature for
     austenitic steel. We therefore use a mild linear rise from the standard
     room-temperature 0.28 rather than pretending to more precision than exists.
+
+    ⚠️ RE-EXAMINED 2026-08-06, and the reasoning above is weaker than it looks.
+    nu = E/(2G) - 1 is the standard identity, and it is exactly how [ORNL1985]
+    derived nu for types 304/316. Applied to [BAM2023]'s own E and G and fitted
+    across the whole table (which averages out the whole-GPa rounding this
+    docstring worries about), it gives nu = 0.383 +/- 0.005 at 1000 C and 0.323
+    at room temperature - where this function returns 0.28. So this curve is
+    probably LOW by ~0.05, and it disagrees with the very dataset that supplies E.
+
+    Two caveats keep it from being a drop-in replacement. [ORNL1985] warns that a
+    derived nu degrades at high temperature because small errors in E and G
+    reinforce, so the +/-0.005 is rounding scatter only and understates the true
+    uncertainty. And 0.382 was MEASURED TO BREAK THE SIMULATION - substep_dt is
+    derived from sqrt(E/rho), which is independent of nu, so the higher bulk
+    modulus pushes past the P-wave CFL limit. See the nu declaration in
+    agforge/options.py for the measured stability cliff.
+
+    Left as-is deliberately: the honest fix is the timestep, not this constant.
+    [ISIJ1993] measured nu directly over 300-1500 K and would settle it outright
+    if someone can pull its tabulated values.
     """
     t_c = temp_k - 273.15
     return float(np.clip(0.28 + 0.00005 * max(t_c - 20.0, 0.0), 0.28, 0.33))

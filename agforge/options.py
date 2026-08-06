@@ -50,6 +50,24 @@ class MaterialOptions(Options):
     E: float = 121.5e9
     #: Rises with temperature for austenitics [ISIJ1993]. LOW confidence - the
     #: published elevated-temperature values scatter non-monotonically.
+    #:
+    #: ⚠️ THIS VALUE IS NOT SOURCED, AND IS HELD DOWN BY STABILITY, NOT BY DATA.
+    #: It comes from an interpolation invented for this repo (see
+    #: material_properties_mechanical.poisson_ratio), NOT from a measurement.
+    #: [BAM2023]'s own E and G - the same dataset that gives us E - imply
+    #: nu = E/(2G) - 1, the standard identity, which fits to 0.382 at 1000 C
+    #: (0.331 at room temperature, where this interpolation says 0.28).
+    #:
+    #: That sourced value CANNOT be adopted as things stand: it was measured to
+    #: break the sim. nu drives the bulk modulus, and substep_dt below is derived
+    #: from sqrt(E/rho) - which does not depend on nu at all - so raising nu
+    #: raises the true wave speed while the timestep stays put. Empirically:
+    #:   nu 0.329 -> ratio 1.094 vs the P-wave CFL limit -> stable (89 steps)
+    #:   nu 0.34  -> ratio 1.117 -> stable (89 steps)
+    #:   nu 0.35  -> ratio 1.140 -> press dies at 33 steps
+    #:   nu 0.382 -> ratio 1.240 -> peak force 2.8e11 N
+    #: Fixing this properly means deriving substep_dt from the P-wave speed; see
+    #: the CFL block in model_post_init.
     nu: float = 0.329
     #: [NIST2021] SRM 1155a, D(T) = 8052 - 0.564 T, at 1273.15 K. Was 8000
     #: (a room-temperature figure). Inter-lab spread puts the band at 7330-7570.
@@ -407,6 +425,26 @@ class AgilityForgeOptions(Options):
         # 1. Derive timestep from CFL condition
         # CFL limit: substep_dt <= dx / c, where c = sqrt(E/rho) is the speed of sound.
         # We use a 0.95 safety margin (5% below the theoretical CFL limit).
+        #
+        # 🚨 THE 0.90 BELOW IS NOT THE REAL SAFETY MARGIN. sqrt(E/rho) is the thin-rod
+        # bar-wave speed; the fastest elastic wave in a bulk solid is the P-wave,
+        #     c_p = sqrt((K + 4*mu/3)/rho),  K = E/(3(1-2nu)),  mu = E/(2(1+nu))
+        # which at the shipped card (E=121.5 GPa, nu=0.329, rho=7334) is 4945 m/s
+        # against sqrt(E/rho) = 4070 m/s, i.e. 21% faster. So the substep_dt derived
+        # here is about 1.09x the STRICT P-wave CFL limit, not 0.90x of it.
+        #
+        # Measured stability cliff (single press, GPU, one variable moved - nu):
+        #     ratio 1.094 (nu 0.329) stable | 1.117 (nu 0.34) stable
+        #     ratio 1.140 (nu 0.35)  BREAKS | 1.240 (nu 0.382) peak force 2.8e11 N
+        # So the sim runs roughly 2% below the cliff. This is very likely the same
+        # margin behind the intermittent long-sequence failures elsewhere in the
+        # project, where halving dt (or AGF_CFL_SAFETY=0.45) is what makes the
+        # 17-hit sequence complete - both put the ratio near 0.55.
+        #
+        # Note nu does NOT appear below, so raising it raises c_p without shrinking
+        # substep_dt. Deriving the timestep from c_p instead would cost ~21% more
+        # substeps and would unblock using the sourced nu. Left alone deliberately:
+        # it changes stability for every consumer of this branch.
         temp_robot = RobotOptions(robot_time_to_seconds=1.0)
         dx = 1.0 / temp_robot.base_grid_density
         c = math.sqrt(self.mat.E / self.mat.rho)

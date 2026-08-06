@@ -190,6 +190,63 @@ def test_johnson_cook_class_defaults_are_316l_not_4340():
     assert mat.T_melt == pytest.approx(opts.jc_T_melt)
 
 
+# --------------------------------------------------------------------------
+# 5. The CFL margin that pins nu
+# --------------------------------------------------------------------------
+# These live here rather than with the pure-numpy property tests because they
+# are about the material card's effect on SOLVER STABILITY, which is what
+# actually stops the sourced Poisson ratio from being adopted.
+def _wave_speeds(E, nu, rho):
+    mu = E / (2.0 * (1.0 + nu))
+    K = E / (3.0 * (1.0 - 2.0 * nu))
+    return math.sqrt(E / rho), math.sqrt((K + 4.0 * mu / 3.0) / rho)
+
+
+def test_timestep_is_derived_from_the_bar_wave_not_the_p_wave():
+    """The 0.90 'safety margin' is measured against the wrong wave speed.
+
+    substep_dt = 0.90 * dx / sqrt(E/rho), but the fastest elastic wave in a bulk
+    solid is the P-wave. If this ever starts passing at < 1.0, someone fixed the
+    derivation and the nu constraint below can be revisited.
+    """
+    m = MaterialOptions()
+    dx = 1.0 / 183
+    c_bar, c_p = _wave_speeds(m.E, m.nu, m.rho)
+    substep_dt = 0.90 * dx / c_bar
+    ratio = substep_dt / (dx / c_p)
+    assert c_p > c_bar, "P-wave must be the faster of the two"
+    assert ratio > 1.0, (
+        "substep_dt no longer exceeds the strict P-wave CFL limit - the "
+        "derivation may have been fixed; re-check whether nu can be raised"
+    )
+    assert ratio == pytest.approx(1.094, abs=0.01)
+
+
+def test_the_sourced_poisson_ratio_would_cross_the_measured_stability_cliff():
+    """nu = 0.382 (from BAM's own E and G) was measured to break the press.
+
+    Stable at ratio 1.117 (nu 0.34), broken at 1.140 (nu 0.35). This pins WHY
+    the shipped nu is not the sourced one - so nobody 'corrects' it and silently
+    destabilises every consumer of this branch.
+    """
+    m = MaterialOptions()
+    dx = 1.0 / 183
+    c_bar, _ = _wave_speeds(m.E, m.nu, m.rho)
+    substep_dt = 0.90 * dx / c_bar
+
+    def ratio_for(nu):
+        _, c_p = _wave_speeds(m.E, nu, m.rho)
+        return substep_dt / (dx / c_p)
+
+    assert ratio_for(0.34) < 1.13, "nu=0.34 was measured stable"
+    assert ratio_for(0.35) > 1.13, "nu=0.35 was measured to break"
+    assert ratio_for(0.3823) > 1.2, "the BAM-derived nu is far past the cliff"
+    assert m.nu < 0.35, (
+        "nu was raised past the measured stability cliff; the timestep must be "
+        "derived from the P-wave speed first"
+    )
+
+
 def test_johnson_cook_reference_temperature_is_the_forging_temperature():
     """Not room temperature: A and B are already the 1000 C values, so T* must
     be 0 there or the card gets thermally softened twice."""
