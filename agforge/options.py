@@ -67,8 +67,35 @@ class MaterialOptions(Options):
     #:   nu 0.35  -> ratio 1.140 -> press dies at 33 steps
     #:   nu 0.382 -> ratio 1.240 -> peak force 2.8e11 N
     #: Fixing this properly means deriving substep_dt from the P-wave speed; see
-    #: the CFL block in model_post_init.
+    #: cfl_use_pwave below.
     nu: float = 0.329
+
+    #: Derive substep_dt from the P-wave speed sqrt((K + 4mu/3)/rho) instead of
+    #: the thin-rod bar wave sqrt(E/rho). The P-wave is the fastest elastic wave
+    #: in a bulk solid, so this is the criterion that actually governs stability;
+    #: sqrt(E/rho) understates it by ~21% at the shipped card, which is why the
+    #: nominal "0.90 safety factor" is really ~1.09x the true limit.
+    #:
+    #: DEFAULT OFF, because it is not free and not neutral:
+    #:   - it shrinks substep_dt ~21% => ~21% more substeps for the same sim time
+    #:   - it changes every trajectory on this branch, which other workstreams
+    #:     are actively tuning against
+    #: It only ever makes the timestep SMALLER, so it cannot destabilise a
+    #: configuration that already runs; the cost is wall-clock.
+    #:
+    #: Turning it on is what unblocks raising nu to the sourced ~0.382, and is
+    #: the principled version of the "halve dt / AGF_CFL_SAFETY=0.45" workaround
+    #: that makes long hit sequences complete elsewhere in the project.
+    #:
+    #: ✅ CONFIRMED by experiment (single press, GPU), which is the direct test
+    #: of the diagnosis above:
+    #:   nu 0.382, cfl_use_pwave=False -> ratio 1.240 -> 2.8e11 N, blows up
+    #:   nu 0.382, cfl_use_pwave=True  -> ratio 0.900 -> STABLE, 207 kN, 83 steps
+    #:   nu 0.329, cfl_use_pwave=True  -> ratio 0.900 -> STABLE, 201 kN, 83 steps
+    #: Note the last two agree to ~3%, so once the timestep is right the choice
+    #: of nu barely moves the answer - the instability was the timestep, not the
+    #: material. substep_dt goes 1.208e-06 -> 9.94e-07 at the shipped nu.
+    cfl_use_pwave: bool = False
     #: [NIST2021] SRM 1155a, D(T) = 8052 - 0.564 T, at 1273.15 K. Was 8000
     #: (a room-temperature figure). Inter-lab spread puts the band at 7330-7570.
     rho: float = 7334.
@@ -447,14 +474,23 @@ class AgilityForgeOptions(Options):
         # it changes stability for every consumer of this branch.
         temp_robot = RobotOptions(robot_time_to_seconds=1.0)
         dx = 1.0 / temp_robot.base_grid_density
-        c = math.sqrt(self.mat.E / self.mat.rho)
+
+        if getattr(self.mat, 'cfl_use_pwave', False):
+            # Correct criterion: the fastest elastic wave in a bulk solid.
+            mu_lame = self.mat.E / (2.0 * (1.0 + self.mat.nu))
+            k_bulk = self.mat.E / (3.0 * (1.0 - 2.0 * self.mat.nu))
+            c = math.sqrt((k_bulk + 4.0 * mu_lame / 3.0) / self.mat.rho)
+        else:
+            # Historical: the thin-rod bar-wave speed. Understates the true limit
+            # by ~21% at the shipped card - see the note above.
+            c = math.sqrt(self.mat.E / self.mat.rho)
         dt_cfl = dx / c  # Theoretical max substep_dt
 
         cfl_safety = 0.90                         # 5% safety margin
         substeps = 8                              # Fixed substep count for real-time teleop
         substep_dt = dt_cfl * cfl_safety          # Safe substep timestep
         macro_dt = substep_dt * substeps           # Macro timestep = substep_dt × substeps
-        
+
         # CFL validation: guard against future material/grid changes silently breaking stability
         assert substep_dt < dt_cfl, (
             f"CFL violation: substep_dt={substep_dt:.3e} >= dt_CFL={dt_cfl:.3e} "

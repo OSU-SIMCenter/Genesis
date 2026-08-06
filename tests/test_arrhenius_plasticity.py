@@ -247,6 +247,43 @@ def test_the_sourced_poisson_ratio_would_cross_the_measured_stability_cliff():
     )
 
 
+def test_pwave_cfl_option_is_off_by_default():
+    """Deliberate. It is the correct criterion, but flipping it changes every
+    trajectory on a branch other workstreams are tuning against."""
+    assert MaterialOptions().cfl_use_pwave is False
+
+
+def test_pwave_cfl_option_puts_the_timestep_back_inside_the_limit():
+    """With the option on, the derived dt should honour the 0.90 margin against
+    the P-wave - which is what the nominal safety factor always claimed."""
+    from agforge.options import TeleopOptions
+
+    for nu in (0.329, 0.3823):
+        mat = MaterialOptions()
+        mat.nu = nu
+        mat.cfl_use_pwave = True
+        cfg = TeleopOptions(mat=mat)
+        substep_dt = cfg.sim.dt / cfg.sim.substeps
+        _, c_p = _wave_speeds(mat.E, nu, mat.rho)
+        ratio = substep_dt / ((1.0 / 183) / c_p)
+        assert ratio == pytest.approx(0.90, abs=1e-3), (
+            "cfl_use_pwave should give exactly the 0.90 margin against the "
+            "P-wave at nu=%s, got %.4f" % (nu, ratio)
+        )
+
+
+def test_pwave_cfl_only_ever_shrinks_the_timestep():
+    """It cannot destabilise a configuration that already runs; the cost is
+    wall-clock. Guards against someone 'optimising' it into a larger dt."""
+    from agforge.options import TeleopOptions
+
+    base = TeleopOptions(mat=MaterialOptions())
+    mat = MaterialOptions()
+    mat.cfl_use_pwave = True
+    fixed = TeleopOptions(mat=mat)
+    assert (fixed.sim.dt / fixed.sim.substeps) < (base.sim.dt / base.sim.substeps)
+
+
 def test_johnson_cook_reference_temperature_is_the_forging_temperature():
     """Not room temperature: A and B are already the 1000 C values, so T* must
     be 0 there or the card gets thermally softened twice."""
