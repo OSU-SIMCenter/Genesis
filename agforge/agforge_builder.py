@@ -18,11 +18,18 @@ class RobotXMLGenerator:
         self.kp = robot_cfg.kp
         self.kv = robot_cfg.kv
         
-        # Gripper geometry is sized to handle the cylinder
+        # Die half-extents. X (along the bar) and Z (across it) are the CONTACT
+        # FOOTPRINT and now come from the real Tool2 geometry rather than being
+        # scaled off the billet -- see RobotOptions.die_axial_width_m.
+        #
+        # Y stays on the legacy billet-radius rule on purpose: it is the die
+        # thickness along the approach axis, and gripper_closed_y below derives
+        # the closed gap from it, so changing Y would move the KINEMATICS
+        # (how far the press can close) instead of the contact area.
         self.gripper_size = np.array([
-            robot_cfg.cylinder_radius * 0.5,  # X-dimension (height)
-            robot_cfg.cylinder_radius * 0.4,  # Y-dimension (width/thickness)
-            robot_cfg.cylinder_radius * 1.2,  # Z-dimension (depth)
+            robot_cfg.die_axial_width_m * 0.5,   # X: along-bar contact width
+            robot_cfg.cylinder_radius * 0.4,     # Y: thickness / approach axis
+            robot_cfg.die_lateral_span_m * 0.5,  # Z: across-bar span
         ])
 
         # Induction coil visualizer metrics

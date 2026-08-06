@@ -283,6 +283,39 @@ class RobotOptions(Options):
     #: Grid cells across the billet diameter. Drives base_grid_density.
     grid_cells_across_billet: int = 7
 
+    # ------------------------------------------------------------------ dies
+    # The die footprint used to be derived from the BILLET radius
+    # (0.5r x 1.2r, i.e. 19.05 x 45.72 mm), which is a box scaled off the
+    # workpiece rather than a tool. The real dies are forge_common's
+    # `Tool2_clip.obj` -- and the 2026-06-15 T4 dataset names them directly:
+    # every action in the embedded plan carries `anvil_tool: 2, hammer_tool: 2`.
+    #
+    # Raw mesh extents are 15.82 x 54.71 x 12.70 mm, but the tool is NOT a
+    # uniform block: it tapers from a flat mounting shank (15.82 mm axial)
+    # through a rounded region to a narrower contact tip (9.49 mm axial).
+    # forge_common's `press_tool.die_contact_axial_width_mm()` measures the
+    # EFFECTIVE contact band at 25% of tool height above the tip -- where the
+    # lateral extent reaches its full plateau -- giving 13.48 mm. That is the
+    # number a flat-plane die approximation should carry; note it deliberately
+    # differs from `real_scale.REAL_PRESS_AXIAL_BAND_MM = 15.8187`, which is
+    # the whole-tool bounding box and overstates the contact band.
+    #
+    # Corroborated independently: inverting the measured force curve of the
+    # first blow in the T4 dataset (66.5 kN, gap 38.41 -> 31.06 mm) for die
+    # length gives 8-16 mm depending on the assumed constraint factor, which
+    # brackets the 9.49 (tip) / 13.48 (effective) / 15.82 (shank) mesh values.
+    #
+    # Only the CONTACT FOOTPRINT is set here. Die thickness along the approach
+    # axis stays on the legacy billet-radius rule because it sets the closed
+    # gap via the slide range, and changing it would alter the kinematics
+    # rather than the contact area. A box still cannot represent the taper --
+    # replacing it with the actual mesh is a separate, larger change.
+    #: Die contact width along the bar axis [m]. Sets contact area, hence force.
+    die_axial_width_m: float = 0.01348
+    #: Die span across the bar [m]. Exceeds the 38.1 mm billet, so it does not
+    #: limit contact; carried for geometric fidelity.
+    die_lateral_span_m: float = 0.0547116
+
     # Induction coil. Colton's email says "the coil is ~3\" in length"; a direct
     # count off the tape-measure photos IMG_9854/9855/9856 gives 4 turns (possibly
     # 3.5) spanning ~3.5", i.e. a pitch of ~22 mm. That pitch is corroborated by the
