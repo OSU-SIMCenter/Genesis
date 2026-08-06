@@ -154,6 +154,31 @@ class ArrheniusPlasticity(gs.materials.MPM.Base):
     #: correction iteration from this seed is more than enough to converge.
     rate_seed: ValidFloat = 1.0
 
+    #: PRESCRIBED process strain rate [1/s]. When > 0 the flow stress is
+    #: evaluated at this rate instead of the one implied by the solver timestep.
+    #:
+    #: This exists because the SIMULATED strain rate is not the PHYSICAL one.
+    #: The press runs at strike.pressing_speed = 25 m/s for numerical
+    #: affordability, giving a nominal rate of v/D = 656 /s. The real Agility
+    #: Forge press measures 14.1 mm/s => 0.41 /s (2026-06-15 T4 dataset, first
+    #: blow: gap 38.41 -> 31.06 mm in 0.505 s). The sim is therefore ~1770x
+    #: fast, and deriving the rate from substep_dt feeds this fit a rate ~3e4
+    #: ABOVE its fitted domain of 2e-4..2e-2 /s.
+    #:
+    #: Note rate_max = 1e3 does NOT catch this: it was sized against the real
+    #: process ("forging runs 1-100 /s"), so 656 slips underneath the guard.
+    #:
+    #: Johnson-Cook is unaffected only because its rate term is dead code
+    #: (self.C is never referenced), and running fast is otherwise defensible
+    #: for it -- inertial stress rho*v^2 ~ 4.6 MPa is ~2% of flow stress. But a
+    #: genuinely rate-coupled law cannot use a fictional rate, so decoupling the
+    #: constitutive rate from the numerical one is required, not optional. This
+    #: is standard practice for quasi-static problems solved with explicit
+    #: dynamics.
+    #:
+    #: 0.0 keeps the legacy behaviour (derive from substep_dt).
+    process_strain_rate: ValidFloat = 0.0
+
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
         self._default_Jp = 0.0
@@ -223,12 +248,23 @@ class ArrheniusPlasticity(gs.materials.MPM.Base):
         eps_p = Jp
         inv_dt = gs.qd_float(1.0) / gs.qd_float(self.substep_dt)
 
-        # 2. Flow stress, resolving the rate coupling by fixed point.
-        #    Pass 1 seeds the rate; pass 2 uses the rate the trial state implies.
-        sigma_y = self._flow_stress_pa(eps_p, gs.qd_float(self.rate_seed), temp)
-        dg_trial = epsilon_hat_norm - sigma_y / (2.0 * self.mu)
-        rate_est = qd.math.max(dg_trial, gs.qd_float(0.0)) * inv_dt
-        sigma_y = self._flow_stress_pa(eps_p, rate_est, temp)
+        # 2. Flow stress.
+        #    With a prescribed process rate there is nothing to resolve - the
+        #    rate is an input, not a consequence of the timestep - so the fixed
+        #    point collapses to a single evaluation. Otherwise fall back to
+        #    deriving the rate from the solver timestep: pass 1 seeds it, pass 2
+        #    uses the rate the trial state implies. See process_strain_rate on
+        #    why the derived rate is fictional at the sim's press speed.
+        sigma_y = gs.qd_float(0.0)
+        if qd.static(self.process_strain_rate > 0.0):
+            sigma_y = self._flow_stress_pa(
+                eps_p, gs.qd_float(self.process_strain_rate), temp)
+        else:
+            sigma_y = self._flow_stress_pa(
+                eps_p, gs.qd_float(self.rate_seed), temp)
+            dg_trial = epsilon_hat_norm - sigma_y / (2.0 * self.mu)
+            rate_est = qd.math.max(dg_trial, gs.qd_float(0.0)) * inv_dt
+            sigma_y = self._flow_stress_pa(eps_p, rate_est, temp)
 
         # 3. Yield condition (von Mises)
         yield_dist = epsilon_hat_norm - sigma_y / (2.0 * self.mu)

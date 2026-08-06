@@ -288,6 +288,11 @@ class AgilityForgeEnv:
                 # turn the plastic strain increment into a strain rate, and it must
                 # track the CFL-derived timestep rather than a stale constant.
                 substep_dt=self.cfg.sim.dt / self.cfg.sim.substeps,
+                # Optional: evaluate the flow stress at the REAL process rate
+                # rather than the one the accelerated press implies.
+                process_strain_rate=(
+                    getattr(self.cfg.mat, 'arrhenius_process_strain_rate', None)
+                    or 0.0),
                 **material_kwargs,
             )
         elif getattr(self.cfg.mat, 'use_johnson_cook', False):

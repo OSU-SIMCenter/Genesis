@@ -141,6 +141,14 @@ class MaterialOptions(Options):
     #: it more true. Switch it on together with a forging-temperature billet.
     use_arrhenius: bool = False
 
+    #: Prescribed process strain rate [1/s] for the Arrhenius flow rule. None
+    #: (or 0) derives the rate from the solver timestep, which at the sim's
+    #: 25 m/s press speed means ~656 /s -- roughly 3e4 above the fit domain,
+    #: and NOT caught by the rate clamp. Set this to the real process rate
+    #: (0.41 /s for the first blow of the 2026-06-15 T4 dataset) to make the
+    #: rate coupling physical. See ArrheniusPlasticity.process_strain_rate.
+    arrhenius_process_strain_rate: Optional[float] = None
+
     #: Derived in material_properties_mechanical.isothermal_card(1.0). A is PINNED,
     #: not fitted: the residual is nearly flat in it, but the solver evaluates
     #: A + B eps^n from eps_p = 0, so A is the initial yield stress the sim sees.
