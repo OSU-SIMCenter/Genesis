@@ -60,6 +60,12 @@ class BaseMPMSolver(Solver):
         self._alpha_thermal = self._alpha_thermal_base * self._thermal_time_scale
         self._emissivity = options.emissivity  # Stefan-Boltzmann emissivity (not pre-scaled; computed dynamically)
 
+        # Particle-level mechanical contact (hard position projection + a second
+        # friction pass on top of the grid contact). See MPMOptions for why this
+        # is separable; False gives grid-only contact. Thermal contact in the same
+        # kernel is NOT affected - it has its own _enable_thermal guard.
+        self._enable_particle_contact = bool(getattr(options, "enable_particle_contact", True))
+
         # Fixed-end (truncated-domain) BC. x_cut is fixed at build; L_eff / ambient / blend are runtime fields.
         self._enable_fixed_end_bc = bool(options.enable_fixed_end_bc)
         self._fixed_end_x_cut = float(options.fixed_end_x_cut)
@@ -1995,8 +2001,9 @@ class BaseMPMSolver(Solver):
                         
                         margin = self._particle_size * 0.5
                         
-                        # 1. MECHANICAL COLLISION
-                        if qd.static(self.sim.coupler._rigid_mpm):
+                        # 1. MECHANICAL COLLISION (grid contact already did this
+                        # once; this pass adds the hard position projection)
+                        if qd.static(self.sim.coupler._rigid_mpm and self._enable_particle_contact):
                             if signed_dist < margin:
                                 normal_rigid = sdf.sdf_func_normal_world(
                                     geoms_state=geoms_state,

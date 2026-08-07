@@ -602,6 +602,16 @@ class MPMOptions(Options):
     # enabled, grid cells at the cut plane apply a Robin (convective-into-bulk) flux toward
     # `fixed_end_ambient` instead of air convection/radiation. See Thermal_Induction_Refactor_Spec.
     enable_fixed_end_bc: bool = False
+    #: Apply the particle-level mechanical contact pass after g2p, on top of the
+    #: grid contact in the coupler. This is a HYBRID: the grid pass already
+    #: resolves the collision with friction and restitution, and this pass adds a
+    #: hard position projection out of the die plus a second friction
+    #: application. The position projection moves material without that motion
+    #: entering the APIC affine field, so the deformation gradient cannot see it.
+    #:
+    #: Set False for grid-only contact, which is the more trustworthy path for
+    #: validation. Does NOT affect thermal contact, which is guarded separately.
+    enable_particle_contact: bool = True
     fixed_end_x_cut: float = 0.0  # World X of the cut plane (held end). Set by the app layer.
     fixed_end_conduction_length: float = 0.05  # L_eff [m]: effective conduction length into the bulk rod
     fixed_end_ambient: float = 293.15  # Bulk/chuck temperature the cut plane drains toward [K]
