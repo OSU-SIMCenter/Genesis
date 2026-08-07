@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from pint import UnitRegistry
-from typing import Optional, Tuple, List
+from typing import Literal, Optional, Tuple, List
 
 import genesis as gs
 from genesis.options.options import Options
@@ -474,6 +474,16 @@ class AgilityForgeOptions(Options):
     reconstruction: ReconstructionOptions = ReconstructionOptions()
     performance_mode: bool = True
 
+    #: How thermal_time_scale (S_T) is chosen. See the derivation in
+    #: model_post_init for the measured evidence behind both settings.
+    #:   'cfl'        - 25% of the explicit-diffusion stability ceiling. A purely
+    #:                  NUMERICAL choice, unrelated to how fast the press moves.
+    #:                  What the induction-calibration workstream is tuned against.
+    #:   'mechanical' - S_T = pressing_speed / real_die_speed, so the thermal and
+    #:                  mechanical clocks agree. Required for any coupled
+    #:                  thermo-mechanical run (die chill, transfer cooling).
+    thermal_time_scale_mode: Literal["cfl", "mechanical"] = "cfl"
+
     # Declare fields for pydantic
     sim: object = None
     robot: object = None
@@ -560,6 +570,48 @@ class AgilityForgeOptions(Options):
         # preserved); explicit FTCS develops checkerboard oscillations above ~60-70% of CFL, keep <=~0.4.
         thermal_cfl_fraction = 0.25
         thermal_time_scale = S_T_max * thermal_cfl_fraction
+
+        # ---------------------------------------------------------------------
+        # S_T IS A NUMERICAL QUANTITY, NOT A PHYSICAL ONE.
+        #
+        # The value above is 25% of a stability ceiling. Nothing ties it to how
+        # fast the press actually moves. Measured on GPU at the shipped card:
+        #     macro_dt = 9.666e-06 s and S_T = 171653, so ONE macro step advances
+        #     1.659 s of THERMAL time, while the mechanics advance 9.666e-06 s of
+        #     sim time = 17.1 ms of real time at the 1773x press acceleration.
+        # The two clocks disagree by ~97x. Over a 74-step press that is 123 s of
+        # cooling applied to a blow that really takes 0.505 s.
+        #
+        # This is LATENT, not active, in the default forging path. StrikeController
+        # runs with thermal_enabled = False, which snapshots particle temperatures
+        # before each physics step and restores them after ("Thermal Freezing"), so
+        # a press is exactly isothermal. Verified: a 74-step press starting at
+        # 1273.15 K ends at 1273.15 K with std 0.0, at BOTH time scales.
+        #
+        # It becomes ACTIVE the moment thermal physics runs during a strike, which
+        # is required for die chill. Measured idle, thermal live, 100 steps from a
+        # uniform 1273.15 K billet:
+        #     S_T = 171653 -> mean 965.8 K, min 473.4 K   (166 s of thermal time)
+        #     S_T =   1773 -> mean 1267.4 K, min 1232.7 K (1.7 s of thermal time)
+        #
+        # The first of those IS the 612-1269 K spread previously attributed to the
+        # fixed-end BC. That attribution was WRONG. The dominant term is surface
+        # radiation/convection amplified by S_T; the fixed-end cut face only
+        # supplies the single coldest cell at the +x end.
+        #
+        # 'mechanical' is strictly SMALLER than the CFL value, so it can only be
+        # more stable. The default stays 'cfl' because the induction-calibration
+        # workstream on this branch is tuned against it.
+        mode = getattr(self, 'thermal_time_scale_mode', 'cfl')
+        if mode == 'mechanical':
+            strike_cfg = getattr(self, 'strike', None) or StrikeOptions()
+            mech_accel = strike_cfg.pressing_speed / strike_cfg.real_die_speed
+            assert mech_accel <= thermal_time_scale, (
+                f"thermal_time_scale_mode='mechanical' asks for S_T={mech_accel:.0f}, "
+                f"above the explicit-diffusion CFL ceiling {thermal_time_scale:.0f}"
+            )
+            thermal_time_scale = mech_accel
+        # ---------------------------------------------------------------------
         
         # Thermal CFL validation
         alpha_scaled = alpha_worst * thermal_time_scale
@@ -662,6 +714,16 @@ class StrikeOptions(Options):
     
     target_strain: float = 0.5 # 50% reduction
     pressing_speed: float = 25.0 # m/s
+
+    #: Real die closing speed [m/s], measured from blow #1 of the 2026-06-15 T4
+    #: dataset: 7.12 mm of bite in 0.505 s from contact to peak force.
+    #:
+    #: The sim presses at pressing_speed = 25 m/s, i.e. 1773x faster. That is a
+    #: defensible quasi-static proxy for the MECHANICS (Johnson-Cook's rate term
+    #: is inert, and the inertial stress rho*v^2 ~ 4.6 MPa is only ~2% of flow
+    #: stress) - but it is the reference any THERMAL time scaling has to agree
+    #: with, which is what thermal_time_scale_mode uses it for.
+    real_die_speed: float = 0.0141
     
     # Force Balance Control
     # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).
