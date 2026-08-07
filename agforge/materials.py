@@ -136,7 +136,24 @@ class ArrheniusPlasticity(gs.materials.MPM.Base):
     #: Validity window of the [Song2020] fit. See the class docstring - these are
     #: guards against unphysical extrapolation, not tunables.
     T_fit_min: ValidFloat = 1073.15
-    T_fit_max: ValidFloat = 1273.15
+    #: Raised 1273.15 -> 1473.15 on 2026-08-07. [Song2020] is fitted to 1000 C,
+    #: and clamping there meant a billet at real forging heat (1150-1260 C) was
+    #: evaluated with the 1000 C flow stress: 181.1 MPa at eps 0.207, 0.41 /s,
+    #: where extrapolating Song's own form gives 77.8 MPa. A 2.3x error coming
+    #: entirely from the clamp.
+    #:
+    #: Extrapolating is corroborated, not assumed. [RyanMcQueen1990] is type 316
+    #: torsion measured IN DOMAIN over 900-1200 C, and at 1200 C / 0.41 /s it
+    #: brackets 41.6 - 74.3 MPa (eps 0.1 to DRV saturation). Song extrapolated
+    #: gives 77.8 -- just above that bracket, the same ~5-10% offset it shows at
+    #: 1000 C where both fits apply. The temperature dependence tracks; Song
+    #: simply reads slightly stiffer throughout, consistent with a different
+    #: material state and test mode.
+    #:
+    #: 1473.15 K is exactly where Ryan & McQueen's window ends. Do NOT raise it
+    #: further without a source that reaches higher - above 1200 C the
+    #: extrapolation is unchecked again. See material_properties_mechanical.
+    T_fit_max: ValidFloat = 1473.15
 
     #: Substep timestep [s], used to turn the plastic strain increment into a
     #: strain rate. Must be kept in sync with the solver's substep_dt; the

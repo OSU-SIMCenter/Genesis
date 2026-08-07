@@ -159,6 +159,79 @@ def peak_flow_stress_mpa(strain_rate, temp_k):
     return float(flow_curve_mpa(strain_rate, temp_k)[1].max())
 
 
+# ==========================================================================
+# [RyanMcQueen1990] - the fit that actually covers the FORGING window
+# --------------------------------------------------------------------------
+# S. Ryan and H.J. McQueen, J. Mater. Process. Technol. 21 (1990) 177-199.
+# Type 316 torsion, as-cast AND worked, 900-1200 C at 0.1-5 /s.
+#
+# WHY THIS EXISTS ALONGSIDE [Song2020]. Song is fitted over 800-1000 C and
+# 2e-4 - 2e-2 /s. The real process sits at 1150-1260 C and 0.41 /s, so the
+# shipped card is out of domain on BOTH axes and the kernel simply clamps to
+# its 1273.15 K ceiling. Ryan & McQueen contains the operating point outright.
+#
+# Form (sigma in MPa, Z in /s):
+#     Z    = strain_rate * exp(Q / (R T)),  Q = 460 kJ/mol
+#     zeta = C * [asinh(Z * 1e-17)] ** m
+#
+# Corroboration on Q: DeAlmeida & Barbosa 2005 (ISIJ Int. 45(2) 296) get
+# 450 +/- 20 over the same 900-1200 C window, and Song's own per-strain table
+# runs 426-477. Ferreira 2020 gets 347 and is the outlier; it is also the only
+# delta-ferrite-free study.
+#
+# 🚨 THE STRAIN AXIS IS UNDERDETERMINED, WHICH IS WHY THIS IS NOT YET A KERNEL
+# FLOW RULE. Ryan & McQueen publish four stress states but only two of them
+# carry a strain: zeta_0 at eps = 0 and zeta_0.1 at eps = 0.1. The other two are
+# LIMITS, not points -- zeta_e is the dynamic-recovery saturation stress and
+# zeta_ss the dynamic-recrystallisation steady state -- and placing them on the
+# strain axis needs the critical/peak strains (eps_c, eps_p), which are not in
+# what we have been able to extract. Inventing them would put unsourced
+# parameters back into the card, which is the exact failure this workstream has
+# been undoing. So this module exposes the published states and an honest
+# BRACKET for intermediate strain, and stops there.
+#
+# Note also: type 316, not 316L, and torsion rather than compression.
+# ==========================================================================
+
+RM_Q_J_MOL = 460.0e3
+
+#: state -> (C [MPa], m). Verbatim from the paper's closed forms.
+RM_STATES = {
+    "eps_0": (65.7, 0.077),    # zero strain
+    "eps_0.1": (62.2, 0.162),  # eps = 0.1
+    "drv_sat": (123.8, 0.206),  # dynamic-recovery saturation
+    "drx_ss": (103.5, 0.210),   # dynamic-recrystallisation steady state
+}
+
+
+def rm_zener_hollomon(strain_rate, temp_k):
+    """Z = strain_rate * exp(Q/RT) for the Ryan & McQueen activation energy."""
+    return float(strain_rate) * math.exp(RM_Q_J_MOL / (R_GAS * float(temp_k)))
+
+
+def rm_stress_mpa(state, strain_rate, temp_k):
+    """One published Ryan & McQueen stress state, in MPa.
+
+    ``state`` is a key of :data:`RM_STATES`. No strain interpolation is done or
+    implied -- see the module note above on why.
+    """
+    c, m = RM_STATES[state]
+    z = rm_zener_hollomon(strain_rate, temp_k)
+    return float(c * math.asinh(z * 1e-17) ** m)
+
+
+def rm_bracket_mpa(strain_rate, temp_k):
+    """(low, high) MPa bracketing flow stress between eps 0.1 and DRV saturation.
+
+    The honest statement for an intermediate strain such as the 0.207 of the
+    first blow of the T4 dataset: it lies inside this bracket, and the paper
+    does not pin down where.
+    """
+    return (rm_stress_mpa("eps_0.1", strain_rate, temp_k),
+            rm_stress_mpa("drv_sat", strain_rate, temp_k))
+
+
+
 # --------------------------------------------------------------------------
 # Elastic constants and density
 # --------------------------------------------------------------------------

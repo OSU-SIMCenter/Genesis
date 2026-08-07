@@ -116,10 +116,27 @@ def test_strain_is_clamped_at_both_ends_of_the_table():
 # --------------------------------------------------------------------------
 # 3. The validity-window guards
 # --------------------------------------------------------------------------
-def test_fit_window_matches_the_published_domain():
-    mat = ArrheniusPlasticity(E=121.5e9, nu=0.329, rho=7334.0)
-    assert mat.T_fit_min == pytest.approx(1073.15)  # 800 C
-    assert mat.T_fit_max == pytest.approx(1273.15)  # 1000 C
+def test_clamp_window_covers_the_forging_window_not_just_the_fit_domain():
+    """The FLOOR is Song's published domain; the CEILING deliberately exceeds it.
+
+    [Song2020] is fitted 800-1000 C. Clamping the ceiling at 1000 C meant a
+    billet at real forging heat (1150-1260 C) got the 1000 C flow stress --
+    181.1 MPa at eps 0.207 / 0.41 per s, against 77.8 for the same formula
+    evaluated at 1200 C. A 2.3x error from the clamp alone.
+
+    Extrapolating is corroborated rather than assumed: [RyanMcQueen1990],
+    measured IN DOMAIN over 900-1200 C, brackets 41.6-74.3 MPa at that point and
+    Song extrapolated gives 77.8 -- the same modest offset it shows at 1000 C
+    where both fits apply. See tests/test_ryan_mcqueen.py.
+
+    The ceiling stops at 1200 C because that is where Ryan & McQueen's window
+    stops. The floor stays at the published 800 C: below it the fit understates
+    cold strength badly, and nothing corroborates going lower.
+    """
+    mat = ArrheniusPlasticity(E=121.5e9, nu=0.383, rho=7334.0)
+    assert mat.T_fit_min == pytest.approx(1073.15)  # 800 C, Song's floor
+    assert mat.T_fit_max == pytest.approx(1473.15)  # 1200 C, Ryan & McQueen's top
+    assert mat.T_fit_max > 1423.15, "must reach into the 1150-1260 C forging window"
 
 
 def test_room_temperature_is_absurd_which_is_why_the_clamp_exists():
