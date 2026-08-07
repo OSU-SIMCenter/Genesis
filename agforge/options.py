@@ -661,6 +661,9 @@ class AgilityForgeOptions(Options):
             # Fixed-end (truncated-domain) BC: the held end conducts into the unsimulated
             # rod (Robin BC on the cut plane) instead of being exposed to air.
             enable_fixed_end_bc=True,
+            # Same worst-case diffusivity the S_T derivation above uses, so the
+            # solver's CFL checks cannot drift from the shipped material.
+            thermal_alpha_worst=alpha_worst,
             thermal_contact_conductivity=3000.0,  # W/(m²K); reduced from 5000 — less aggressive die chill on light contact
             # Surface emissivity, previously left at the engine default and assumed 0.80
             # in calibration.json. Balat-Pichelin et al. measure as-received 316L

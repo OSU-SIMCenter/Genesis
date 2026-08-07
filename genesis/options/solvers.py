@@ -612,6 +612,11 @@ class MPMOptions(Options):
     #: Set False for grid-only contact, which is the more trustworthy path for
     #: validation. Does NOT affect thermal contact, which is guarded separately.
     enable_particle_contact: bool = True
+    #: Worst-case (highest) thermal diffusivity of the billet material [m^2/s],
+    #: used only by the explicit-diffusion CFL warning. Default is 316L's
+    #: ~6.05e-6 at ~1450 K. Keep in step with whatever supplies the material
+    #: card; a stale value here makes the warning fire at the wrong threshold.
+    thermal_alpha_worst: float = 6.05e-6
     fixed_end_x_cut: float = 0.0  # World X of the cut plane (held end). Set by the app layer.
     fixed_end_conduction_length: float = 0.05  # L_eff [m]: effective conduction length into the bulk rod
     fixed_end_ambient: float = 293.15  # Bulk/chuck temperature the cut plane drains toward [K]

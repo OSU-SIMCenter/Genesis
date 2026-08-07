@@ -66,6 +66,12 @@ class BaseMPMSolver(Solver):
         # kernel is NOT affected - it has its own _enable_thermal guard.
         self._enable_particle_contact = bool(getattr(options, "enable_particle_contact", True))
 
+        # Worst-case thermal diffusivity for the CFL checks below. Both sites used
+        # to hardcode 44.0/(7850*450) = 1.246e-5, i.e. AISI 4340's - the exact
+        # value agforge/options.py records as superseded when the billet became
+        # 316L (~6.05e-6). ~2x too high, so the warnings fired early.
+        self._thermal_alpha_worst = float(getattr(options, "thermal_alpha_worst", 6.05e-6))
+
         # Fixed-end (truncated-domain) BC. x_cut is fixed at build; L_eff / ambient / blend are runtime fields.
         self._enable_fixed_end_bc = bool(options.enable_fixed_end_bc)
         self._fixed_end_x_cut = float(options.fixed_end_x_cut)
@@ -357,8 +363,13 @@ class BaseMPMSolver(Solver):
                 )
                 
             if self._enable_thermal and self._thermal_time_scale > 0:
-                # Match diffusion kernel: α_phys(T) · S_T; room-temp steel is worst-case.
-                alpha_worst = 44.0 / (7850.0 * 450.0)
+                # Match diffusion kernel: alpha_phys(T) * S_T.
+                # NOTE the worst case is the FORGING end for 316L, not room
+                # temperature as this comment used to claim. 316L's conductivity
+                # RISES with temperature, so alpha climbs from ~3.7e-6 at 293 K to
+                # ~6.05e-6 at ~1450 K. The reverse was true for the 4340 that the
+                # old hardcoded 1.246e-5 came from.
+                alpha_worst = self._thermal_alpha_worst
                 alpha_scaled = alpha_worst * self._thermal_time_scale
                 dt_cfl = self._dx ** 2 / (6.0 * alpha_scaled)
                 if self.substep_dt > dt_cfl:
@@ -1467,7 +1478,7 @@ class BaseMPMSolver(Solver):
         s_t = float(self._thermal_time_scale)
         if s_t <= 0.0:
             return
-        alpha_worst = 44.0 / (7850.0 * 450.0)
+        alpha_worst = self._thermal_alpha_worst
         dt_diff_cfl = self._dx ** 2 / (6.0 * alpha_worst * s_t)
         if self.substep_dt > dt_diff_cfl:
             gs.logger.warning(
