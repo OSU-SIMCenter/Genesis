@@ -202,24 +202,33 @@ def _wave_speeds(E, nu, rho):
     return math.sqrt(E / rho), math.sqrt((K + 4.0 * mu / 3.0) / rho)
 
 
-def test_timestep_is_derived_from_the_bar_wave_not_the_p_wave():
-    """The 0.90 'safety margin' is measured against the wrong wave speed.
+def test_timestep_is_derived_from_the_p_wave():
+    """The 0.90 safety margin is now measured against the wave that governs.
 
-    substep_dt = 0.90 * dx / sqrt(E/rho), but the fastest elastic wave in a bulk
-    solid is the P-wave. If this ever starts passing at < 1.0, someone fixed the
-    derivation and the nu constraint below can be revisited.
+    This test used to assert the OPPOSITE - that substep_dt came from
+    sqrt(E/rho) and so sat at ~1.09x the strict P-wave CFL limit - and its
+    docstring said "if this ever starts passing at < 1.0, someone fixed the
+    derivation and the nu constraint below can be revisited". That happened on
+    2026-08-07. Both halves had to ship together: raising nu is only safe once
+    the timestep comes from c_p.
     """
+    from agforge.options import TeleopOptions
+
     m = MaterialOptions()
     dx = 1.0 / 183
     c_bar, c_p = _wave_speeds(m.E, m.nu, m.rho)
-    substep_dt = 0.90 * dx / c_bar
-    ratio = substep_dt / (dx / c_p)
     assert c_p > c_bar, "P-wave must be the faster of the two"
-    assert ratio > 1.0, (
-        "substep_dt no longer exceeds the strict P-wave CFL limit - the "
-        "derivation may have been fixed; re-check whether nu can be raised"
+
+    cfg = TeleopOptions(mat=m)
+    substep_dt = cfg.sim.dt / cfg.sim.substeps
+    assert substep_dt / (dx / c_p) == pytest.approx(0.90, abs=1e-3), (
+        "substep_dt no longer honours the 0.90 margin against the P-wave"
     )
-    assert ratio == pytest.approx(1.094, abs=0.01)
+
+    # What the OLD bar-wave derivation would give at the now-shipped nu: 1.24,
+    # far past the measured cliff at ~1.13. That is precisely why nu was pinned
+    # to 0.329 before, and why it no longer has to be.
+    assert (0.90 * dx / c_bar) / (dx / c_p) == pytest.approx(1.243, abs=0.01)
 
 
 def test_the_sourced_poisson_ratio_would_cross_the_measured_stability_cliff():
@@ -252,10 +261,23 @@ def test_the_sourced_poisson_ratio_would_cross_the_measured_stability_cliff():
         )
 
 
-def test_pwave_cfl_option_is_off_by_default():
-    """Deliberate. It is the correct criterion, but flipping it changes every
-    trajectory on a branch other workstreams are tuning against."""
-    assert MaterialOptions().cfl_use_pwave is False
+def test_pwave_cfl_option_is_on_by_default():
+    """On since 2026-08-07. The P-wave is the criterion that actually governs
+    stability, and turning it on is what lets nu be the sourced 0.383 rather
+    than a value held down to keep the bar-wave timestep from blowing up."""
+    assert MaterialOptions().cfl_use_pwave is True
+
+
+def test_the_shipped_nu_is_the_sourced_one():
+    """options.nu and poisson_ratio() must not drift apart -- the card's
+    provenance story depends on them being the same number."""
+    from agforge.material_properties_mechanical import poisson_ratio
+
+    nu = MaterialOptions().nu
+    assert nu == pytest.approx(poisson_ratio(1273.15), abs=5e-4), (
+        "options.nu no longer matches poisson_ratio at forging temperature"
+    )
+    assert nu > 0.37, "nu fell back toward the old stability-pinned 0.329"
 
 
 def test_pwave_cfl_option_puts_the_timestep_back_inside_the_limit():
@@ -282,11 +304,16 @@ def test_pwave_cfl_only_ever_shrinks_the_timestep():
     wall-clock. Guards against someone 'optimising' it into a larger dt."""
     from agforge.options import TeleopOptions
 
-    base = TeleopOptions(mat=MaterialOptions())
-    mat = MaterialOptions()
-    mat.cfl_use_pwave = True
-    fixed = TeleopOptions(mat=mat)
-    assert (fixed.sim.dt / fixed.sim.substeps) < (base.sim.dt / base.sim.substeps)
+    off = MaterialOptions()
+    off.cfl_use_pwave = False
+    on = MaterialOptions()
+    on.cfl_use_pwave = True
+
+    cfg_off = TeleopOptions(mat=off)
+    cfg_on = TeleopOptions(mat=on)
+    dt_off = cfg_off.sim.dt / cfg_off.sim.substeps
+    dt_on = cfg_on.sim.dt / cfg_on.sim.substeps
+    assert dt_on < dt_off, "the P-wave criterion must never enlarge the timestep"
 
 
 def test_johnson_cook_reference_temperature_is_the_forging_temperature():

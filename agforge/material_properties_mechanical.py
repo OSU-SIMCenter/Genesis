@@ -192,41 +192,54 @@ def shear_modulus_pa(temp_k):
     return (_BAM_G_GPA[-1] + slope * (t_c - _BAM_T_C[-1])) * 1e9
 
 
+# nu = E/(2G) - 1 fitted across the whole [BAM2023] table. Computed from the
+# tables above rather than hardcoded, so it follows if they are ever corrected.
+_NU_VS_T_FIT = np.polyfit(
+    np.array(_BAM_T_C, dtype=float),
+    np.array(_BAM_E_GPA, dtype=float) / (2.0 * np.array(_BAM_G_GPA, dtype=float)) - 1.0,
+    1,
+)
+
+
 def poisson_ratio(temp_k):
-    """Poisson's ratio. LOW CONFIDENCE at forging temperature.
+    """Poisson's ratio, derived from [BAM2023]'s own E and G.
 
-    Published elevated-temperature values for 316 scatter badly and
-    non-monotonically (the INCO/BSSA table runs 0.26 -> 0.34 -> 0.24 between
-    150 C and 820 C, which is measurement scatter, not physics). Deriving it from
-    the [BAM2023] E and G is also unsafe: those are tabulated to whole GPa, and a
-    1 GPa change in G moves nu by ~0.03.
-
-    What IS well established ([ISIJ1993]) is that nu RISES with temperature for
-    austenitic steel. We therefore use a mild linear rise from the standard
-    room-temperature 0.28 rather than pretending to more precision than exists.
-
-    ⚠️ RE-EXAMINED 2026-08-06, and the reasoning above is weaker than it looks.
     nu = E/(2G) - 1 is the standard identity, and it is exactly how [ORNL1985]
-    derived nu for types 304/316. Applied to [BAM2023]'s own E and G and fitted
-    across the whole table (which averages out the whole-GPa rounding this
-    docstring worries about), it gives nu = 0.383 +/- 0.005 at 1000 C and 0.323
-    at room temperature - where this function returns 0.28. So this curve is
-    probably LOW by ~0.05, and it disagrees with the very dataset that supplies E.
+    derived nu for types 304/316. Applied POINT BY POINT to the BAM table it is
+    noisy, because E and G are tabulated to whole GPa and a 1 GPa change in G
+    moves nu by ~0.03: the 300 C row gives 0.261 (E fell 10 GPa while G did not
+    move at all) against 0.385 at 850 C. A linear fit across the whole table
+    averages that rounding out and recovers the monotonic rise that is physically
+    expected -- [ISIJ1993] establishes that nu RISES with temperature for
+    austenitic steel:
 
-    Two caveats keep it from being a drop-in replacement. [ORNL1985] warns that a
-    derived nu degrades at high temperature because small errors in E and G
-    reinforce, so the +/-0.005 is rounding scatter only and understates the true
-    uncertainty. And 0.382 was MEASURED TO BREAK THE SIMULATION - substep_dt is
-    derived from sqrt(E/rho), which is independent of nu, so the higher bulk
-    modulus pushes past the P-wave CFL limit. See the nu declaration in
-    agforge/options.py for the measured stability cliff.
+        nu(T_C) ~= 0.3068 + 7.638e-05 * T_C
 
-    Left as-is deliberately: the honest fix is the timestep, not this constant.
+    That gives 0.383 at 1000 C and 0.308 at room temperature. Evaluating the live
+    E and G functions directly at 1000 C instead gives 0.381, so the two routes
+    agree to 0.002 -- inside the rounding scatter.
+
+    ⚠️ WHAT THIS REPLACED, and why it was wrong. Until 2026-08-07 this returned
+    ``clip(0.28 + 0.00005*(T_C - 20), 0.28, 0.33)`` -- an interpolation invented
+    for this repo, giving 0.329 at forging temperature. It was low by ~0.05 and
+    disagreed with the very dataset that supplies E. It was kept only because
+    nu = 0.382 had been MEASURED TO BREAK THE SIMULATION: substep_dt came from
+    sqrt(E/rho), which does not depend on nu at all, so a higher bulk modulus
+    pushed the run past the P-wave CFL limit. That was a TIMESTEP defect, not a
+    material fact, and the old docstring said as much -- "the honest fix is the
+    timestep, not this constant". That fix now ships: see cfl_use_pwave in
+    agforge/options.py.
+
+    ⚠️ Still not high-confidence. [ORNL1985] warns that a derived nu degrades at
+    high temperature because small errors in E and G reinforce, so the ~0.005
+    agreement above is rounding scatter and understates the true uncertainty.
     [ISIJ1993] measured nu directly over 300-1500 K and would settle it outright
-    if someone can pull its tabulated values.
+    if someone can pull its tabulated values. The 0.49 ceiling below is numerical
+    insurance only (nu -> 0.5 sends the bulk modulus to infinity); the fit does
+    not reach it below ~2500 C, far above melting.
     """
     t_c = temp_k - 273.15
-    return float(np.clip(0.28 + 0.00005 * max(t_c - 20.0, 0.0), 0.28, 0.33))
+    return float(np.clip(np.polyval(_NU_VS_T_FIT, t_c), 0.25, 0.49))
 
 
 def density_kg_m3(temp_k):

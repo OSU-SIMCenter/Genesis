@@ -48,12 +48,21 @@ class MaterialOptions(Options):
     #: physical time. (Not 1.56x as first quoted - that ignored the density drop;
     #: the ratio is sqrt((E/rho)_new / (E/rho)_old), and rho fell too.)
     E: float = 121.5e9
-    #: Rises with temperature for austenitics [ISIJ1993]. LOW confidence - the
-    #: published elevated-temperature values scatter non-monotonically.
+    #: Rises with temperature for austenitics [ISIJ1993]. MODERATE confidence -
+    #: the published elevated-temperature values scatter non-monotonically, so
+    #: this is derived rather than read off a table.
     #:
-    #: ⚠️ THIS VALUE IS NOT SOURCED, AND IS HELD DOWN BY STABILITY, NOT BY DATA.
-    #: It comes from an interpolation invented for this repo (see
-    #: material_properties_mechanical.poisson_ratio), NOT from a measurement.
+    #: ✅ SOURCED as of 2026-08-07. nu = E/(2G) - 1 applied to [BAM2023]'s own E
+    #: and G, fitted across the whole table to average out the whole-GPa
+    #: rounding, gives 0.383 at 1000 C; a direct point evaluation of the same
+    #: two functions gives 0.381. This equals
+    #: material_properties_mechanical.poisson_ratio(1273.15) -- the two are kept
+    #: in step deliberately, and a test pins that.
+    #:
+    #: ⚠️ WAS 0.329, from an interpolation invented for this repo, held down by
+    #: STABILITY rather than by data. The note that used to sit here read "THIS
+    #: VALUE IS NOT SOURCED, AND IS HELD DOWN BY STABILITY, NOT BY DATA" -- that
+    #: was accurate, and the block below records the measurements behind it.
     #: [BAM2023]'s own E and G - the same dataset that gives us E - imply
     #: nu = E/(2G) - 1, the standard identity, which fits to 0.382 at 1000 C
     #: (0.331 at room temperature, where this interpolation says 0.28).
@@ -68,20 +77,27 @@ class MaterialOptions(Options):
     #:   nu 0.382 -> ratio 1.240 -> peak force 2.8e11 N
     #: Fixing this properly means deriving substep_dt from the P-wave speed; see
     #: cfl_use_pwave below.
-    nu: float = 0.329
+    nu: float = 0.383
 
     #: Derive substep_dt from the P-wave speed sqrt((K + 4mu/3)/rho) instead of
     #: the thin-rod bar wave sqrt(E/rho). The P-wave is the fastest elastic wave
     #: in a bulk solid, so this is the criterion that actually governs stability;
-    #: sqrt(E/rho) understates it by ~21% at the shipped card, which is why the
-    #: nominal "0.90 safety factor" is really ~1.09x the true limit.
+    #: sqrt(E/rho) understates it by 38% at the shipped card (4070 vs 5620 m/s),
+    #: which is why the nominal "0.90 safety factor" was really ~1.09x the true
+    #: limit before this was turned on. The gap was 22% at the old nu = 0.329;
+    #: raising nu raises the bulk modulus, so the P-wave got faster too.
     #:
-    #: DEFAULT OFF, because it is not free and not neutral:
-    #:   - it shrinks substep_dt ~21% => ~21% more substeps for the same sim time
+    #: ✅ DEFAULT ON as of 2026-08-07. It is the criterion that actually governs
+    #: stability, and it is what makes the sourced nu above usable. It only ever
+    #: makes the timestep SMALLER, so it cannot destabilise a configuration that
+    #: already runs.
+    #:
+    #: It is not free, and both costs are real:
+    #:   - it shrinks substep_dt 1.208e-06 -> 8.751e-07 s => 38% more substeps
+    #:     for the same sim time (it was 22% at the old nu = 0.329; the two
+    #:     changes compound, so measure wall-clock rather than assuming 21%)
     #:   - it changes every trajectory on this branch, which other workstreams
-    #:     are actively tuning against
-    #: It only ever makes the timestep SMALLER, so it cannot destabilise a
-    #: configuration that already runs; the cost is wall-clock.
+    #:     are tuning against, so it needs coordinating rather than assuming
     #:
     #: Turning it on is what unblocks raising nu to the sourced ~0.382, and is
     #: the principled version of the "halve dt / AGF_CFL_SAFETY=0.45" workaround
@@ -94,8 +110,9 @@ class MaterialOptions(Options):
     #:   nu 0.329, cfl_use_pwave=True  -> ratio 0.900 -> STABLE, 201 kN, 83 steps
     #: Note the last two agree to ~3%, so once the timestep is right the choice
     #: of nu barely moves the answer - the instability was the timestep, not the
-    #: material. substep_dt goes 1.208e-06 -> 9.94e-07 at the shipped nu.
-    cfl_use_pwave: bool = False
+    #: material. substep_dt went 1.208e-06 -> 9.94e-07 at the nu = 0.329 those
+    #: runs used; at the now-shipped nu = 0.383 it is 8.751e-07.
+    cfl_use_pwave: bool = True
     #: [NIST2021] SRM 1155a, D(T) = 8052 - 0.564 T, at 1273.15 K. Was 8000
     #: (a room-temperature figure). Inter-lab spread puts the band at 7330-7570.
     rho: float = 7334.
@@ -507,9 +524,12 @@ class AgilityForgeOptions(Options):
         # 🚨 THE 0.90 BELOW IS NOT THE REAL SAFETY MARGIN. sqrt(E/rho) is the thin-rod
         # bar-wave speed; the fastest elastic wave in a bulk solid is the P-wave,
         #     c_p = sqrt((K + 4*mu/3)/rho),  K = E/(3(1-2nu)),  mu = E/(2(1+nu))
-        # which at the shipped card (E=121.5 GPa, nu=0.329, rho=7334) is 4945 m/s
-        # against sqrt(E/rho) = 4070 m/s, i.e. 21% faster. So the substep_dt derived
-        # here is about 1.09x the STRICT P-wave CFL limit, not 0.90x of it.
+        # which at the card these measurements used (E=121.5 GPa, nu=0.329,
+        # rho=7334) is 4945 m/s against sqrt(E/rho) = 4070 m/s, i.e. 21% faster.
+        # So the bar-wave substep_dt is about 1.09x the STRICT P-wave CFL limit,
+        # not 0.90x of it. At the now-shipped nu = 0.383 the P-wave is 5620 m/s
+        # and the bar wave would be 1.24x the limit -- which is why nu could not
+        # be raised until cfl_use_pwave shipped.
         #
         # Measured stability cliff (single press, GPU, one variable moved - nu):
         #     ratio 1.094 (nu 0.329) stable | 1.117 (nu 0.34) stable
@@ -519,10 +539,11 @@ class AgilityForgeOptions(Options):
         # project, where halving dt (or AGF_CFL_SAFETY=0.45) is what makes the
         # 17-hit sequence complete - both put the ratio near 0.55.
         #
-        # Note nu does NOT appear below, so raising it raises c_p without shrinking
-        # substep_dt. Deriving the timestep from c_p instead would cost ~21% more
-        # substeps and would unblock using the sourced nu. Left alone deliberately:
-        # it changes stability for every consumer of this branch.
+        # Note nu does NOT appear in the bar-wave branch, so raising it raises c_p
+        # without shrinking substep_dt. That is exactly why the sourced nu was
+        # unusable until the timestep came from c_p. ✅ Both now ship: the cost is
+        # 38% more substeps, and it changes stability for every consumer of this
+        # branch, so it is a coordination point rather than a silent default.
         temp_robot = RobotOptions(robot_time_to_seconds=1.0)
         dx = 1.0 / temp_robot.base_grid_density
 
@@ -533,7 +554,7 @@ class AgilityForgeOptions(Options):
             c = math.sqrt((k_bulk + 4.0 * mu_lame / 3.0) / self.mat.rho)
         else:
             # Historical: the thin-rod bar-wave speed. Understates the true limit
-            # by ~21% at the shipped card - see the note above.
+            # by 38% at the shipped card (22% at the old nu = 0.329) - see above.
             c = math.sqrt(self.mat.E / self.mat.rho)
         dt_cfl = dx / c  # Theoretical max substep_dt
 
