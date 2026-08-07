@@ -10,6 +10,94 @@ below, because it is unambiguous and it changes what the data is *for*.
 
 ---
 
+## 0. UPDATE 2026-08-07 — read this first, it changes what the data is *for*
+
+Four things landed that alter how the rest of this document should be read.
+
+### 0.1 🚨 The clamp, not the fit, was the biggest material error — 2.3×
+
+[Song2020] is fitted over 800–1000 °C and `ArrheniusPlasticity` clamped its
+ceiling at 1273.15 K. But 316L is forged at **1150–1260 °C**, so a billet at real
+forging heat was silently evaluated with the **1000 °C** flow stress.
+
+| at 1200 °C, 0.41 s⁻¹, ε = 0.207 | MPa |
+|---|---|
+| [RyanMcQueen1990], measured **in domain** | **41.6 – 74.3** |
+| Song **extrapolated** | **77.8** — just above that bracket |
+| Song **clamped** (what the kernel used) | **181.1** |
+
+So Song's *functional form* extrapolates correctly; only the clamp was wrong. It
+shows the same modest ~5–10% stiff offset at 1000 °C where both fits apply.
+`T_fit_max` is now **1473.15 K**, stopping exactly where Ryan & McQueen's measured
+window stops. Activation energy corroborates across studies: R&M 460, DeAlmeida &
+Barbosa 450 ± 20, Song's own per-strain table 426–477 kJ/mol. (Ferreira 2020 gets
+347 and is the outlier — also the only δ-ferrite-free study.)
+
+New in `material_properties_mechanical.py`: `RM_STATES`, `rm_stress_mpa`,
+`rm_bracket_mpa`. Tests in `tests/test_ryan_mcqueen.py`.
+
+⚠️ The full Ryan & McQueen **kernel port is deliberately NOT done**. They publish
+four stress states but only two carry a strain (ε = 0 and ε = 0.1); the other two
+are *limits* — DRV saturation and DRX steady state — and placing them on the
+strain axis needs critical/peak strains we could not extract. Inventing them
+would put unsourced parameters back into the card.
+
+### 0.2 🚨 Peak press force CANNOT validate a flow rule here — measured
+
+| | flow stress at ε = 0.207 | measured peak force |
+|---|---|---|
+| Johnson-Cook | 201.4 MPa | 119.52 kN |
+| Arrhenius @ 0.41 s⁻¹ | 181.2 MPa | 118.21 kN |
+| ratio | **0.90** (10% apart) | **0.99** (1.1% apart) |
+
+A 10% flow-stress change moves the force **1.1%**. By contrast, raising `nu` from
+0.329 to 0.383 — a purely **elastic** change — moved it **10%**. The reading
+responds an order of magnitude more strongly to elastic and contact stiffness
+than to the plasticity it is supposed to measure.
+
+**Do not tune this card against press tonnage.** Shape and volume metrics are the
+ones that can discriminate a constitutive law.
+
+### 0.3 🚨 The sim is NOT quasi-static — the 1773× time compression is not free
+
+The press runs at 25 m/s against a real die speed of 14.1 mm/s. That is only
+defensible if the answer is invariant to press speed. It is not (grid-only
+contact, single press to ε = 0.187; single-press noise floor is 0.0021 kN and
+0.0002 mm, so all of this is ~10⁴× signal):
+
+| press speed | vs real | peak force | lateral spread |
+|---|---|---|---|
+| 50 m/s | 3546× | 200.3 kN | — |
+| **25 m/s** (shipped) | 1773× | **119.5 kN** | baseline |
+| 6.25 m/s | 443× | 72.4 kN | +0.088 mm |
+| 3.125 m/s | 222× | 66.6 kN | +0.297 mm |
+| 1.5625 m/s | 111× | 61.2 kN | +0.556 mm |
+
+Force spans 3.3× over that range and **has not converged even at 111× real
+speed**. Lateral spread grows monotonically, so the *deformation mode* changes
+too — this is not a force-only artifact. This is the root reason 0.2 happens: the
+response is rate- and inertia-dominated, so it cannot see the material.
+
+⚠️ 3.125 m/s landing on 66.6 kN next to the real 66.5 kN is a **coincidence** —
+the trend walks straight past it.
+
+### 0.4 Other corrections
+
+- **`nu` is now sourced**: 0.383, from `nu = E/(2G) − 1` fitted across [BAM2023]'s
+  own E and G. Was 0.329, an interpolation invented for this repo and held down by
+  stability rather than data. Adopting it required `cfl_use_pwave`, since
+  `substep_dt` came from `sqrt(E/rho)`, which does not depend on `nu` at all.
+- **Contact was a hybrid** — a grid pass plus a particle pass that hard-projected
+  positions out of the die and applied friction a second time. The teleport was
+  reporting force **~23% low**. Now switchable via
+  `MPMOptions.enable_particle_contact`; grid-only is the trustworthy path.
+- **The billet is frozen isothermal during a press** (`thermal_enabled = False`
+  snapshots and restores temperatures around every physics step), so a press has
+  **no die chill and no adiabatic heating**, and this card's temperature coupling
+  is static during a blow.
+
+---
+
 ## 1. The headline: "properties at 1000 °C" is underdetermined
 
 1000 °C is in the **dynamic recrystallization (DRX)** regime for 316L. Flow stress
@@ -326,7 +414,7 @@ here, so a confident-looking citation is not sufficient — check the test windo
    | `jc_eps0` | 1.0 | **1.0** | now explicitly the calibration rate |
    | `jc_T_ref` | 293.15 | **1273.15** | so the card is not softened twice |
    | `jc_T_melt` | 1793 | **1675** | reads `ACTIVE_MATERIAL.t_melt_k` |
-   | `jc_m` | 1.03 | **1.0** | the one unsourced value left |
+   | `jc_m` | 1.03 | **1.0** | still unsourced; see §0 — inert below `jc_T_ref`, and now REACHABLE since the ceiling moved to 1200 °C |
    | `von_mises_yield_stress` | 19 MPa | **213.4 MPa** | was ~11× low |
 
    A joint 5-parameter JC fit across 800–1000 °C × 0.1–100 s⁻¹ was attempted and
