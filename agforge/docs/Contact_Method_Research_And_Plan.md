@@ -368,6 +368,16 @@ surface deviation. **Geometry comparisons need the long sequence.**
 
 Line numbers are against the working tree at `cddad882` + the uncommitted changes.
 
+> 🚨 **LINE-NUMBER DRIFT HAZARD — read before trusting any citation in this section.**
+> This document is **committed**; the ~1,404 lines of code it cites **are not**. If those changes
+> are committed, rebased, reverted or edited, **every line number below drifts silently** — the
+> citation will still look authoritative and point at the wrong code.
+> **Before relying on a line number, grep for the symbol instead** (e.g.
+> `grep -n '_func_collide_in_rigid_geom' genesis/engine/couplers/legacy_coupler.py`). The symbol
+> names are stable; the line numbers are not.
+> **The clean fix is to commit the code**, which would make these citations resolvable against a
+> real commit. That is a decision for the user (§21).
+
 ### 6.1 The single shared primitive
 
 `legacy_coupler.py:431` — `_func_collide_in_rigid_geom(pos, vel, mass, normal, influence, geom, i_b, …)`
@@ -970,7 +980,15 @@ measure cost before claiming efficiency.
 - Fix the launch: **`pixi run --frozen`** (§18).
 - Coordinate the GPU with workstream B (§2.5).
 - Run the 9 standalone/control arms at **n=3, 17 hits, DOMAIN-FIXED**, including **`fluidlab` and
-  `postg2p_velocity` for the first time ever**, plus a **CPIC** arm (needs M5).
+  `postg2p_velocity` for the first time ever**.
+  ⚠️ **A CPIC arm is NOT part of Stage 0.** CPIC is forbidden whenever runtime switching is on
+  (§6.4), so testing it requires **M5**, which is a Stage-1 code change. Stage 0 runs with
+  `AGF_ENABLE_CPIC=0` like everything before it. *(An earlier draft listed a CPIC arm here while
+  also calling Stage 0 "no physics changes" — a contradiction; this is the correction.)*
+  ⚠️ **`p2_fluidlab` and `p4_pg2p_vel` have never executed.** Their mode strings are verified to map
+  correctly (`_CONTACT_MODE_TO_ID`), but the in-G2P wiring is unproven — Stage 0's headline "free
+  data" may simply throw. **If it does, that is itself a finding**; diagnose before assuming the
+  modes are useless (§19: prior "unusable" verdicts are hypotheses, not exclusions).
 - Add timing instrumentation (N3).
 - **Re-run `score_batch.py` on the DOMAIN-FIXED sweeps** — the volume/force axis has never been
   verified post-fix (§2.3).
@@ -1176,7 +1194,7 @@ project's constraints ever change, §8.6 is the entry point.
 | trap | detail |
 |---|---|
 | **`AGF_MPM_X_PAD_LOWER` defaults to 0.85** | forget it ⇒ the domain bug returns **silently** (§5.1) |
-| **pixi "Failed to update PyPI packages"** | a **network timeout**, not code/disk. `export UV_HTTP_TIMEOUT=600` **does NOT propagate** through `pixi run`. **Use `pixi run --frozen`** — which is what workstream B uses. |
+| **pixi "Failed to update PyPI packages"** | a **network timeout**, not code/disk. `export UV_HTTP_TIMEOUT=600` **does NOT propagate** through `pixi run` — verified: uv still reported a 30 s timeout with the var exported. **Use `pixi run --frozen`.** ⚠️ **[INFERRED, NOT VERIFIED]** — `--frozen` is what workstream B uses successfully, but **no sweep in this workstream has ever completed with it.** It is the first thing Stage 0 depends on. If Stage 0 still fails here, that is the known failure point, not a new mystery — and it is the one place to spend diagnosis time rather than retrying. |
 | **GPU fallback needs a LOGIN shell** | `wsl.exe -e bash script.sh` silently runs on **CPU** (torch still reports CUDA available). Use `bash -lc`. Tell: ~4 s/press vs ~37 s. |
 | **`pgrep -f <pattern>` self-matches** | it matches its own command line ⇒ false "RUNNING". Use `ps -eo pid,cmd \| grep … \| grep -v grep`. Produced a false green light during this work. |
 | **importing `geom_metrics` kills VTK** | sets `RLIMIT_AS = 3 GB` at import; VTK's software GL reserves far more *virtual* AS ⇒ exit 1, **no traceback** |
@@ -1369,5 +1387,6 @@ particular:
 |---|---|
 | 2026-08-07 | First draft (847 lines): state, findings, code walkthrough, theory, literature, the merge answer, inventory, staged plan, retractions, traps. |
 | 2026-08-07 | Second pass (1,208 lines): added glossary + metric definitions + arm naming, validation targets, implementation specs (forecast kernel with derivation, side-flip port gotchas), analysis-tooling inventory, env-var reference, out-of-scope rationale, risk register, verification methodology, quickstart. |
+| 2026-08-07 | Offboarding pass (post-commit `ef550706`): fixed an internal contradiction in §12.1 (Stage 0 was headed "no physics changes" while listing a CPIC arm that requires the Stage-1 change M5); added the **line-number drift hazard** banner to §6 — this doc is committed while the code it cites is not; downgraded the `--frozen` fix in §18 to **[INFERRED, NOT VERIFIED]** since no sweep has ever completed with it; flagged that `p2_fluidlab`/`p4_pg2p_vel` have never executed at all. |
 | 2026-08-07 | Final pass: decided **not** to commit the AI research dumps (§23) — fully extracted, no quantitative content, emphasis skewed toward §15 exclusions, and one contains a known error. Quotes re-anchored to primary papers so §8 stands alone. |
 | 2026-08-07 | Third pass: **corrected a cross-config error in §7.4** (penetration series and frame counts had been taken from different runs); replaced it with a self-consistent DOMAIN-FIXED table. Added `AGF_PPC_DIVISOR` as an **unexploited sub-grid axis and competing hypothesis** (§6.9, §12.4); flagged `AGF_CELLS_PER_DIAMETER` default 7 ≠ the 10 we run; added run structure (§3.4) and how-to-add-an-arm (§3.5); added a copy-pasteable Stage 0 command; tagged the die-tip width as unverified; added this section. |
