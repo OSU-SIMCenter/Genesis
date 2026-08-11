@@ -22,25 +22,52 @@ forging heat was silently evaluated with the **1000 °C** flow stress.
 
 | at 1200 °C, 0.41 s⁻¹, ε = 0.207 | MPa |
 |---|---|
-| [RyanMcQueen1990], measured **in domain** | **41.6 – 74.3** |
-| Song **extrapolated** | **77.8** — just above that bracket |
+| [RyanMcQueen1990] reference bracket | **38.5 – 67.2** |
+| Song **extrapolated** | **77.8** — ~16% above the bracket top |
 | Song **clamped** (what the kernel used) | **181.1** |
 
 So Song's *functional form* extrapolates correctly; only the clamp was wrong. It
 shows the same modest ~5–10% stiff offset at 1000 °C where both fits apply.
 `T_fit_max` is now **1473.15 K**, stopping exactly where Ryan & McQueen's measured
-window stops. Activation energy corroborates across studies: R&M 460, DeAlmeida &
-Barbosa 450 ± 20, Song's own per-strain table 426–477 kJ/mol. (Ferreira 2020 gets
-347 and is the outlier — also the only δ-ferrite-free study.)
+window stops. Activation energy corroborates across studies: R&M **454**,
+DeAlmeida & Barbosa 450 ± 20, Song's own per-strain table 426–477 kJ/mol.
+(Ferreira 2020 gets 347 and is the outlier — also the only δ-ferrite-free study.)
+
+> **🚩 Corrected 2026-08-11 — these numbers moved.** This section originally read
+> a bracket of **41.6 – 74.3 MPa** and an activation energy of **460 kJ/mol**,
+> with Song landing a tidy 4.7% above the bracket. Going to the paper itself
+> showed 460 is the **mean of a 21-study literature survey in its Table 1**, not
+> Ryan & McQueen's own measurement. Their measured values are **454 kJ/mol
+> (worked)** and **402 (as-cast)**; our bar is worked. The bracket drops ~9% and
+> Song's margin widens from ~5% to ~16%.
+>
+> **The decision is unaffected** — the clamped 181.1 MPa is still **2.7×** the
+> bracket top, and 2.3× Song's extrapolation, either way. But the corroboration
+> is looser than this section first claimed.
+>
+> ⚠️ **Deeper caveat: the bracket's own constants are unverified.** The four
+> (C, m) pairs in `RM_STATES` came from an LLM research pass rather than the PDF,
+> their functional form does **not** match the paper's published eqn. (4), and
+> the values could not be found in the paper's text. The same pass invented a
+> non-existent paper and got a citation year wrong. What *is* read straight off
+> the paper — and safe — is α = 1.2 × 10⁻² MPa⁻¹, n = 4.5, Q = 454/402, and that
+> Q is constant across 900–1200 °C. See the provenance note in
+> `material_properties_mechanical.py`.
 
 New in `material_properties_mechanical.py`: `RM_STATES`, `rm_stress_mpa`,
 `rm_bracket_mpa`. Tests in `tests/test_ryan_mcqueen.py`.
 
-⚠️ The full Ryan & McQueen **kernel port is deliberately NOT done**. They publish
-four stress states but only two carry a strain (ε = 0 and ε = 0.1); the other two
-are *limits* — DRV saturation and DRX steady state — and placing them on the
-strain axis needs critical/peak strains we could not extract. Inventing them
-would put unsourced parameters back into the card.
+⚠️ The full Ryan & McQueen **kernel port is not done** — but the reason recorded
+here was wrong, and it is worth being precise about. Of the four published stress
+states only two carry a strain (ε = 0 and ε = 0.1); the other two are *limits* —
+DRV saturation and DRX steady state — so placing them on the strain axis needs
+the critical and peak strains.
+
+**The paper publishes those.** It derives ε_c and ε_p and reports
+`ε_c = 0.64 ε_p` for the worked condition. They were simply absent from the
+secondary extraction this module was built on. So the port is blocked by **our
+source, not by the literature** — obtaining the PDF would unblock a real flow
+rule. Inventing the strains still would not.
 
 ### 0.2 🚨 Peak press force CANNOT validate a flow rule here — measured
 

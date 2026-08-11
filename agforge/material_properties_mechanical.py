@@ -162,7 +162,7 @@ def peak_flow_stress_mpa(strain_rate, temp_k):
 # ==========================================================================
 # [RyanMcQueen1990] - the fit that actually covers the FORGING window
 # --------------------------------------------------------------------------
-# S. Ryan and H.J. McQueen, J. Mater. Process. Technol. 21 (1990) 177-199.
+# N.D. Ryan and H.J. McQueen, J. Mater. Process. Technol. 21 (1990) 177-199.
 # Type 316 torsion, as-cast AND worked, 900-1200 C at 0.1-5 /s.
 #
 # WHY THIS EXISTS ALONGSIDE [Song2020]. Song is fitted over 800-1000 C and
@@ -170,32 +170,89 @@ def peak_flow_stress_mpa(strain_rate, temp_k):
 # shipped card is out of domain on BOTH axes and the kernel simply clamps to
 # its 1273.15 K ceiling. Ryan & McQueen contains the operating point outright.
 #
-# Form (sigma in MPa, Z in /s):
-#     Z    = strain_rate * exp(Q / (R T)),  Q = 460 kJ/mol
-#     zeta = C * [asinh(Z * 1e-17)] ** m
+# --------------------------------------------------------------------------
+# PROVENANCE, 2026-08-11. Two tiers. Read this before quoting any number here.
+# --------------------------------------------------------------------------
+# TIER 1 - READ OFF THE PAPER ITSELF, safe to rely on:
+#     alpha = 1.2e-2 MPa^-1        (so 1/alpha = 83.33 MPa)
+#     n     = 4.5                  (peak stress; same for 316W and 316C)
+#     Q     = 454 kJ/mol  WORKED   <- our billet is worked bar
+#     Q     = 402 kJ/mol  AS-CAST
+# The paper states Q is CONSTANT over the whole range: "the analysis associated
+# with eqn. (3) finds Q = 454 kJ/mol across the entire range". Published form is
+# its eqn. (3)/(4):
+#     Z = strain_rate * exp(Q/RT) = A [sinh(alpha * sigma)] ** n
+# The pre-exponential A is NOT recoverable from the text available to us, so
+# that equation cannot be evaluated here. DO NOT INVENT AN A.
+#
+# 🚨 TIER 2 - SECONDARY EXTRACTION, NOT VERIFIED AGAINST THE PAPER: the
+# RM_STATES (C, m) pairs below. They reached this repo through an LLM research
+# pass, not the PDF. Two concrete reasons to distrust them:
+#   (a) their form, zeta = C * [asinh(Z * 1e-17)] ** m, puts the exponent
+#       OUTSIDE the asinh. The paper's eqn. (4) puts it INSIDE, on (Z/A).
+#       Those are not the same function.
+#   (b) the values 65.7 / 62.2 / 123.8 / 103.5 could not be located anywhere in
+#       the paper's text.
+# The same research pass also produced a paper that does not exist (a
+# "Dehghan-Manshadi 2008" on 316L - the real one is on 304) and a wrong year for
+# Venugopal, so its base error rate is known to be non-trivial. Treat RM_STATES
+# as a PLAUSIBILITY RANGE of unconfirmed provenance, not as published law.
+#
+# 🚩 Q WAS WRONG UNTIL 2026-08-11. This module shipped Q = 460 kJ/mol. In the
+# paper, 460 is the MEAN of a 21-study literature survey in Table 1 (reported
+# alongside n = 4.3 +/- 0.8), not Ryan & McQueen's own measurement. Corrected to
+# 454. Effect at 1200 C / 0.41 /s: the bracket moves from 41.6-74.3 MPa down to
+# 38.5-67.2, about -9%, and Song's extrapolation goes from 4.7% above the
+# bracket top to 16% above it. The decision that rests on this - raising
+# T_fit_max instead of clamping - survives easily either way, because the
+# clamped value is 2.7x the bracket top. But it is less clean than it read.
+#
+# ⚠️ ONE Q FOR ALL FOUR STATES IS AN ASSUMPTION, NOT THE PAPER'S POSITION. The
+# paper derives a separate and much lower activation energy for the DRX
+# steady-state stress, Q_DRX ~ 296 kJ/mol, "considerably less than the one for
+# sigma_p, i.e. Q_HW = 454". Applying 454 to drx_ss is therefore not what the
+# paper does. Left alone for now only because these states feed NOTHING in the
+# kernel - they are a reference bracket. Fix it before any of this ships as a
+# flow rule.
 #
 # Corroboration on Q: DeAlmeida & Barbosa 2005 (ISIJ Int. 45(2) 296) get
 # 450 +/- 20 over the same 900-1200 C window, and Song's own per-strain table
 # runs 426-477. Ferreira 2020 gets 347 and is the outlier; it is also the only
 # delta-ferrite-free study.
 #
-# 🚨 THE STRAIN AXIS IS UNDERDETERMINED, WHICH IS WHY THIS IS NOT YET A KERNEL
-# FLOW RULE. Ryan & McQueen publish four stress states but only two of them
-# carry a strain: zeta_0 at eps = 0 and zeta_0.1 at eps = 0.1. The other two are
-# LIMITS, not points -- zeta_e is the dynamic-recovery saturation stress and
-# zeta_ss the dynamic-recrystallisation steady state -- and placing them on the
-# strain axis needs the critical/peak strains (eps_c, eps_p), which are not in
-# what we have been able to extract. Inventing them would put unsourced
-# parameters back into the card, which is the exact failure this workstream has
-# been undoing. So this module exposes the published states and an honest
-# BRACKET for intermediate strain, and stops there.
+# 🚨 THE STRAIN AXIS IS UNDERDETERMINED *HERE* - AND THE BLOCKER IS OUR SOURCE,
+# NOT THE PAPER. Of the four states only two carry a strain: zeta_0 at eps = 0
+# and zeta_0.1 at eps = 0.1. The other two are LIMITS, not points -- zeta_e is
+# the dynamic-recovery saturation stress and zeta_ss the dynamic-recrystallisa-
+# tion steady state -- so placing them on the strain axis needs the critical and
+# peak strains (eps_c, eps_p).
+#
+# THE PAPER PUBLISHES THOSE. It derives eps_c and eps_p and reports
+# eps_c = 0.64 eps_p for the worked condition. They were simply absent from the
+# extraction this module was built from. So "we cannot port this" is FALSE as
+# stated -- getting the PDF would unblock a real kernel flow rule. Inventing the
+# strains would not, and that remains the failure this workstream is undoing.
+# Until then this module exposes the states and an honest BRACKET, and stops.
 #
 # Note also: type 316, not 316L, and torsion rather than compression.
 # ==========================================================================
 
-RM_Q_J_MOL = 460.0e3
+#: Activation energy, WORKED 316 -- the applicable condition for our bar.
+RM_Q_J_MOL = 454.0e3
+#: As-cast 316. Reference only; do not use for wrought bar.
+RM_Q_CAST_J_MOL = 402.0e3
+#: The paper's SEPARATE activation energy for the DRX steady-state stress.
+#: Not currently applied -- see the note above.
+RM_Q_DRX_STEADY_J_MOL = 296.0e3
+#: 1/alpha in MPa, from the paper's alpha = 1.2e-2 MPa^-1.
+RM_ALPHA_INV_MPA = 83.33
+#: Stress exponent at the peak. Same for 316W and 316C.
+RM_N = 4.5
 
-#: state -> (C [MPa], m). Verbatim from the paper's closed forms.
+#: state -> (C [MPa], m).
+#: 🚨 TIER 2 -- UNVERIFIED secondary extraction, and its functional form does
+#: not match the paper's published equation. See the provenance note above
+#: before relying on, quoting, or porting these.
 RM_STATES = {
     "eps_0": (65.7, 0.077),    # zero strain
     "eps_0.1": (62.2, 0.162),  # eps = 0.1
@@ -226,6 +283,13 @@ def rm_bracket_mpa(strain_rate, temp_k):
     The honest statement for an intermediate strain such as the 0.207 of the
     first blow of the T4 dataset: it lies inside this bracket, and the paper
     does not pin down where.
+
+    ⚠️ NOT A BOUND, in two separate ways. First, ``drv_sat`` is a DRV saturation
+    limit, not a maximum: [Song2020]'s own curve peaks at 80.6 MPa (eps ~ 0.3),
+    ABOVE the 67.2 MPa this returns at the forging point, then softens. Second,
+    the (C, m) constants behind it are an unverified extraction -- see the
+    provenance note at the top of this section. Read this as a plausibility
+    range, never as a published bound.
     """
     return (rm_stress_mpa("eps_0.1", strain_rate, temp_k),
             rm_stress_mpa("drv_sat", strain_rate, temp_k))

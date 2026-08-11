@@ -6,8 +6,13 @@ torsion over 900-1200 C at 0.1-5 /s -- a window that CONTAINS the real process
 2e-4 - 2e-2 /s) does not and simply clamps.
 
 The headline these tests protect: at the real forging point the shipped card is
-2.4x - 4.4x too STIFF. That is a factor, not a percentage, and it is established
+2.7x - 4.7x too STIFF. That is a factor, not a percentage, and it is established
 from published sources alone -- no simulation, no force reading, no shape metric.
+
+⚠️ The (C, m) constants these numbers come from are an UNVERIFIED secondary
+extraction whose functional form does not match the paper's published equation
+-- see the provenance note in material_properties_mechanical.py. These tests pin
+what the module currently computes; they do not certify the source.
 
 Nothing here initialises a backend or touches the GPU.
 """
@@ -23,22 +28,36 @@ T_CARD_K = 1273.15   # 1000 C - the Arrhenius clamp ceiling
 T_FORGE_K = 1473.15  # 1200 C - the middle of the real forging window
 
 
-def test_activation_energy_is_the_published_one():
-    assert m.RM_Q_J_MOL == pytest.approx(460.0e3)
+def test_activation_energy_is_the_worked_condition_from_the_paper():
+    """454 kJ/mol is Ryan & McQueen's own measurement for WORKED 316, which is
+    what our bar is. 402 is their as-cast value. 460 -- which this module shipped
+    until 2026-08-11 -- is the mean of the 21-study survey in their Table 1, not
+    a measurement of theirs."""
+    assert m.RM_Q_J_MOL == pytest.approx(454.0e3)
+    assert m.RM_Q_CAST_J_MOL == pytest.approx(402.0e3)
+    assert m.RM_Q_J_MOL != pytest.approx(460.0e3), "regressed to the survey mean"
+
+
+def test_the_paper_s_own_sinh_constants_are_recorded():
+    """These are the Tier-1 values read straight off the paper. Unlike the
+    (C, m) pairs they are verified, so a port should start from them."""
+    assert m.RM_ALPHA_INV_MPA == pytest.approx(83.33, abs=0.01)  # alpha = 1.2e-2
+    assert m.RM_N == pytest.approx(4.5)
+    assert m.RM_Q_DRX_STEADY_J_MOL == pytest.approx(296.0e3)
 
 
 def test_zener_hollomon_matches_the_definition():
     z = m.rm_zener_hollomon(RATE, T_CARD_K)
-    expected = RATE * math.exp(460.0e3 / (m.R_GAS * T_CARD_K))
+    expected = RATE * math.exp(454.0e3 / (m.R_GAS * T_CARD_K))
     assert z == pytest.approx(expected, rel=1e-12)
-    assert z == pytest.approx(3.064e18, rel=1e-3)
+    assert z == pytest.approx(1.7383e18, rel=1e-3)
 
 
 @pytest.mark.parametrize("state, expected_mpa", [
-    ("eps_0", 73.3),
-    ("eps_0.1", 78.2),
-    ("drv_sat", 165.7),
-    ("drx_ss", 139.3),
+    ("eps_0", 72.43),
+    ("eps_0.1", 76.37),
+    ("drv_sat", 160.71),
+    ("drx_ss", 135.04),
 ])
 def test_published_states_at_the_card_temperature(state, expected_mpa):
     """Hand-computed from zeta = C * asinh(Z*1e-17)**m at 1000 C, 0.41 /s."""
@@ -80,20 +99,25 @@ def test_clamping_at_1000C_would_be_2_to_4x_too_stiff():
     lo, hi = m.rm_bracket_mpa(RATE, T_FORGE_K)
     as_if_clamped = m.flow_stress_mpa(STRAIN, RATE, T_CARD_K)
 
-    assert as_if_clamped / hi == pytest.approx(2.4, abs=0.2)
-    assert as_if_clamped / lo == pytest.approx(4.4, abs=0.3)
+    assert as_if_clamped / hi == pytest.approx(2.70, abs=0.15)
+    assert as_if_clamped / lo == pytest.approx(4.71, abs=0.25)
 
 
-def test_song_extrapolates_into_the_ryan_mcqueen_bracket():
+def test_song_extrapolates_to_just_above_the_ryan_mcqueen_bracket():
     """The load-bearing justification for raising the ceiling rather than
     porting a new model: Song's FORM tracks temperature correctly, and an
-    independent in-domain study says so."""
+    independent in-domain study says so.
+
+    NOTE the name: Song lands just ABOVE the bracket, not inside it. At the
+    corrected Q = 454 the margin is ~16% (it read ~5% at the old, wrong Q = 460).
+    The argument still holds comfortably -- the clamped value is 2.7x the bracket
+    top -- but it is a weaker corroboration than it first appeared."""
     lo, hi = m.rm_bracket_mpa(RATE, T_FORGE_K)
     extrapolated = m.flow_stress_mpa(STRAIN, RATE, T_FORGE_K)
 
     assert extrapolated == pytest.approx(77.8, abs=1.0)
     # Just above the bracket top, and nowhere near the 181 MPa the clamp gave.
-    assert hi < extrapolated < 1.1 * hi
+    assert hi < extrapolated < 1.2 * hi
     assert extrapolated < 0.5 * m.flow_stress_mpa(STRAIN, RATE, T_CARD_K)
 
 
