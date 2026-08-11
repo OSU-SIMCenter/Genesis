@@ -283,6 +283,19 @@ the strike. Any thermal comparison at the blow is unvalidated. (Workstream B ter
 
 These could plausibly reorder close results. They are unfixed and are a decision for the user.
 
+> 🚨 **2026-08-07 — error (2) is entangled with this project's core premise, not merely
+> cosmetic.** [MEASURED] The real tool mesh `forge_common/meshes/Tool2_clip.obj` has
+> **152 vertices / 264 faces** with extents **15.8 × 12.7 × 54.7 mm**. The physics stand-in is
+> an 8-vertex box of 13.4 × 16.0 × 48.0 mm. So the real tool's contact face is **~18% wider**
+> along the billet axis and — at 152 verts, where a box needs 8 — almost certainly carries a
+> **radiused or chamfered working edge**.
+>
+> ⇒ **The sim's perfectly sharp 90° die edge, which §6.9 identifies as the strongest remaining
+> argument for sub-grid contact enforcement, may be substantially self-inflicted.** How much of
+> the contact difficulty is physics and how much is the stand-in geometry is currently unknown.
+> This deserves to be a measured arm, not a parked user decision. ⚠️ Swapping the die changes
+> physics and breaks comparability with every existing sweep — do not fold it into a baseline.
+
 ---
 
 ## 5. Findings that reframed the work
@@ -550,7 +563,33 @@ candidate cause for `p5_penalty` dying at hit 2 and `p3_pg2p_pos` at hit 3.
 | teleport margin | **1 mm** (= particle_size/2) | `base_mpm_solver.py:2168` |
 | `coup_softness` | **5e-4 m = 0.5 mm** | `agforge/options.py:133` |
 | ⇒ influence band | ≈1.15 mm = **0.29 dx** | at the 0.1 gate |
-| die tip width | ~2.4 cells ≈ 9.6 mm | ⚠️ **[ASSUMED — inherited from prior sessions, never re-verified.]** Load-bearing for the whole "under-resolved" premise; worth confirming against the physics die geometry. |
+| die contact face (along billet axis) | **13.4 mm = 3.35 cells @ res 10** | [VERIFIED 2026-08-07] `agforge/agforge_demo.xml`: MJCF box, half-extents `0.0067 0.0080 0.0240` m ⇒ full 13.4 × 16.0 × 48.0 mm. Grippers close along ±y; the 13.4 mm extent faces the billet axis. See the correction note below. |
+
+> 🚨 **CORRECTION 2026-08-07 — the "~2.4 cells" figure was a RESOLUTION-7 number.**
+>
+> Earlier drafts of this document (and the AI research prompts derived from them) stated the
+> die tip spans **~2.4 grid cells**. The source is a code comment at `agforge/options.py:175`:
+> *"the die's contact tip is ~13.5 mm, so at **7 cells/diameter** (dx = 5.71 mm on a 40 mm
+> bar) the contact patch spans only ~2.4 cells."*
+>
+> **Every run in this workstream passes `AGF_CELLS_PER_DIAMETER=10`**, where dx = 4 mm and the
+> same 13.5 mm tip spans **3.35 cells**. The old "≈9.6 mm" was `2.4 × 4 mm` — a res-7 cell
+> count multiplied by a res-10 cell size, yielding a width matching no geometry in the model.
+> This is exactly the config-mixing failure rule 1 in §0 exists to prevent, and it landed on
+> the premise itself. It also propagated into the Perplexity research prompt, which opens
+> *"the die tip spans only ~2.4 grid cells"* — so the literature survey was framed around a
+> configuration we do not run.
+>
+> **Impact: the premise is weakened by ~40%, not destroyed.** 3.35 cells is still coarse, and
+> at res 14 (dx = 2.86 mm) the tip spans 4.7 cells — so grid refinement has *less* headroom to
+> help than the old number implied, which cuts both ways for §12.4.
+>
+> **A stronger, resolution-independent premise is available and should replace it:** the
+> physics die is a **box with perfectly sharp 90° edges** (`agforge_demo.xml`). A sharp edge is
+> sub-grid at *any* finite resolution — refinement never resolves it, it only relocates the
+> error. This is precisely what CPIC's own stated limitation names (§8.1): *"sub-grid level
+> boundary configurations such as **sharp corners** and narrow gaps."* ⚠️ But see §4 — that
+> sharp edge may itself be a modelling artifact.
 
 **⭐ `particle_size = dx / AGF_PPC_DIVISOR`** (`agforge/options.py:356`). This is a **coupling nobody
 has exploited**: raising `AGF_PPC_DIVISOR` refines the *particles* while leaving the *grid*
@@ -1170,6 +1209,7 @@ project's constraints ever change, §8.6 is the entry point.
 | "enforce the constraint at the grid, informed by particle sampling" | **[RETRACTED]** defeats the project's purpose (§1.2). Superseded by the forecast pattern (§9). |
 | "splitting the mode enum is required and invasive" | **[RETRACTED]** use independent flags (§9.2). |
 | "CPIC is the best choice for this setup" (AI research run) | **[RETRACTED]** contradicted by CPIC's own paper (§8.1). |
+| "the die tip spans ~2.4 grid cells" | **[RETRACTED 2026-08-07]** that is a **res-7** figure (`options.py:175`); at the res 10 we actually run it is **3.35 cells**, and the quoted "≈9.6 mm" width matches no geometry — the real face is 13.4 mm. A res-7 cell count was multiplied by a res-10 cell size. **The same config-mixing error as §7.4, this time on the project's own premise — and it had already propagated into the research prompts.** (§6.9) |
 
 ---
 
@@ -1194,7 +1234,7 @@ project's constraints ever change, §8.6 is the entry point.
 | trap | detail |
 |---|---|
 | **`AGF_MPM_X_PAD_LOWER` defaults to 0.85** | forget it ⇒ the domain bug returns **silently** (§5.1) |
-| **pixi "Failed to update PyPI packages"** | a **network timeout**, not code/disk. `export UV_HTTP_TIMEOUT=600` **does NOT propagate** through `pixi run` — verified: uv still reported a 30 s timeout with the var exported. **Use `pixi run --frozen`.** ⚠️ **[INFERRED, NOT VERIFIED]** — `--frozen` is what workstream B uses successfully, but **no sweep in this workstream has ever completed with it.** It is the first thing Stage 0 depends on. If Stage 0 still fails here, that is the known failure point, not a new mystery — and it is the one place to spend diagnosis time rather than retrying. |
+| **pixi "Failed to update PyPI packages"** | a **network timeout**, not code/disk. `export UV_HTTP_TIMEOUT=600` **does NOT propagate** through `pixi run` — verified: uv still reported a 30 s timeout with the var exported. **Use `pixi run --frozen`.** ✅ **[VERIFIED 2026-08-07]** — `pixi run --manifest-path aims-genesis/nsf-demo/pixi.toml --frozen python -c "import torch…"` returned in **7.4 s** with `cuda ok: True` on the RTX 3060. The earlier 2:46 hang of this same probe was contention, not a failure. ⚠️ Note the causal story is *still* partly inferred: a prior session exported `UV_HTTP_TIMEOUT=600` and uv reported a 30 s timeout anyway, but the direct propagation probe was killed before returning. `--frozen` works; *why* the env var does not is not fully established. |
 | **GPU fallback needs a LOGIN shell** | `wsl.exe -e bash script.sh` silently runs on **CPU** (torch still reports CUDA available). Use `bash -lc`. Tell: ~4 s/press vs ~37 s. |
 | **`pgrep -f <pattern>` self-matches** | it matches its own command line ⇒ false "RUNNING". Use `ps -eo pid,cmd \| grep … \| grep -v grep`. Produced a false green light during this work. |
 | **importing `geom_metrics` kills VTK** | sets `RLIMIT_AS = 3 GB` at import; VTK's software GL reserves far more *virtual* AS ⇒ exit 1, **no traceback** |
@@ -1271,8 +1311,11 @@ un-gated, and before the CPIC/force confounds were understood.
     workstream) — noted because material and contact effects are entangled in the geometry metrics.
 15. **`AGF_PPC_DIVISOR` has never been varied.** Particles-per-cell may be a cheaper accuracy lever
     than any contact operator. **Untested competing hypothesis** (§6.9, §12.4).
-16. **The die-tip width of ~2.4 cells is inherited and unverified** (§6.9) — and the entire
-    "under-resolved geometry" premise rests on it.
+16. ~~**The die-tip width of ~2.4 cells is inherited and unverified.**~~ **[RESOLVED
+    2026-08-07 — and it was wrong.]** Measured 13.4 mm = **3.35 cells at res 10**; the 2.4
+    figure was res-7 (§6.9). **Replacement open question: how much of the sub-grid contact
+    difficulty is manufactured by using a sharp-edged box instead of the real radiused tool?**
+    (§4) — currently unknown and now the sharper form of this premise.
 17. **The `influence > 0.1` gate is unexamined.** It is a magic threshold that, combined with a
     fixed `coup_softness`, sets the effective contact band to 0.29 dx. Nobody has asked whether 0.1
     is right or where it came from.
@@ -1389,4 +1432,5 @@ particular:
 | 2026-08-07 | Second pass (1,208 lines): added glossary + metric definitions + arm naming, validation targets, implementation specs (forecast kernel with derivation, side-flip port gotchas), analysis-tooling inventory, env-var reference, out-of-scope rationale, risk register, verification methodology, quickstart. |
 | 2026-08-07 | Offboarding pass (post-commit `ef550706`): fixed an internal contradiction in §12.1 (Stage 0 was headed "no physics changes" while listing a CPIC arm that requires the Stage-1 change M5); added the **line-number drift hazard** banner to §6 — this doc is committed while the code it cites is not; downgraded the `--frozen` fix in §18 to **[INFERRED, NOT VERIFIED]** since no sweep has ever completed with it; flagged that `p2_fluidlab`/`p4_pg2p_vel` have never executed at all. |
 | 2026-08-07 | Final pass: decided **not** to commit the AI research dumps (§23) — fully extracted, no quantitative content, emphasis skewed toward §15 exclusions, and one contains a known error. Quotes re-anchored to primary papers so §8 stands alone. |
+| 2026-08-07 | Verification pass (new session, post-`20d64355`): **`--frozen` VERIFIED working** (7.4 s, CUDA live) — §18 upgraded from [INFERRED]. **RETRACTED the die-tip premise**: "~2.4 cells" is a res-7 number, actual is **3.35 cells @ res 10**, real face **13.4 mm** measured from `agforge_demo.xml` (§6.9, §16, §20). Proposed a **resolution-independent replacement premise** (the die is a sharp-edged box; a sharp edge is sub-grid at any resolution). **Measured `Tool2_clip.obj`** (152 verts, 15.8 × 12.7 × 54.7 mm) and promoted setup error (2) from a parked user decision to a premise-level question (§4). Also corrected outside this file: free disk is **18.2 GB**, not the 885 GB `df` reports inside WSL. |
 | 2026-08-07 | Third pass: **corrected a cross-config error in §7.4** (penetration series and frame counts had been taken from different runs); replaced it with a self-consistent DOMAIN-FIXED table. Added `AGF_PPC_DIVISOR` as an **unexploited sub-grid axis and competing hypothesis** (§6.9, §12.4); flagged `AGF_CELLS_PER_DIAMETER` default 7 ≠ the 10 we run; added run structure (§3.4) and how-to-add-an-arm (§3.5); added a copy-pasteable Stage 0 command; tagged the die-tip width as unverified; added this section. |
