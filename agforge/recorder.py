@@ -143,8 +143,17 @@ class AgForgeRecorder:
         if cmd_arr.ndim == 2: cmd_arr = cmd_arr[0]
         self.buffer["dof_cmd"].append(cmd_arr.astype(np.float32))
 
-    def flush_episode(self, success_flag=True, language_instruction="Strike the hot steel billet."):
-        """Flushes the buffered episode into the current HDF5 shard and updates Parquet."""
+    def flush_episode(
+        self,
+        success_flag=True,
+        language_instruction="Strike the hot steel billet.",
+        extra_attrs=None,
+    ):
+        """Flushes the buffered episode into the current HDF5 shard and updates Parquet.
+
+        `extra_attrs`: optional dict of scalar attrs written onto the episode
+        group (e.g. stock_diameter_m) so replay can rebuild a matching scene.
+        """
         if not self.is_recording or len(self.buffer["qpos"]) == 0:
             print("[Recorder] Buffer empty or not recording, skipping flush.")
             return
@@ -187,6 +196,10 @@ class AgForgeRecorder:
                 ep_grp.attrs["is_terminal"] = True
                 ep_grp.attrs["is_first"] = True
                 ep_grp.attrs["success_flag"] = success_flag
+                if extra_attrs:
+                    for key, value in extra_attrs.items():
+                        if value is not None:
+                            ep_grp.attrs[key] = value
                 
                 # --- OBSERVATIONS ---
                 obs_grp = ep_grp.create_group("observations")

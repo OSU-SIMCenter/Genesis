@@ -16,6 +16,10 @@ import os
 import sys
 import time
 
+from agforge.wsl_graphics import apply_early_wsl_graphics_defaults
+
+apply_early_wsl_graphics_defaults()
+
 import h5py
 import numpy as np
 import torch
@@ -24,6 +28,18 @@ import genesis as gs
 from agforge.options import TeleopOptions
 from agforge.agforge_builder import build_env
 from agforge.vis.temperature_particles import N_BUCKETS, TemperatureParticleRenderer
+
+# Defaults match forge_common.real_scale (real Agility Forge stock / Tool2 bite).
+# replay_episode runs inside the Genesis pixi env and must not require forge_common.
+_DEFAULT_STOCK_DIAMETER_M = 0.040  # 2 * 20mm
+_DEFAULT_STOCK_LENGTH_M = 0.059
+_DEFAULT_GRIPPER_AXIAL_WIDTH_M = 0.0158187
+
+
+def _attr_float(attrs, key):
+    if key not in attrs:
+        return None
+    return float(attrs[key])
 
 
 def load_episode(data_path: str, episode_arg):
@@ -64,6 +80,11 @@ def load_episode(data_path: str, episode_arg):
         # Read robot qpos
         qpos_arr = ep["observations/state/scene/qpos"][:]  # (T, 4)
 
+        stock_diameter_m = _attr_float(ep.attrs, "stock_diameter_m")
+        stock_length_m = _attr_float(ep.attrs, "stock_length_m")
+        gripper_axial_width_m = _attr_float(ep.attrs, "gripper_axial_width_m")
+        n_particles_frame0 = int(offsets[1] - offsets[0]) if len(offsets) > 1 else 0
+
     return {
         "ep_name": ep_name,
         "num_timesteps": num_timesteps,
@@ -72,7 +93,23 @@ def load_episode(data_path: str, episode_arg):
         "offsets": offsets,
         "qpos": qpos_arr,
         "description": lang,
+        "stock_diameter_m": stock_diameter_m,
+        "stock_length_m": stock_length_m,
+        "gripper_axial_width_m": gripper_axial_width_m,
+        "n_particles_frame0": n_particles_frame0,
     }
+
+
+def _resolve_stock_m(cli_value, episode_value, default, name):
+    if cli_value is not None:
+        return float(cli_value)
+    if episode_value is not None:
+        return float(episode_value)
+    print(
+        f"  No {name} in episode; using real-scale default {default} m "
+        f"(pass --{name.replace('_', '-')} to override)"
+    )
+    return default
 
 
 def main():
@@ -85,6 +122,12 @@ def main():
                         help="Playback frames per second (default: 10).")
     parser.add_argument("--loop", action="store_true",
                         help="Loop the replay continuously.")
+    parser.add_argument("--stock-diameter-m", type=float, default=None,
+                        help="Stock diameter [m] for the replay scene (default: episode attr or real-scale 0.04).")
+    parser.add_argument("--stock-length-m", type=float, default=None,
+                        help="Stock length [m] for the replay scene (default: episode attr or real-scale 0.059).")
+    parser.add_argument("--gripper-axial-width-m", type=float, default=None,
+                        help="Die axial width [m] (default: episode attr or real-scale Tool2 bite).")
     args = parser.parse_args()
 
     # Resolve data path
@@ -101,17 +144,58 @@ def main():
     # Load episode data
     episode = load_episode(data_path, ep_arg)
 
-    # Build the Genesis scene (with viewer)
+    stock_diameter_m = _resolve_stock_m(
+        args.stock_diameter_m,
+        episode["stock_diameter_m"],
+        _DEFAULT_STOCK_DIAMETER_M,
+        "stock_diameter_m",
+    )
+    stock_length_m = _resolve_stock_m(
+        args.stock_length_m,
+        episode["stock_length_m"],
+        _DEFAULT_STOCK_LENGTH_M,
+        "stock_length_m",
+    )
+    gripper_axial_width_m = _resolve_stock_m(
+        args.gripper_axial_width_m,
+        episode["gripper_axial_width_m"],
+        _DEFAULT_GRIPPER_AXIAL_WIDTH_M,
+        "gripper_axial_width_m",
+    )
+
+    # Build the Genesis scene (with viewer) matching the recorded stock.
+    # Bare TeleopOptions() uses ~1in stock (~8458 particles) and will not
+    # accept real-scale episode frames (~3160 particles).
     print("Building Genesis scene for replay...")
-    cfg = TeleopOptions()
+    print(
+        f"  stock_diameter={stock_diameter_m*1000:.2f}mm, "
+        f"stock_length={stock_length_m*1000:.2f}mm, "
+        f"gripper_axial_width={gripper_axial_width_m*1000:.3f}mm, "
+        f"recorded_particles/frame0={episode['n_particles_frame0']}"
+    )
+    cfg = TeleopOptions(
+        stock_diameter=stock_diameter_m,
+        stock_length=stock_length_m,
+        gripper_axial_width=gripper_axial_width_m,
+    )
     cfg.general.show_viewer = True
     cfg.vis.visualize_mpm_grid = True
+    cfg.vis.visualize_mpm_boundary = True
 
     env = build_env(cfg)
 
     # Get references to entities
     mpm_entity = env.mpm_entity
     robot = env.robot
+
+    if mpm_entity.n_particles != episode["n_particles_frame0"]:
+        print(
+            f"ERROR: scene has {mpm_entity.n_particles} particles but episode "
+            f"frame 0 has {episode['n_particles_frame0']}. Stock dims still "
+            f"don't match the recording -- re-record or pass explicit "
+            f"--stock-diameter-m / --stock-length-m."
+        )
+        sys.exit(1)
 
     print("Scene built. Starting replay...")
 

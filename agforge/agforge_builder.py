@@ -1,8 +1,17 @@
+import os
+import platform
+import sys
+
 import numpy as np
 import torch
+
+# Before Genesis/OpenGL: shared WSLg Gallium defaults.
+from agforge.wsl_graphics import apply_early_wsl_graphics_defaults
+
+apply_early_wsl_graphics_defaults()
+
 import genesis as gs
 
-import platform
 from agforge.options import AgilityForgeOptions, RobotOptions, GENERATED_ROBOT_XML_PATH
 from agforge.environment import AgilityForgeEnv
 
@@ -19,15 +28,25 @@ class RobotXMLGenerator:
         self.kv = robot_cfg.kv
         
         # Die half-extents. X (along the bar) and Z (across it) are the CONTACT
-        # FOOTPRINT and now come from the real Tool2 geometry rather than being
+        # FOOTPRINT and come from the real Tool2 geometry rather than being
         # scaled off the billet -- see RobotOptions.die_axial_width_m.
+        #
+        # X additionally honours an explicit caller override
+        # (RobotOptions.gripper_axial_width), which is how the forge_common
+        # genesis adapter passes the measured press width in. Note the FALLBACK
+        # is now the real Tool2 width rather than the old billet-scaled
+        # 0.5 * cylinder_radius, so a standalone run gets real geometry too --
+        # the two branches fixed the same defect from opposite ends.
         #
         # Y stays on the legacy billet-radius rule on purpose: it is the die
         # thickness along the approach axis, and gripper_closed_y below derives
         # the closed gap from it, so changing Y would move the KINEMATICS
         # (how far the press can close) instead of the contact area.
+        gripper_x_half = (robot_cfg.gripper_axial_width / 2.0
+                          if robot_cfg.gripper_axial_width is not None
+                          else robot_cfg.die_axial_width_m * 0.5)
         self.gripper_size = np.array([
-            robot_cfg.die_axial_width_m * 0.5,   # X: along-bar contact width
+            gripper_x_half,                      # X: along-bar contact width
             robot_cfg.cylinder_radius * 0.4,     # Y: thickness / approach axis
             robot_cfg.die_lateral_span_m * 0.5,  # Z: across-bar span
         ])
@@ -120,6 +139,17 @@ def build_env(cfg: AgilityForgeOptions) -> AgilityForgeEnv:
     """
     Builds the simulation scene using the provided configuration.
     """
+    if getattr(cfg.general, "show_viewer", False):
+        apply_early_wsl_graphics_defaults()
+        perf = getattr(cfg, "performance", None)
+        if (
+            perf is not None
+            and getattr(perf, "opengl_platform", None) in (None, "")
+            and getattr(perf, "wsl_prefer_glx", True)
+            and os.environ.get("WSL_DISTRO_NAME")
+        ):
+            perf.opengl_platform = "glx"
+
     # --- Step 1: Dynamically generate the robot XML ---
     print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
     generator = RobotXMLGenerator(robot_cfg=cfg.robot)

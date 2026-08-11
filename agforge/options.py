@@ -378,11 +378,14 @@ class RobotOptions(Options):
     coup_softness: float = 5e-4
 
     # Declare fields for pydantic — Optional because they are computed in model_post_init
+    # (cylinder_diameter/cylinder_height may also be pre-set by the caller, see below)
     cylinder_diameter: Optional[float] = None
     cylinder_radius: Optional[float] = None
     cylinder_height: Optional[float] = None
     cylinder_pos: object = None
     cylinder_euler: Optional[tuple] = None
+    # Optional jaw axial (X) full-width override [m]; None = the default 0.5*radius half-extent.
+    gripper_axial_width: Optional[float] = None
     base_grid_density: Optional[int] = None
     mpm_lower_bound: Optional[tuple] = None
     mpm_upper_bound: Optional[tuple] = None
@@ -402,14 +405,25 @@ class RobotOptions(Options):
         ureg.define(f"{self.time_unit_str} = {self.robot_time_to_seconds} * second")
 
         # --- Perform all calculations first ---
-        self.cylinder_diameter = (self.billet_diameter_in * ureg.inch).to(ureg.meter).magnitude
+        # Keep pre-set stock dimensions if the caller provided them (e.g. an
+        # external driver like the forge_common genesis adapter); otherwise fall
+        # back to THIS branch's defaults -- billet_diameter_in = 1.5 in = 38.1 mm,
+        # the real T4 bar, not the legacy 1 in.
+        #
+        # ⚠️ forge_common's REAL_STOCK_RADIUS_MM is 20.0, i.e. a 40 mm bar, so an
+        # adapter-driven run still gets 40 mm and not the real 38.1. That is a
+        # forge_common constant, not something this file can fix; flagged here so
+        # the discrepancy is visible at the point where the override lands.
+        if self.cylinder_diameter is None:
+            self.cylinder_diameter = (self.billet_diameter_in * ureg.inch).to(ureg.meter).magnitude
         self.cylinder_radius = self.cylinder_diameter / 2
         self.coil_radius = self.coil_radius_multiplier * self.cylinder_radius
-        self.cylinder_height = (
-            self.billet_length_m
-            if self.billet_length_m is not None
-            else 8 * self.cylinder_radius
-        )
+        if self.cylinder_height is None:
+            self.cylinder_height = (
+                self.billet_length_m
+                if self.billet_length_m is not None
+                else 8 * self.cylinder_radius
+            )
         self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
         self.cylinder_euler = (0.0, 90.0, 0.0)
 
@@ -501,6 +515,13 @@ class AgilityForgeOptions(Options):
     #:                  thermo-mechanical run (die chill, transfer cooling).
     thermal_time_scale_mode: Literal["cfl", "mechanical"] = "cfl"
 
+    # Optional stock-size overrides [m] for external drivers (e.g. the
+    # forge_common genesis adapter). None = this branch's own defaults
+    # (billet_diameter_in x billet_length_m).
+    stock_diameter: Optional[float] = None
+    stock_length: Optional[float] = None
+    gripper_axial_width: Optional[float] = None
+
     # Declare fields for pydantic
     sim: object = None
     robot: object = None
@@ -544,7 +565,9 @@ class AgilityForgeOptions(Options):
         # unusable until the timestep came from c_p. ✅ Both now ship: the cost is
         # 38% more substeps, and it changes stability for every consumer of this
         # branch, so it is a coordination point rather than a silent default.
-        temp_robot = RobotOptions(robot_time_to_seconds=1.0)
+        temp_robot = RobotOptions(robot_time_to_seconds=1.0,
+                                  cylinder_diameter=self.stock_diameter,
+                                  cylinder_height=self.stock_length)
         dx = 1.0 / temp_robot.base_grid_density
 
         if getattr(self.mat, 'cfl_use_pwave', False):
@@ -648,7 +671,10 @@ class AgilityForgeOptions(Options):
             gravity=(0, 0, 0),
             check_bounds=not self.performance_mode,
         )
-        self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt)
+        self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt,
+                                  cylinder_diameter=self.stock_diameter,
+                                  cylinder_height=self.stock_length,
+                                  gripper_axial_width=self.gripper_axial_width)
         self.mpm = MPMOptions(
             grid_density=self.robot.base_grid_density,
             particle_size=dx / 2.0,  # 8 particles per cell (2³ = 8 PPC)
