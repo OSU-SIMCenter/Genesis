@@ -14,11 +14,29 @@ below, because it is unambiguous and it changes what the data is *for*.
 
 Four things landed that alter how the rest of this document should be read.
 
-### 0.1 🚨 The clamp, not the fit, was the biggest material error — 2.3×
+### 0.1 The clamp — a real fix, but NOT load-bearing for this forge
+
+> **🚩 SUPERSEDED IN PART, 2026-08-11 (same day).** This section originally read
+> *"The clamp, not the fit, was the biggest material error — 2.3×"*. That was
+> written while the billet temperature was believed to be 1150–1260 °C. The
+> billet has since been **measured at ~960 °C at blow #1** (thermal camera in the
+> 06-15 mcap views the press, not the coil). At 960 °C = 1233.15 K the material
+> is **inside Song's fitted 800–1000 °C window and inside the kernel clamp
+> either way** — nothing clamps, nothing extrapolates.
+>
+> ⇒ **the 2.3× clamp error only occurs above 1000 °C, which this forge never
+> reaches.** Raising `T_fit_max` remains correct in general and is kept, but it
+> changes nothing at the real operating point. Any experiment run at 1200 °C to
+> test it (as one was) is testing a regime the process does not use.
+>
+> The genuinely useful reading of the measurement is the opposite and better
+> news: the card is calibrated at 1000 °C, the bar runs at ~960 °C, and
+> **the card is in domain.** Flow stress 212.4 MPa at 960 °C vs 181.1 at 1000 °C.
 
 [Song2020] is fitted over 800–1000 °C and `ArrheniusPlasticity` clamped its
-ceiling at 1273.15 K. But 316L is forged at **1150–1260 °C**, so a billet at real
-forging heat was silently evaluated with the **1000 °C** flow stress.
+ceiling at 1273.15 K. Standard references give a 316L forging window of
+**1150–1260 °C**, which is what motivated this change — but see the measurement
+above: this particular process runs cooler than the generic window.
 
 | at 1200 °C, 0.41 s⁻¹, ε = 0.207 | MPa |
 |---|---|
