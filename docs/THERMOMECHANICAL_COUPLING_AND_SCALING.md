@@ -380,8 +380,47 @@ which makes the true ceiling slightly **lower** — the conclusion only strength
 
 `REAL_STOCK_RADIUS_MM = 20.0` is a bare, underived constant in shared
 `forge_common/main/forge_common/real_scale.py:47`. The real bar is ordinary **1.5″ stock**
-(37.93 mm equivalent diameter), **oval in section with rounded ends** — not faceted/octagonal
-(that hypothesis was tested and refuted, §5).
+(37.93 mm equivalent diameter).
+
+### 🚨 CROSS-WORKSTREAM CORRECTION (workstream A, session `40379be1`, 2026-08-12)
+
+**The +9.9%/+11.2% volume excess is independently CONFIRMED. What I proposed doing about it is
+REFUTED — measured, not argued.**
+
+Four billet initial conditions were run with the grid held identical (dx 4.0 mm, psize 2.0 mm),
+so volume was the only variable:
+
+| billet ⌀ | IoU@2.0 |
+|---|---|
+| **40.0 mm** (current) | **0.7672** |
+| 39.3 mm | 0.7536 |
+| **38.0 mm** (≈ the 18.96 radius I proposed) | **0.7077** |
+| mesh-from-scan | 0.7135 |
+
+**IoU falls monotonically as volume falls.** The ceiling rises while the score drops, because
+`IoU_max = V_real/V_sim` assumes an over-filled sim that **nests around** the real bar.
+⇒ **IoU@2.0 rewards over-filling and therefore cannot be used to choose the stock volume.**
+My "at minimum, correct `REAL_STOCK_RADIUS_MM` 20.0 → ~18.96" is **withdrawn.**
+
+**And a cylinder is the wrong SHAPE at any radius.** The hit-1-*before* scan is already
+flattened — a **5.6 mm flat** (Z 34.4 mm across a Y of 40.4 mm) present *before* the recorded
+sequence begins. The body radius (~20.4 mm) and the whole-bar volume-equivalent (~19.0 mm)
+diverge because the ends taper, so **no single radius satisfies both**; ⌀38.0 is ~5% too thin
+in the struck region, which is why its surface deviation is the worst of the four.
+
+⚠️ **This also refines this document's own §5 entry.** My cross-section analysis found a smooth
+oval with r ≈ 18.3–21.4 mm and no flats — but it sampled at **mid-length**, and the whole-bar
+AABB (Z 39.66 mm) is dominated by unstruck material. A-7's 34.4 mm is the **local struck
+region**. Both measurements are probably right and describe different places on the bar; the
+flat is **localised, not a uniform section**. Neither has been reconciled against the other
+directly. **Do not treat either as the settled cross-section.**
+
+⚠️ Also unverified from A-7: a suspected **die over-closure at hit 1** (real gap 34.5 mm vs sim
+30.0 mm). If real, it affects every hit-1 comparison in this document.
+
+⇒ **Do not edit `real_scale.py` on the strength of the ceiling argument.** It is shared by four
+adapters, and the one measurement anyone has taken says the change moves the score the wrong
+way. See `genesis-contact-method-work` and A-7's canonical doc.
 
 **Consequence for this workstream:** hit-1 geometry is saturated. Material and thermal
 differences have almost no room to express themselves there. Until the stock geometry is fixed,
@@ -465,6 +504,60 @@ i.e. **not at all**.
 
 ⚠️ **Partial sequence failure is normal here** — the contact sweep's own arms complete
 1/2/2/2/3/3/5/5/7/7/7/7/8/10/13/17 hits. Do not treat a non-17 run as anomalous on its own.
+
+### 4.10 🎯 Scoring at later hits — the signal is there, we were looking at the wrong hit
+
+**Every geometry score in this project had been taken at hit 1.** Six arms already carry
+multi-hit particle clouds on disk (up to 14 hits); they had simply never been scored. Doing so
+(pure CPU, no re-runs needed) changes the picture materially.
+
+| arm | res | hit 1 | hit 5 | hit 10 | `dev_max` h1 → h10 |
+|---|---|---|---|---|---|
+| `m0_jc_293_res10` | 10 | 0.7691 | 0.7221 | **0.6155** | 2.10 → 14.19 mm |
+| `t_1000C_nothermal` | 10 | 0.7887 | — | **0.5910** | 1.28 → 17.88 mm |
+| `m0_jc_293_seq` | 7 | 0.7645 | 0.6715 | — | 1.81 → 5.26 (h5) |
+| `m1_jc_1273_T1200_pic` | 7 | — | 0.6735 | **0.5707** | → 15.40 mm |
+| `m1_jc_1273_T1273_f00` | 7 | — | 0.6652 | **0.5621** | → 15.37 mm |
+| `m1_jc_1273_v35_f00` | 7 | — | 0.6739 | — | → 5.17 (h5) |
+
+**Two findings.**
+
+**(a) Agreement degrades sharply as the sequence accumulates: ~0.77 → ~0.67 → ~0.57**, and
+`dev_max` grows roughly **10×** (1.8 → 15+ mm). Errors compound; they do not wash out. This had
+never been measured.
+
+**(b) 🎯 Discriminating power GROWS with hit number — by roughly 20×.** Spread across the res-7
+arms:
+
+| | hit 1 | hit 5 | hit 10 |
+|---|---|---|---|
+| spread across res-7 arms | **0.0004** | **0.0087** | **0.0086** |
+| vs the (provisional) 0.0002 noise floor | ~2× | **~40×** | **~40×** |
+
+At hit 1, configs differing in billet temperature or approach speed are indistinguishable. By
+hit 5 the same pairs separate by ~0.009. Two examples, each differing in **one** variable:
+
+- `T1273_f00` (0.6652) vs `v35_f00` (0.6739) — **approach speed only**, 273 vs 35 m/s → Δ 0.0087
+- `T1273_f00` (0.6652) vs `T1200_pic` (0.6735) — **billet temperature only**, 1273 vs 1200 K → Δ 0.0083
+
+🚩 **Note what this does to §4.7's press-speed conclusion.** Approach speed did not change hit
+counts and did not change hit-1 geometry — but it visibly changes *accumulated* geometry. "Press
+speed doesn't matter" was a hit-1 statement and should not be generalised.
+
+### 🚩 This partially corrects §4.6 — the ceiling is a HIT-1 phenomenon
+
+§4.6 argues hit-1 geometry is saturated at ~98% of a structural ceiling, leaving material and
+thermal effects no room. **That is true at hit 1 and false later.** At hit 10 scores sit at
+0.56–0.62 against a discretisation ceiling near 0.88 — **enormous headroom.**
+
+⇒ The right response to the ceiling is **not only** "fix the stock geometry." It is **"stop
+scoring exclusively at hit 1."** Later hits are cheap (the clouds exist), have room to move, and
+discriminate ~20× better. Any comparison intended to detect a material or thermal effect should
+be scored across hits 1 / 5 / 10 and reported as a curve, not a point.
+
+⚠️ Cross-arm comparisons at late hits carry a caveat: arms that died earlier are absent, so the
+surviving set is selected for stability. Compare like with like, and state which arms were in
+the pool.
 
 ---
 
@@ -805,9 +898,15 @@ Particles scale as res³ (res 14 ≈ 8× res 7); 6 GB VRAM is unprobed at high r
 
 **Every case run twice — isothermal at ~900–1000 °C, and fully coupled.**
 
+🎯 **Score every case at hits 1 / 5 / 10 (and 17 where the run survives), not at hit 1 alone.**
+Per §4.10 this costs nothing — the clouds already exist — and it buys ~20× the discriminating
+power, because the ceiling that saturates hit 1 does not bind at hit 10. **A single-hit score is
+no longer an acceptable result format in this workstream.**
+
 | Test | Data | Metric | Notes |
 |---|---|---|---|
-| Per-hit geometry | 17-hit meshes | IoU@2.0 + dev_* at fixed resolution | Ceiling-capped ~0.80 until stock geometry fixed → prefer differentials |
+| Per-hit geometry | 17-hit meshes | IoU@2.0 + dev_* at fixed resolution, **as a curve over hits** | Hit 1 is ceiling-capped ~0.80; hits 5–10 sit at 0.56–0.67 with ample headroom (§4.10) |
+| **Error accumulation rate** | 17-hit meshes | slope of IoU and `dev_max` vs hit number | New in §4.10: ~0.77 → 0.57 and `dev_max` ×10 across 10 hits. A coupled model that tracks reality better should flatten this slope — arguably the single most sensitive available test |
 | **Isothermal prediction** | 17-hit (no temp data) | predicted ΔT over the sequence | Coupled run *should* predict near-isothermal given reheat BCs. Deviation = missing physics or wrong BCs |
 | Cooling rate | 06-15 mcap | ~4.8 °C/s through the blow | Needs retrieval |
 | Billet temperature | 06-15 mcap | ~960 °C at blow #1, per-blow for all 47 | Needs retrieval |
@@ -1007,6 +1106,7 @@ Hashes via `git log --oneline -- docs/THERMOMECHANICAL_COUPLING_AND_SCALING.md`.
 | Date | Rev | Change |
 |---|---|---|
 | 2026-08-12 | 1 (`bbc1c1ca`) | Created. Findings, refutations, scaling theory, plan, provenance. |
+| 2026-08-12 | 4 | 🎯 **§4.10: scored the existing multi-hit clouds for the first time.** Every geometry score in this project had been taken at hit 1; six arms already carried up to 14 hits on disk. Agreement degrades ~0.77 → 0.67 → 0.57 across hits 1/5/10 with `dev_max` growing ~10×, and **discriminating power grows ~20×** (arm spread 0.0004 → 0.0087). Variables invisible at hit 1 — approach speed, billet temperature — separate clearly by hit 5. **This partially corrects §4.6:** the saturation ceiling is a hit-1 phenomenon; at hit 10 there is large headroom. Multi-hit scoring is now required in §9.2. 🚨 **Also recorded workstream A's measured refutation of §4.6's proposed fix:** shrinking `REAL_STOCK_RADIUS_MM` moves IoU the *wrong way* (0.7672 → 0.7077), because IoU@2.0 rewards over-filling; and the bar arrives with a localised 5.6 mm flat, so no cylinder is a valid IC. My radius recommendation is withdrawn, and my "smooth oval" cross-section is reconciled as a mid-length sample rather than the struck region. |
 | 2026-08-12 | 3 | 🚨 **§2.4: established that there is currently NO code path for coupled forging** — `thermal_enabled` defaults False, its only setter is in the teleop socket, and the adapter documents "cold (no-heating) runs for now". Every result in this document was produced with temperature frozen. Added A6 (build the coupled path) as a prerequisite ours, not B-3's. Added §8.0 dependency structure; D1 sweep design with predicted KE/IE and cost, framed as validating the *criterion* not just the scaling; §10.1 risk register; the n=2 caveat on the 0.0002 noise floor plus A5 to establish it properly; 4 more refuted claims (grid-only contact, the 97× clock, Arrhenius-specific failure, "they complete 17 hits"). |
 | 2026-08-12 | 2 | Added notation table; §2.4 the two thermal switches; §2.5 coupling-term inventory (thermal expansion and temperature-dependent moduli both absent); §4.7 force blindness; §4.8 card in-domain at 960 °C; §4.9 primary data tables; §9.4 acceptance criteria; open questions 6–8; §13 maintenance; §14 sources. Corrected: a paraphrase had been presented as a direct quotation; θ agreement with B-3 was overstated ("matching" → same order); ceiling percentage given false precision. |
 
