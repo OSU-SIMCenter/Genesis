@@ -15,6 +15,21 @@ claims made by the author of this document.
   equivalent canonical reference. Read it before assuming anything about contact.
 - `docs/AS_BUILT_AGILITY_FORGE.md` — the real machine.
 
+**Notation used throughout**
+
+| Symbol | Meaning | Current value |
+|---|---|---|
+| `N` | mechanical time-scaling factor = `pressing_speed / real_die_speed` | 1,773 |
+| `S_T` | `thermal_time_scale` — multiplies every transport term via `dt_th = substep_dt · S_T` | 237,014 (should be `N`) |
+| `χ` | Taylor-Quinney coefficient, fraction of plastic work becoming heat | 0.9 |
+| `ε̇` | equivalent plastic strain rate | real ≈ 0.35 /s; sim ≈ 625 /s |
+| `α` | thermal diffusivity | runtime 1.1e-5 m²/s |
+| `k_diff`, `k_conv`, `k_rad` | explicit stability numbers; `k<1` monotone, `k<2` bounded, `k>2` diverges | 0.458 / 0.0001 / 0.0005 |
+| `θ` | contact-exchange Euler factor `h·A·dt_th/(m·Cp)` | 0.036 |
+| `flip` | FLIP/PIC blend fraction for the temperature gather | 0.97 |
+| `Z` | Zener-Hollomon parameter `ε̇·exp(Q/RT)` | — |
+| IoU@2.0 | voxel-occupancy intersection-over-union at 2 mm voxels | — |
+
 ---
 
 ## 1. Goal and scope
@@ -84,7 +99,57 @@ E = 121.5 GPa, ρ = 7334 kg/m³   →  c = √(E/ρ)   = 4070 m/s
 h_air 15   h_contact 3000   emissivity 0.40   Cp(1273 K) ≈ 625.5 J/kg·K
 grid_cells_across_billet 7 → 3,160 particles;  10 → 9,266 particles
 jc_T_ref 1273.15 K   T_melt 1675.0 K   Arrhenius clamp [1073.15, 1473.15] K
+E = 121.5 GPa (CONSTANT)   nu = 0.383 (CONSTANT)   rho = 7334 (CONSTANT)
 ```
+
+### 2.4 🚩 Two switches named almost the same thing
+
+| Switch | Default | Meaning |
+|---|---|---|
+| `MPMOptions.enable_thermal` | **True** (`options.py:684`) | The solver *runs* the thermal kernels — diffusion, surface flux, gather, contact |
+| `StrikeController.thermal_enabled` | **False** (`strike_controller.py:130`) | "Thermal Freezing" — snapshots particle temperatures before each physics step and **restores them after** (`:945`, `:963`) |
+
+⇒ **In the default forging path the solver computes a full thermal solution every substep and
+`StrikeController` then discards it**, restoring the snapshot. A press is therefore exactly
+isothermal by construction, verified previously: a 74-step press starting at 1273.15 K ends at
+1273.15 K with std 0.0.
+
+Two consequences:
+
+- The thermal solve's *only* effect during a default press is to destabilise. This is why the
+  instability appears in runs whose thermal output is thrown away.
+- **Turning on real coupling means setting `thermal_enabled = True`,** which is a different and
+  much less exercised path than simply having `enable_thermal = True`. Do not assume the
+  coupled path is as well-tested as the frozen one.
+
+⚠️ The restore at `:965` is guarded by `not physics_failed` — so a diverging run keeps its bad
+temperatures and trips the diagnostic rather than being silently rescued.
+
+### 2.5 Coupling terms — what is implemented and what is missing
+
+A fully coupled thermomechanical formulation has four two-way terms. We have two.
+
+| Term | Direction | Status | Where |
+|---|---|---|---|
+| Plastic work → heat | M→T | ✅ implemented | `p2g_post_constitutive` (:492), `χ = 0.9` |
+| Temperature → yield stress | T→M | ✅ implemented | Arrhenius `_flow_stress_pa`; JC `thermal_softening` |
+| **Thermal expansion → strain** | **T→M** | ❌ **absent** | no CTE anywhere in the solver |
+| **Temperature → elastic moduli** | **T→M** | ❌ **absent** | `E`, `nu` are constants |
+
+Temperature-dependent **Cp** and **k** *are* implemented and are 316L-specific
+(`get_steel_cp` :438, `get_steel_thermal_conductivity` :459) — note 316L's conductivity *rises*
+with temperature (14.6 → ~29 W/mK), the opposite of the AISI 4340 curve they replaced.
+
+**Why the two absences matter specifically for this workstream.** `E = 121.5 GPa` is already the
+*elevated-temperature* value (room-temperature 316L is ~193–200 GPa). So a constant modulus is
+**correct for an isothermal run at forging heat, and becomes an error source exactly when
+temperature is allowed to vary** — i.e. the moment dynamic coupling is switched on. The same
+holds for thermal expansion: 316L's CTE is ~18e-6 /K, so a 700 K excursion is ~1.3% linear /
+~3.8% volumetric strain, which is comparable in size to the deformation the geometry metric is
+trying to measure.
+
+⇒ **Both absences should be quantified before the coupled results are trusted.** They are
+listed as defects in §7 and as open questions in §10.
 
 ---
 
@@ -156,24 +221,24 @@ is a **runtime field**, so this needed no source change — poke it after the sc
 **Even 0.5 fails — there is no usable FLIP margin.** With the gather fixed, the failure mode
 reverts to the ordinary mechanical instability seen everywhere else.
 
-**Why this specifically blocks coupling.** From Nairn, *Coupling Transport Equations to
-Mechanics in the Material Point Method*:
+**Why this specifically blocks coupling.** Nairn's *Coupling Transport Equations to Mechanics in
+the Material Point Method* analyses exactly this configuration and reports that FLIP transport
+produces good **grid** values while **particle** values oscillate badly near edges and
+interfaces — with the consequence, in his words, that modelling
+> "cannot implement features that depend on a particle's transport value"
 
-> "FLIP methods get excellent grid values, but particle values develop very large oscillations
-> near edges, interfaces, or other discontinuities. **This behavior means modeling cannot
-> implement features that depend on a particle's transport value (e.g., temperature-dependent
-> material properties).**"
+and he gives temperature-dependent material properties as the example. **That is the coupling
+itself.** The published failure mode of the scheme in use is precisely the capability we want.
+He also notes null-space effects are more severe in transport than in mechanics, which is why
+momentum survives here and thermal does not.
 
-Temperature-dependent flow stress **is** the thermomechanical coupling. The published failure
-mode of the scheme in use is exactly the capability we want. Nairn also notes null-space effects
-are *more severe in transport than in mechanics*, which is why momentum survives and thermal
-does not.
+**The published fix is neither FLIP nor pure PIC.** Pure PIC (equivalently FMPM(1)) eliminates
+the oscillations but introduces numerical diffusion he judges unacceptable; **FMPM(k≥2–3)** —
+an approximate full heat-capacity-matrix inverse — removes the oscillations without significant
+diffusion. Note the codebase already uses **APIC** (a filtering transfer with the same
+motivation) for momentum, and left thermal on raw 1988-era FLIP.
 
-**The published fix is neither FLIP nor pure PIC.** PIC (= FMPM(1)) removes oscillation but is
-*"unacceptably diffusive and must be rejected"*; **FMPM(k≥2–3)** — an approximate full
-heat-capacity-matrix inverse — removes oscillation without significant numerical diffusion.
-Note the codebase already uses **APIC** (a filtering transfer with the same motivation) for
-momentum, and left thermal on raw 1988-era FLIP.
+📚 Full reference should be added here once the paper is properly cited — see §13.
 
 ⇒ **Pure PIC (`flip = 0`) is a diagnostic, not the recommendation.**
 
@@ -260,8 +325,12 @@ sim nominal (π · 20² · 59)       74,142 mm³
 volume ceiling        V_real/V_sim   = 0.910
 discretisation ceiling (res 10)      = 0.880
 combined structural ceiling         ≈ 0.801
-best arm measured                    = 0.7887      ← 98.4% of ceiling
+best arm measured                    = 0.7887      ← ~98% of ceiling
 ```
+
+⚠️ The two ceilings are not strictly independent, so 0.801 is an **estimate**, not a bound. And
+because the real bar is slightly *wider* than the sim in y (40.48 vs 40.0 mm), `real ⊄ sim`,
+which makes the true ceiling slightly **lower** — the conclusion only strengthens.
 
 `REAL_STOCK_RADIUS_MM = 20.0` is a bare, underived constant in shared
 `forge_common/main/forge_common/real_scale.py:47`. The real bar is ordinary **1.5″ stock**
@@ -272,6 +341,84 @@ best arm measured                    = 0.7887      ← 98.4% of ceiling
 differences have almost no room to express themselves there. Until the stock geometry is fixed,
 prefer **differential** comparisons (arm vs arm at fixed everything) over absolute scores, and
 prefer **accumulated multi-hit** geometry over hit 1.
+
+### 4.7 Peak force is nearly blind to the material — this is why geometry became the metric
+
+| Change | Effect on peak force |
+|---|---|
+| Flow stress −10% (JC 201.4 → Arrhenius 181.2 MPa) | **1.1%** |
+| Purely **elastic** change to `nu` | **10%** |
+
+Force is ~10× more sensitive to an elastic parameter than to a 10% change in the plastic flow
+stress. ⇒ **The inherited "3.02× → 1.81× → 1.34×" force-convergence narrative measured contact
+and elasticity, not material. Those ratios are retracted.**
+
+Compounding this, the real press is **force-limited at 110.2 kN**, so measured force saturates
+and cannot discriminate above that ceiling. Geometry is the only metric that sees the material —
+which is why §4.5's characterisation of it is load-bearing.
+
+### 4.8 The material card is in-domain at the measured temperature
+
+The billet was **measured at ~960 °C at blow #1** (06-15 mcap; session `12b6fa7e` — see §11 for
+its caveats). Song2020 is fitted over **800–1000 °C**; the Arrhenius kernel clamps to
+[1073.15, 1473.15] K.
+
+**960 °C = 1233.15 K is comfortably inside both — nothing extrapolates and nothing clamps.**
+The card is calibrated at 1000 °C and the bar runs 40 °C cooler. Flow stress 212.4 MPa at
+960 °C vs 181.1 at 1000 °C.
+
+This is the strongest validation the material card has, and it came from a measurement rather
+than a simulation. It also **demotes** a previously headline finding: the temperature clamp was
+called "the biggest material error, 2.3×", but it only bites above 1000 °C, which this process
+never reaches. Raising `T_fit_max` remains correct in general and changes nothing here.
+
+⚠️ Note the reheat target for the 17-hit sequence (~900–1000 °C, §3.1) is the *same window*.
+Both experiments sit inside the fitted domain.
+
+### 4.9 Primary data
+
+**Geometry, all arms, hit 1** (`geom_batch.py --batch material_arms --hit 1 --sim-hit 1`).
+Real scan: 126,898 verts / 252,184 tris / 67,486 mm³. `pose = IoU cen − IoU`; positive means
+that arm has pose drift.
+
+| arm | res | thermal | IoU@2.0 | IoU cen | dev_mean | dev_p95 | dev_max | pose |
+|---|---|---|---|---|---|---|---|---|
+| `m0_jc_293` | 7 | on | 0.7642 | 0.7741 | 0.415 | 0.955 | 1.812 | +0.0099 |
+| `m0_jc_293_seq` *(replicate)* | 7 | on | 0.7645 | 0.7746 | 0.415 | 0.955 | 1.812 | +0.0101 |
+| `m1_jc_1273` | 7 | on | 0.7642 | 0.7743 | 0.415 | 0.955 | 1.812 | +0.0101 |
+| `m1_jc_1273_seq` *(replicate)* | 7 | on | 0.7641 | 0.7740 | 0.415 | 0.955 | 1.812 | +0.0099 |
+| `m2_arr_clamped` | 7 | on | 0.7644 | 0.7734 | 0.412 | 0.953 | 1.812 | +0.0090 |
+| `m3_arr_raised` | 7 | on | 0.7604 | 0.7504 | 0.432 | 1.001 | 1.993 | −0.0100 |
+| `t_900C` | 7 | on | 0.7716 | 0.7514 | 0.409 | 0.956 | 1.812 | −0.0202 |
+| `t_1000C` | 7 | on | 0.7656 | 0.7716 | 0.413 | 0.953 | 1.812 | +0.0060 |
+| `t_1000C_mech` (S_T=1,773) | 7 | on | 0.7644 | 0.7732 | 0.413 | 0.954 | 1.812 | +0.0088 |
+| `t_K_either` | 7 | on | 0.7776 | 0.7429 | 0.421 | 0.993 | 1.812 | −0.0346 |
+| `m0_jc_293_res10` | 10 | on | 0.7691 | 0.7655 | 0.315 | 0.743 | 2.104 | −0.0037 |
+| `t_1000C_res10` | 10 | on | 0.7668 | 0.7642 | 0.320 | 0.761 | 2.200 | −0.0026 |
+| **`t_1000C_nothermal`** | 10 | **off** | **0.7887** | 0.7843 | **0.297** | **0.717** | **1.278** | −0.0043 |
+
+Read this table with §4.5 in hand: **the res-7 and res-10 blocks are not directly comparable.**
+The `_seq` pairs are accidental replicates of `m0`/`m1` and give the **run-to-run noise floor of
+0.0002 IoU**. Within res 7, `m3_arr_raised` is −0.0038 (≈19× noise, real signal, but it ran at
+1473 K — a regime this forge never reaches), while JC and clamped-Arrhenius differ by 0.0002,
+i.e. **not at all**.
+
+**Sequence stability, consolidated.** Hits survived out of 17.
+
+| Billet | res | thermal | flip | Hits | Failure |
+|---|---|---|---|---|---|
+| 1000–1273 K | 7 | on | 0.97 | 1 | Thermal Detonation |
+| 1273 K | 10 | on | 0.97 | 1 | NaN Detected |
+| 600 K | 7 | on | 0.97 | 1 | Thermal Detonation |
+| 1200 K | 7 | on | 0.97 | 1 | Thermal Detonation |
+| 293 K | 7 | on | 0.97 | 7 | Thermal Detonation |
+| 293 K | 10 | on | 0.97 | 11 | Thermal Detonation |
+| 1273 K | 7 | on | **0.00** | **12** | Supersonic Velocity |
+| 1200 K | 7 | on | **0.00** | **13** | Supersonic Velocity |
+| 1273 K | 10 | **off** | — | **14** | Supersonic Velocity |
+
+⚠️ **Partial sequence failure is normal here** — the contact sweep's own arms complete
+1/2/2/2/3/3/5/5/7/7/7/7/8/10/13/17 hits. Do not treat a non-17 run as anomalous on its own.
 
 ---
 
@@ -289,7 +436,7 @@ Every one of these was believed, acted on, or written down. Several are the auth
 | Press speed explains the residual failures | this session | 273 → 35 m/s changed nothing (1 hit either way with default FLIP; PIC runs 12 → 9). |
 | Explicit MPM fundamentally cannot do coupled thermomechanics | this session | Thermal stability limit is **517,000× looser** than mechanical on our grid. Fully-explicit coupled thermomechanical forming is standard and validates against implicit quasi-static. |
 | B-3's contact fix is root cause; the FLIP finding is a symptom mask | this session | Withdrawn. `apply_particle_contact` runs at :878, **after** g2p (:864), so a PIC gather discards nothing. |
-| Surface/contact CFL is the cause, θ = 36 | B-3, self-retracted | 1000× units error — `_particle_volume_scale` applied twice. Real θ = 0.036, matching this session's independent audit. |
+| Surface/contact CFL is the cause, θ = 36 | B-3, self-retracted | 1000× units error — `_particle_volume_scale` applied twice. B-3's corrected θ is 0.036; this session's independent full-cell estimate was 0.025 — same order, both far below the θ>2 divergence threshold. |
 | "JC is temperature-blind, therefore not mechanics" | both B sessions, from a stale comment in `material_arms.py` | True only of the *initial* temperature. Plastic work un-clamps `T_star` on the first blow. |
 | Temperature at the blow is not measured | inherited, long-standing | Measured ~960 °C from the 06-15 mcap (session `12b6fa7e`). |
 | The clamp fix was "the biggest material error, 2.3×" | prior session | Not load-bearing at 960 °C — the clamp only bites above 1000 °C, which this process never reaches. |
@@ -436,11 +583,13 @@ Ranked by impact on the coupled-physics goal.
 | 1 | **FLIP gather on the temperature field** | `base_mpm_solver.py:239, :723` | Blocks coupling entirely — particle temperature unusable for flow stress | B-3's component |
 | 2 | **S_T decoupled from N** (237,014 vs 1,773) | `options.py:616` | 134× too much heat transfer per blow | B-3 / shared |
 | 3 | **Strain rate not divided by N** | `materials.py:283` | Flow stress and plastic heating evaluated at ~1800× the real rate unless the prescribed override is on | this workstream |
-| 4 | **Runtime α 1.82× the design α** | `1.1e-5` vs `6.05e-6` | `k_diff` 0.458 vs intended 0.25 — most of the margin gone | unclaimed |
-| 5 | **`approach_speed` = 273.2 m/s** vs a 100 m/s intercept | `options.py:940` — uses macro `dt`, not `substep_dt` | Real defect; **not** the thermal cause | unclaimed |
-| 6 | **No KE/IE assertion** | — | The validity of the whole time-scaling scheme is unmonitored | this workstream |
-| 7 | Stock volume +9.9% | `real_scale.py:47` | Caps absolute geometry agreement at ~0.80 IoU | A-7 |
-| 8 | "Thermal Detonation" is a misleading name | `strike_controller.py:1657` | Checks `T > 4000 K` **or** `T < 0 K` — fires on numerical collapse, not overheating | cosmetic |
+| 4 | **Thermal expansion absent** | no CTE in the solver | ~1.3% linear / 3.8% volumetric strain over a 700 K excursion — comparable to the deformation being measured. Harmless isothermal; an error the moment coupling is on | this workstream |
+| 5 | **Elastic moduli temperature-independent** | `E`, `nu` constants (`options.py:50, :80`) | `E = 121.5 GPa` is the *hot* value, so this is correct isothermally and wrong under a varying field | this workstream |
+| 6 | **Runtime α 1.82× the design α** | `1.1e-5` vs `6.05e-6` | `k_diff` 0.458 vs intended 0.25 — most of the margin gone | unclaimed |
+| 7 | **`approach_speed` = 273.2 m/s** vs a 100 m/s intercept | `options.py:940` — uses macro `dt`, not `substep_dt` | Real defect; **not** the thermal cause | unclaimed |
+| 8 | **No KE/IE assertion** | — | The validity of the whole time-scaling scheme is unmonitored | this workstream |
+| 9 | Stock volume +9.9% | `real_scale.py:47` | Caps absolute geometry agreement at ~0.80 IoU | A-7 |
+| 10 | "Thermal Detonation" is a misleading name | `strike_controller.py:1657` | Checks `T > 4000 K` **or** `T < 0 K` — fires on numerical collapse, not overheating | cosmetic |
 
 ---
 
@@ -548,6 +697,26 @@ Parameters that are weakly constrained and materially affect the answer:
 | `coup_softness` | 5e-4 | unquestioned | — |
 | `grid_cells_across_billet` | 7 | — | See D6 |
 
+### 9.4 Acceptance criteria — what "correct" looks like
+
+State these before running, so results are judged rather than rationalised.
+
+| # | Criterion | Threshold | Why that number |
+|---|---|---|---|
+| 1 | **N-invariance** of geometry | IoU spread across the N sweep **< 0.001** | 5× the 0.0002 noise floor; anything larger is systematic |
+| 2 | **N-invariance** of temperature history | peak ΔT spread **< 5%** | below the ±50 K emissivity uncertainty on the reference measurement |
+| 3 | **Energy closure** | `abs(in − out) / in` **< 1%** per hit | tight enough to catch a units error, loose enough for accumulation noise |
+| 4 | **KE/IE** | **< 5%**, reported every run | standard explicit-forming quasi-static criterion |
+| 5 | **Sequence completion**, coupled, hot | **17/17** | the current best is 14 with thermal *off*; 17 coupled is the real bar |
+| 6 | **Isothermal prediction** | coupled run under reheat BCs predicts ΔT within the sequence consistent with a controlled ~900–1000 °C experiment | §3.1 — this is the only thermal test the 17-hit data can support |
+| 7 | **Geometry, differential** | JC vs Arrhenius separable above 0.0002, or explicitly reported as indistinguishable | avoids re-running the "material is invisible" confusion |
+
+🚩 **Criterion 1 is the one that matters most.** It is self-contained, needs no experimental
+data, and a failure invalidates every force and material result produced under time scaling.
+
+⚠️ Criteria 1–4 are *necessary, not sufficient*. A scheme can be perfectly self-consistent and
+still wrong about the world — that is what §9.2 is for.
+
 ---
 
 ## 10. Open questions
@@ -562,6 +731,18 @@ Parameters that are weakly constrained and materially affect the answer:
    survey against our constraints (GPU kernel, Quadrants DSL, existing APIC momentum path).
 5. **Is the force-vs-press-speed non-convergence just the inertial budget?** §6.5 predicts it.
    D1a tests it.
+6. **How much do the two missing coupling terms matter?** (§2.5) Thermal expansion and
+   temperature-dependent elastic moduli are both absent. Both are harmless isothermally and
+   both become error sources under dynamic coupling. Quantify before trusting coupled results —
+   a cheap first estimate is an analytic bound (CTE × ΔT × billet dimension) against the
+   geometry metric's own noise floor.
+7. **Does `thermal_enabled = True` on `StrikeController` actually work?** (§2.4) The coupled
+   path is far less exercised than the frozen one. It should be smoke-tested before it carries
+   any conclusions.
+8. **What is the right FLIP/PIC treatment for a field that is BOTH advected and diffused?**
+   Particle temperature is advected with the material *and* diffuses. FMPM(k) addresses the
+   diffusion side; the advection side is why FLIP was chosen in the first place. The
+   replacement must serve both.
 
 ---
 
@@ -643,3 +824,69 @@ sets of numbers become incomparable.
 same instability on 2026-08-11. **Check what the sibling is doing before editing
 `base_mpm_solver.py` or `legacy_coupler.py`.** Diagnostics that need no source change —
 runtime-field pokes, read-only analysis — are always the safer path.
+
+---
+
+## 13. Maintaining this document
+
+This is a **living document**, and its value depends entirely on staying honest rather than
+staying tidy.
+
+**When a finding changes:**
+- **Never silently delete a refuted claim.** Move it to §5 with what killed it. The refuted list
+  is the most re-read part of this document precisely because it stops work being redone.
+- Findings in §4 must carry the measurement that established them. A finding without a
+  reproduction path belongs in §11, not §4.
+- When something moves from "believed" to "measured", say which, and by what.
+
+**When adding a number:** mark whether it was measured here, inherited, or estimated. §11 exists
+because a confident number with no provenance is how this project has repeatedly gone wrong —
+including a pushed commit resting on a figure nobody re-derived.
+
+**When a defect is fixed:** strike it in §7 with the commit that fixed it, rather than removing
+the row. The history of what was wrong is load-bearing context for the next person.
+
+**Ownership:** §1 lists what belongs to other workstreams. If a change to this document implies
+a change to `real_scale.py`, `forge_common`, or the induction path, that is a coordination
+event, not an edit.
+
+### Changelog
+
+Hashes via `git log --oneline -- docs/THERMOMECHANICAL_COUPLING_AND_SCALING.md`.
+
+| Date | Rev | Change |
+|---|---|---|
+| 2026-08-12 | 1 (`bbc1c1ca`) | Created. Findings, refutations, scaling theory, plan, provenance. |
+| 2026-08-12 | 2 | Added notation table; §2.4 the two thermal switches; §2.5 coupling-term inventory (thermal expansion and temperature-dependent moduli both absent); §4.7 force blindness; §4.8 card in-domain at 960 °C; §4.9 primary data tables; §9.4 acceptance criteria; open questions 6–8; §13 maintenance; §14 sources. Corrected: a paraphrase had been presented as a direct quotation; θ agreement with B-3 was overstated ("matching" → same order); ceiling percentage given false precision. |
+
+---
+
+## 14. Sources
+
+Marked by how they were used. **Anything below that a decision rests on should be read at
+source before relying on it** — §11 exists because that has not always happened here.
+
+### Numerical method
+
+| Source | Used for | Confidence |
+|---|---|---|
+| Nairn, *Coupling Transport Equations to Mechanics in the Material Point Method* | The FLIP-for-transport failure mode and the FMPM(k) fix (§4.1) | **Read in summary form only.** Load-bearing for Phase C — read in full before implementing. Full citation still to be added. |
+| Jiang, Schroeder, Teran et al., *An angular momentum conserving affine-particle-in-cell method* | APIC's filtering property vs FLIP null modes; context for why momentum already uses APIC | Read in summary |
+| Brackbill & Ruppel, *FLIP: a low-dissipation particle-in-cell method* (1986/1988) | Origin of the FLIP scheme in use | Reference only |
+| LS-DYNA thermal-mechanical metal-forming notes (Oswald; ANSYS) | Industrial practice: **implicit thermal solver alongside explicit mechanics**, thermal subcycling ~1:10, mass scaling validated against implicit | Read in summary |
+| Stampack / IPPT, explicit FE formulation for bulk metal forming | Fully-explicit coupled thermomechanical staggering (isothermal split), validated against implicit quasi-static (§6.6) | Read in summary |
+
+### Material and process
+
+| Source | Used for | Confidence |
+|---|---|---|
+| Song2020 | The Arrhenius/Zener-Hollomon 316L fit, 800–1000 °C (§4.8) | See `docs/316L_MECHANICAL_PROPERTIES.md` |
+| Ryan & McQueen (1989/1990) | Activation energy `Q = 454 kJ/mol`; the (C, m) pairs | 🚩 **Q verified; (C, m) pairs UNVERIFIED with no path** — thesis is a pure scan, no OCR. Functional form does not match the published equation. |
+| 06-15 T4 bulk mcap | Billet ~960 °C at blow #1; ~4.8 °C/s cooling; press force-limited 110.2 kN | Measured in session `12b6fa7e`; **not re-derived here** (§11) |
+| 07-17 mcap + Colton's emails | Coil geometry, heating curve, pixel scale 3.8791 px/mm, coil 250 kHz | B-3's workstream |
+| Colton (direct) | 17-hit sequence reheated to ~900–1000 °C between hits, fast hits | User-relayed, 2026-08-12 (§3.1) |
+
+⚠️ **Camera emissivity remains unresolved** and every absolute temperature carries it. The
+Optris "default for metals" preset pulls calibration from Optris servers at runtime and is not
+in Colton's repo — stop looking for it there. Estimated effect ±50 K, which changes no
+conclusion in this document but does bound the acceptance criterion in §9.4 row 2.
