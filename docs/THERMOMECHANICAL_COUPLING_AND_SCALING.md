@@ -559,6 +559,31 @@ be scored across hits 1 / 5 / 10 and reported as a curve, not a point.
 surviving set is selected for stability. Compare like with like, and state which arms were in
 the pool.
 
+#### 🚩 The decay curve has an alternative explanation, and it has NOT been ruled out
+
+Finding (a) above is stated as *"errors compound."* **That may be wrong.** A-7 measured that the
+real bar arrives with a localised **5.6 mm flat before hit 1**, while `init_stock()` builds a
+round cylinder. Sim and real therefore start from **different shapes at step zero**, and that
+mismatch would also produce a monotonically growing divergence — **indistinguishable from the
+curve measured here.**
+
+So the 0.77 → 0.57 decay is consistent with *either*:
+
+1. genuine accumulation of physics/numerical error, or
+2. a fixed initial-condition mismatch propagating and amplifying through the sequence.
+
+**Nothing here separates them.** Hit-to-hit *action* alignment is sound — `load_real_hits()`
+returns hits 1-1 and in order, verified — so the divergence is in the state, not the schedule.
+
+⇒ **Discriminating test:** run one arm initialised from the real `V_before` mesh and re-score
+the curve. If the slope flattens, the decay was mostly (2) and this workstream's error budget
+is dominated by the starting geometry rather than by the coupling. If it does not, (1) stands.
+**Do this before treating the decay slope as a physics validation metric (§9.2).**
+
+⚠️ Finding (b) — that *discriminating power grows* — is **not** affected by this ambiguity. It
+is a within-hit comparison between arms that share the same initial condition, so any common IC
+error cancels. **(b) is safe; (a) is provisional.**
+
 ---
 
 ## 5. Refuted claims — kept deliberately
