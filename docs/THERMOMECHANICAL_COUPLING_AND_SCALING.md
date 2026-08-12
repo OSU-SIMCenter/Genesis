@@ -114,13 +114,35 @@ E = 121.5 GPa (CONSTANT)   nu = 0.383 (CONSTANT)   rho = 7334 (CONSTANT)
 isothermal by construction, verified previously: a 74-step press starting at 1273.15 K ends at
 1273.15 K with std 0.0.
 
-Two consequences:
+### 🚨 There is currently NO code path for coupled forging
 
-- The thermal solve's *only* effect during a default press is to destabilise. This is why the
-  instability appears in runs whose thermal output is thrown away.
-- **Turning on real coupling means setting `thermal_enabled = True`,** which is a different and
-  much less exercised path than simply having `enable_thermal = True`. Do not assume the
-  coupled path is as well-tested as the frozen one.
+This is the single most important structural fact for this workstream, and it is stronger than
+"the coupled path is less tested."
+
+- `StrikeController.thermal_enabled` defaults to **False** (`:130`).
+- The only setter is `set_thermal_state()` (`:481`), whose docstring reads **"Toggles induction
+  heating"** and which logs `Thermal ACTIVATED (q_peak=...)`.
+- Its **only caller is `teleop_socket.py:472`** — the interactive teleop path.
+- The batch/adapter path never calls it. `genesis_forge_adapter.py:42` says so explicitly:
+  **"Cold (no-heating) runs for now: `thermal_enabled` defaults to False"**.
+- `options.py:199` independently confirms the state: the JC softening limitation is
+  *"inert today (thermal_enabled = False) but it is wrong the moment thermal is switched on."*
+
+⇒ **Every result in this document — §4.9 included — was produced with particle temperatures
+frozen and restored around every physics step.** The solver ran the thermal kernels, and the
+controller threw the answer away. That is why an instability shows up in runs whose thermal
+output is discarded: the divergence happens *within* a step, before the restore, and trips the
+diagnostic.
+
+⇒ **Phase C is necessary but not sufficient.** Fixing the gather makes particle temperature
+*usable*; it does not make it *used*. Reaching coupled forging also requires plumbing an
+enable path into the adapter/batch driver.
+
+⚠️ **And the switch may be overloaded.** Temperature evolution and the induction heat source
+appear to share one flag, so `thermal_enabled = True` may enable both — while forging validation
+wants evolution (die chill, radiation, plastic heating) *without* induction. The solver has a
+separate `_induction_active` gate, so they may in fact be separable. **Unverified — establish
+this before building on it** (§10 Q7).
 
 ⚠️ The restore at `:965` is guarded by `not physics_failed` — so a diverging run keeps its bad
 temperatures and trips the diagnostic rather than being silently rescued.
@@ -312,6 +334,30 @@ choice of the contact workstream's is correct and load-bearing — **do not "fix
 > 🚩 **Absolute IoU is not "percent correct."** A *perfect* sim scores **0.88** at vox 2.0.
 > Only differences carry meaning.
 
+🚩 **The 0.0002 noise floor rests on n = 2, and it is used everywhere in this document.**
+
+It comes from two accidental replicate pairs (`m0` vs `m0_seq` = 0.0003; `m1` vs `m1_seq` =
+0.0001). Those pairs differ only in `--n-hits`, which cannot affect the state at hit 1, so in a
+fully deterministic solver they should be **bit-identical**. They are not.
+
+The most likely explanation is **GPU non-determinism in the particle-to-grid scatter** —
+floating-point atomics accumulate in non-deterministic order, which is a known property of
+GPU MPM implementations rather than anything specific to this code. ⚠️ *Plausible but not
+verified here.*
+
+Two consequences:
+
+1. If it is atomics, it is a genuine **irreducible floor for a single run** — you cannot average
+   it away within one run, only across replicates.
+2. **n = 2 is far too thin for a number this load-bearing.** Every "X× the noise" claim in this
+   document inherits that weakness. **Phase A must establish it properly** — n ≥ 5 replicates of
+   one config, reporting the standard deviation, and separately confirming whether two runs of
+   an identical config are bit-identical (which would localise the source).
+
+Until then, treat "above the noise floor" claims as **provisional**, and prefer effects that are
+≥10× the quoted floor — which the FLIP result (0.02 IoU, ~100×) and the thermal-off result
+(0.0219, ~100×) comfortably are, and which the material-arm differences (0.0002, ~1×) are not.
+
 ### 4.6 The stock-volume ceiling (A-7's to fix; ours to account for)
 
 Across 14 real meshes, verified two independent ways — divergence theorem, and voxel-fill
@@ -439,6 +485,10 @@ Every one of these was believed, acted on, or written down. Several are the auth
 | Surface/contact CFL is the cause, θ = 36 | B-3, self-retracted | 1000× units error — `_particle_volume_scale` applied twice. B-3's corrected θ is 0.036; this session's independent full-cell estimate was 0.025 — same order, both far below the θ>2 divergence threshold. |
 | "JC is temperature-blind, therefore not mechanics" | both B sessions, from a stale comment in `material_arms.py` | True only of the *initial* temperature. Plastic work un-clamps `T_star` on the first blow. |
 | Temperature at the blow is not measured | inherited, long-standing | Measured ~960 °C from the 06-15 mcap (session `12b6fa7e`). |
+| "We use grid-only contact" | repeated across sessions | Actually **grid + CPIC** — `enable_CPIC=True` is passed explicitly at `options.py:683`, overriding Genesis's own default of `False`. All results in §4.9 are grid+CPIC with `enable_particle_contact=False`. |
+| The instability is the ~97× thermal-clock discrepancy | prior session | `thermal_time_scale_mode='mechanical'` was verified applied (S_T 237,014 → 1,773) and changed survival not at all. The 97× discrepancy is real and worth fixing (§6.2) — it is simply not the instability. |
+| The sequence failure is Arrhenius-specific | prior session | Johnson-Cook dies identically at hit 2 under the same conditions. |
+| "They complete 17 hits and we don't" | prior session | The contact sweep's own arms complete 1/2/2/2/3/3/5/5/7/7/7/7/8/10/13/17. Partial failure is normal; a non-17 run is not anomalous on its own. |
 | The clamp fix was "the biggest material error, 2.3×" | prior session | Not load-bearing at 960 °C — the clamp only bites above 1000 °C, which this process never reaches. |
 
 > **Two process lessons worth more than any single finding.**
@@ -595,6 +645,40 @@ Ranked by impact on the coupled-physics goal.
 
 ## 8. Implementation plan
 
+### 8.0 Dependency structure — what is actually blocked
+
+The phases below are **not** a linear chain, and reading them as one would idle this workstream
+behind another session. What is genuinely blocked is narrower than it looks:
+
+```
+A1-A5  Instrumentation ────────────┐        ours, no dependencies
+B      Scaling unification ────────┤        ours, no dependencies
+                                   ├──► D1a  mechanical N-invariance   ✅ RUNNABLE NOW
+                                   │
+A6     Coupled path (§2.4) ────────┤        ours, no dependencies -- but MISSING TODAY
+                                   │
+C      Gather fix (B-3's) ─────────┴──► D1b  coupled N-invariance      ⛔ needs A6 AND C
+                                        D2-D4, §9.2 thermal tests      ⛔ needs A6 AND C
+
+E      External validation ──► needs the 06-15 mcap retrieved (independent of A6/C)
+```
+
+**Only the *coupled* validation is blocked on B-3** — and even that needs **A6** first, which is
+ours. Phases A and B and the mechanical half of the headline test depend on nothing outside this
+workstream.
+
+🚨 **A6 is the quiet blocker.** There is no code path today that runs a forging press with
+evolving temperature (§2.4). Fixing the gather makes particle temperature *usable*; A6 is what
+makes it *used*. If only one of the two lands, coupled forging still does not run.
+
+⇒ **Do A + B + D1a first.** If D1a fails — if geometry drifts with N — that is a finding large
+enough to reorder everything, and it costs nothing to learn early. If it passes, the scaling
+foundation is sound and the coupled work has somewhere solid to land.
+
+⚠️ Phase B's `S_T = N` change is the one item that reaches outside this workstream: the
+induction calibration is tuned against the current default. Coordinate before landing it, or
+land it behind a flag with the old default preserved.
+
 ### Phase A — Instrumentation, before touching physics
 
 Nothing here depends on the gather fix, and without it no refactor can be evaluated.
@@ -606,6 +690,25 @@ Nothing here depends on the gather fix, and without it no refactor can be evalua
   its 16 passing mirror tests.
 - **A3. Temperature-history telemetry.** Per-hit mean/min/max/std, written to the run summary,
   so thermal behaviour is observable rather than inferred from a crash code.
+- **A5. Establish the noise floor properly.** n ≥ 5 replicates of one config; report σ. Also
+  determine whether two identical runs are **bit-identical** — if they are not, the source is
+  almost certainly non-deterministic GPU atomics, and that sets an irreducible per-run floor
+  every other comparison must clear. **The current 0.0002 rests on n = 2** (§4.5) and is quoted
+  throughout this document.
+- **A6. Build the coupled path, then smoke-test it.** 🚨 Per §2.4 there is currently **no
+  non-interactive way to run a forging press with evolving temperature** — the adapter never
+  enables it and the only setter lives in the teleop socket. This is a prerequisite for *all*
+  coupled work, it is **ours**, and it is independent of the gather fix.
+  1. Determine whether temperature evolution and induction heating are separable
+     (`thermal_enabled` vs the solver's `_induction_active`), since forging wants the former
+     without the latter.
+  2. Plumb an explicit enable through the adapter / batch driver, defaulting **off** so nothing
+     existing changes behaviour.
+  3. Smoke-test: hot billet, thermal live, confirm temperature actually moves and that die chill
+     appears at the contact face.
+  4. Add it to the runner's read-back verification, so a run that *requested* coupling and
+     silently got the frozen path **aborts** rather than reporting a result. This is the same
+     failure class as the four-identical-arms incident (§5).
 - **A4. Promote `~/material_arms.py` into a committed sweep harness.** It already carries
   `--flip-frac`, `--billet-k`, `--approach-speed`, `--cells`, `--thermal-mode`, `--no-thermal`
   and hard read-back verification. Add `--N`, `--S_T`, structured output, and **keep the
@@ -648,13 +751,40 @@ correctness directly rather than agreement with a noisy measurement.
 
 **D1 — N-invariance. The headline test.**
 If S_T = N and `rate = ε̇_sim/N` are correct, **the physical answer must not depend on N.**
-Sweep N ∈ {400, 900, 1773, 3500}; geometry and temperature history must collapse onto one
-curve. Any systematic drift means the scaling is wrong.
+Geometry and temperature history must collapse onto one curve. Any systematic drift means the
+scaling is wrong.
 
 - **D1a — mechanical only (thermal off): runnable immediately.** Validates the mechanical time
   scaling independently of the gather. If geometry drifts with N, every force and material
   result to date is contaminated.
 - **D1b — fully coupled:** after Phase C.
+
+**Sweep design.** KE/IE scales as **N²**, so the sweep deliberately brackets the point where
+quasi-static validity is expected to break. Runtime per run ≈ fixed scene build (~180 s, ~93%
+of a short run) + stepping ∝ 1/N.
+
+| N | vs default | predicted KE/IE | criterion 4 | est. stepping | est. total | role |
+|---|---|---|---|---|---|---|
+| 400 | 0.23× | ~0.2% | pass | ~215 s | ~6.5 min | most physical; reference |
+| 900 | 0.51× | ~1.0% | pass | ~95 s | ~4.6 min | interior point |
+| **1,773** | **1.0×** | **~3.8%** | pass (marginal) | ~48 s | ~3.8 min | **the shipped default** |
+| 2,500 | 1.41× | ~7.6% | **fail** | ~34 s | ~3.5 min | just past the limit |
+| 3,500 | 1.97× | ~14.8% | **fail clearly** | ~24 s | ~3.4 min | bracket / expected failure |
+
+**≈22 min of GPU for the whole sweep.** The two high-N points are *expected to fail* criterion 4
+— that is the point of including them. A sweep that only samples the valid range cannot tell you
+where the valid range ends.
+
+🎯 **The sharpest question this sweep answers is not "is the scaling right" but "is our stated
+criterion right."** Compare where geometry *starts drifting* against where KE/IE *crosses 5%*:
+
+- drift begins at the same N → the 5% criterion is validated, use it
+- drift begins **earlier** → 5% is too loose; the real ceiling on N is lower than we think, and
+  the shipped default at 3.8% may already be outside it
+- drift begins **later** → 5% is conservative; N could be raised, buying runtime
+
+⚠️ Also record **wall-clock and step count per run**. If low-N runs prove affordable, the
+cheapest fix for the whole inertial problem is simply to stop pushing N so hard.
 
 **D2 — S_T sweep at fixed N.** Should show a clear optimum at S_T = N. The current default sits
 134× away from it.
@@ -736,13 +866,33 @@ still wrong about the world — that is what §9.2 is for.
    both become error sources under dynamic coupling. Quantify before trusting coupled results —
    a cheap first estimate is an analytic bound (CTE × ΔT × billet dimension) against the
    geometry metric's own noise floor.
-7. **Does `thermal_enabled = True` on `StrikeController` actually work?** (§2.4) The coupled
-   path is far less exercised than the frozen one. It should be smoke-tested before it carries
-   any conclusions.
+7. 🚨 **Are temperature evolution and induction heating separable?** (§2.4) They appear to share
+   `StrikeController.thermal_enabled`, whose setter is documented as toggling induction heating.
+   Forging validation wants evolution — die chill, radiation, plastic heating — **without** an
+   induction source in the coil. The solver has its own `_induction_active` gate, so they may be
+   separable in practice. **This gates all of A6 and therefore all coupled work.** Establish it
+   first.
 8. **What is the right FLIP/PIC treatment for a field that is BOTH advected and diffused?**
    Particle temperature is advected with the material *and* diffuses. FMPM(k) addresses the
    diffusion side; the advection side is why FLIP was chosen in the first place. The
    replacement must serve both.
+
+### 10.1 Risks — what would invalidate this plan
+
+Stated in advance so a bad result is recognised as a result rather than absorbed as noise.
+
+| # | Risk | Consequence if it happens | Fallback |
+|---|---|---|---|
+| 1 | **D1a fails — geometry drifts with N** | Time scaling as implemented is invalid. Every force and material result produced under it is contaminated, including the ones in §4.9. | Lower N until invariant and pay the runtime; the sweep already measures that cost. Check whether drift tracks KE/IE — if not, the cause is not inertial and needs separate diagnosis. |
+| 2 | **FMPM(k) doesn't fit the GPU kernel / Quadrants DSL** | k≥2 needs repeated grid↔particle mappings per step — k extra passes in a hot kernel. | APIC-style affine transfer for temperature (consistent with the momentum path already there), or damped FLIP with explicit smoothing. Both are weaker; document which was chosen and why. |
+| 3 | **`S_T = N` is rejected** because the induction recalibration is too costly | The thermal clock stays 134× off and no coupled result can be physical. | Make the S_T mode **per-scenario** rather than global — forging uses `N`, induction keeps its calibrated value — and reconcile when induction is re-fitted. |
+| 4 | **The stock-geometry fix never lands** (A-7) | Absolute geometry stays capped near 0.80; absolute agreement cannot improve. | Rely on differentials, which §4.6 already prescribes. Does not block this workstream. |
+| 5 | **The 06-15 mcap can't be retrieved** | No thermal ground truth at all. The §3.1 isothermal-prediction test becomes the *only* thermal validation. | Thin but not nothing — combined with §9.1's self-consistency tests it still constrains the implementation. State the limitation loudly in any result. |
+| 6 | **Coupled runs remain unstable after the gather fix** | Entirely possible: §4.1 establishes that the gather *controls* survival, **not the mechanism** (§11). | Back to diagnosis. The temperature sweep and the runtime-field poke technique are both cheap and reusable. |
+| 7 | **The missing coupling terms dominate** (§2.5) | CTE and E(T) effects (~1.3% strain over 700 K) could exceed the effects being chased, biasing every coupled geometry result. | Bound them analytically first — CTE × ΔT × dimension against the metric's noise floor. Cheap, and it decides whether they must be implemented before Phase D. |
+
+🚩 **Risk 1 and Risk 6 are the two that would genuinely reset the plan.** Both are cheap to test
+early, which is the argument for the ordering in §8.0.
 
 ---
 
@@ -857,6 +1007,7 @@ Hashes via `git log --oneline -- docs/THERMOMECHANICAL_COUPLING_AND_SCALING.md`.
 | Date | Rev | Change |
 |---|---|---|
 | 2026-08-12 | 1 (`bbc1c1ca`) | Created. Findings, refutations, scaling theory, plan, provenance. |
+| 2026-08-12 | 3 | 🚨 **§2.4: established that there is currently NO code path for coupled forging** — `thermal_enabled` defaults False, its only setter is in the teleop socket, and the adapter documents "cold (no-heating) runs for now". Every result in this document was produced with temperature frozen. Added A6 (build the coupled path) as a prerequisite ours, not B-3's. Added §8.0 dependency structure; D1 sweep design with predicted KE/IE and cost, framed as validating the *criterion* not just the scaling; §10.1 risk register; the n=2 caveat on the 0.0002 noise floor plus A5 to establish it properly; 4 more refuted claims (grid-only contact, the 97× clock, Arrhenius-specific failure, "they complete 17 hits"). |
 | 2026-08-12 | 2 | Added notation table; §2.4 the two thermal switches; §2.5 coupling-term inventory (thermal expansion and temperature-dependent moduli both absent); §4.7 force blindness; §4.8 card in-domain at 960 °C; §4.9 primary data tables; §9.4 acceptance criteria; open questions 6–8; §13 maintenance; §14 sources. Corrected: a paraphrase had been presented as a direct quotation; θ agreement with B-3 was overstated ("matching" → same order); ceiling percentage given false precision. |
 
 ---
