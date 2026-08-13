@@ -613,7 +613,50 @@ choice of the contact workstream's is correct and load-bearing — **do not "fix
 > 🚩 **Absolute IoU is not "percent correct."** A *perfect* sim scores **0.88** at vox 2.0.
 > Only differences carry meaning.
 
-🚩 **The 0.0002 noise floor rests on n = 2, and it is used everywhere in this document.**
+### ✅ A5 — the noise floor, measured at n = 5 (2026-08-13)
+
+Five replicates of one config (`m1_jc_1273`, res 7, thermal on), each in its **own process**, to
+match how the original n = 2 pair arose:
+
+| replicate | IoU@2.0 | dev_mean | dev_p95 | dev_max |
+|---|---|---|---|---|
+| rep1 | 0.7641 | 0.415 | 0.955 | 1.812 |
+| rep2 | 0.7642 | 0.415 | 0.955 | 1.812 |
+| rep3 | 0.7639 | 0.414 | 0.955 | 1.812 |
+| rep4 | 0.7645 | 0.415 | 0.955 | 1.812 |
+| rep5 | 0.7644 | 0.415 | 0.955 | 1.812 |
+
+| | |
+|---|---|
+| mean | 0.76422 |
+| **σ** | **0.00024** |
+| **full range** | **0.00060** |
+| 2σ / 3σ | 0.00048 / 0.00072 |
+
+**The inherited 0.0002 was right in magnitude — it was a ~1σ difference — but it has been used
+as a *detection threshold*, and 1σ is not one.** A 1σ bar calls roughly a third of pure-noise
+comparisons significant. The range at n = 5 is **0.0006, three times the quoted figure.**
+
+Re-reading the existing results against σ = 0.00024:
+
+| comparison | Δ IoU | in σ | verdict |
+|---|---|---|---|
+| JC vs clamped-Arrhenius | 0.0002 | **0.8σ** | indistinguishable — **conclusion strengthened** |
+| `m3_arr_raised` | 0.0038 | 15.9σ | real |
+| thermal solver OFF | 0.0219 | 91.7σ | real |
+
+⇒ Nothing previously called "real" becomes noise, and the one previously called "exactly noise"
+is confirmed. What changes is the **threshold** — see §9.4, criterion 7.
+
+🚩 **`dev_p95` and `dev_max` were identical across all five runs** at printed precision, and
+`dev_mean` varied by 0.001 mm. On this evidence the deviation metrics are *more* reproducible
+than IoU, which is worth knowing before choosing a discriminator — though 3-decimal output floors
+what can be claimed.
+
+⚠️ Still n = 5 at **one** config and **one** hit. Non-determinism could scale with particle count,
+hit number, or instability proximity; a late-hit replicate set would be the natural follow-up.
+
+**Superseded — the original n = 2 reasoning, kept because its diagnosis was right:**
 
 It comes from two accidental replicate pairs (`m0` vs `m0_seq` = 0.0003; `m1` vs `m1_seq` =
 0.0001). Those pairs differ only in `--n-hits`, which cannot affect the state at hit 1, so in a
@@ -628,8 +671,9 @@ Two consequences:
 
 1. If it is atomics, it is a genuine **irreducible floor for a single run** — you cannot average
    it away within one run, only across replicates.
-2. **n = 2 is far too thin for a number this load-bearing.** Every "X× the noise" claim in this
-   document inherits that weakness. **Phase A must establish it properly** — n ≥ 5 replicates of
+2. ~~**n = 2 is far too thin for a number this load-bearing.**~~ ✅ **Done above at n = 5**; the
+   estimate held at ~1σ and the atomics hypothesis is supported (the five runs are close but not
+   bit-identical). The original text follows — n ≥ 5 replicates of
    one config, reporting the standard deviation, and separately confirming whether two runs of
    an identical config are bit-identical (which would localise the source).
 
@@ -1229,7 +1273,9 @@ Nothing here depends on the gather fix, and without it no refactor can be evalua
   its 16 passing mirror tests.
 - **A3. Temperature-history telemetry.** Per-hit mean/min/max/std, written to the run summary,
   so thermal behaviour is observable rather than inferred from a crash code.
-- **A5. Establish the noise floor properly.** n ≥ 5 replicates of one config; report σ. Also
+- **A5. ✅ DONE 2026-08-13** (§4.5): σ = 0.00024, range 0.00060, n = 5 in separate processes.
+  Criterion 7 raised 0.0002 → 0.0007. **Remaining:** replicate at a late hit, where
+  non-determinism may scale. Original scope follows — n ≥ 5 replicates of one config; report σ. Also
   determine whether two identical runs are **bit-identical** — if they are not, the source is
   almost certainly non-deterministic GPU atomics, and that sets an irreducible per-run floor
   every other comparison must clear. **The current 0.0002 rests on n = 2** (§4.5) and is quoted
@@ -1389,13 +1435,13 @@ State these before running, so results are judged rather than rationalised.
 
 | # | Criterion | Threshold | Why that number |
 |---|---|---|---|
-| 1 | **N-invariance** of geometry | IoU spread across the N sweep **< 0.001** | 5× the 0.0002 noise floor; anything larger is systematic |
+| 1 | **N-invariance** of geometry | IoU spread across the N sweep **< 0.001** | **4.2σ** at the measured σ = 0.00024 (§4.5). Threshold unchanged; the old "5× the 0.0002 floor" framing was arithmetic on a 1σ figure |
 | 2 | **N-invariance** of temperature history | peak ΔT spread **< 5%** | below the ±50 K emissivity uncertainty on the reference measurement |
 | 3 | **Energy closure** | `abs(in − out) / in` **< 1%** per hit | tight enough to catch a units error, loose enough for accumulation noise |
 | 4 | **KE/IE** | **< 5%**, reported every run | standard explicit-forming quasi-static criterion |
 | 5 | **Sequence completion**, coupled, hot | **17/17** | the current best is 14 with thermal *off*; 17 coupled is the real bar |
 | 6 | **Isothermal prediction** | coupled run under reheat BCs predicts ΔT within the sequence consistent with a controlled ~900–1000 °C experiment | §3.1 — this is the only thermal test the 17-hit data can support |
-| 7 | **Geometry, differential** | JC vs Arrhenius separable above 0.0002, or explicitly reported as indistinguishable | avoids re-running the "material is invisible" confusion |
+| 7 | **Geometry, differential** | JC vs Arrhenius separable above **0.0007 (3σ)**, or explicitly reported as indistinguishable | ⚠️ **raised from 0.0002**, which was 1σ and would call ~1 in 3 pure-noise comparisons significant (§4.5) |
 
 🚩 **Criterion 1 is the one that matters most.** It is self-contained, needs no experimental
 data, and a failure invalidates every force and material result produced under time scaling.
