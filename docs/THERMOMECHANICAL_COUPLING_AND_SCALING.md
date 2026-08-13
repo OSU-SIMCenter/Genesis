@@ -360,6 +360,59 @@ signal a coupled run must reproduce over a ~0.5–1.7 s contact.
 generalised between. The 17-hit set was reheated to ~900–1000 °C; the 06-15 session runs
 substantially cooler. They are experiments at *different temperatures*.
 
+### 3.5 🎯 The die-closure shortfall is a FORCE LIMIT, not a closure cap
+
+Workstream A reports that the sim lands on its commanded gap while the real press falls ~2.4 mm
+short, and proposes this as a third explanation for the multi-hit decay alongside the initial
+condition. They model it with `forge_common/force_correction.py`, which takes
+`min(MEAN_ACTUAL_CLOSURE_MM = 7.94, commanded)` on every hit — a cap fitted to the 17-hit
+sequence, where *every* hit fell short.
+
+Aligning all 47 06-15 blows to their `u_taken` commands (`align_blows_mcap.py`) says the
+mechanism is conditional, not a cap:
+
+| | n | commanded gap, median | peak force, median |
+|---|---|---|---|
+| **reached command** | **38** | 25.57 mm | 76.2 kN |
+| **fell short** | **9** | 17.40 mm | **110.1 kN** |
+
+**38 of 47 blows land within 0.13 mm of their commanded gap.** The 9 that miss are *exactly* the
+9 that saturate the press's control stop, and the separation is clean with no overlap:
+
+| | |
+|---|---|
+| max peak among blows that reached | **105.9 kN** |
+| min peak among blows that fell short | **110.1 kN** |
+
+Depth raises the odds but does not decide it — commanded gap ≤ 20 mm is force-limited 39% of the
+time, > 20 mm only 7%. **Force is what binds.**
+
+⇒ **A fixed closure cap is the wrong model.** Applied to this session it would under-close 33 of
+the 38 blows that the real press completed. It survives on the 17-hit sequence only because that
+sequence commands deep closures (8.3–17.7 mm) where the limit binds every time — it is a fit to
+the saturated regime, not the mechanism.
+
+🎯 **And the sim already has the knob, set wrong.** `options.py:785` gives the press
+`max_force = 200000.0` N — **200 kN, nearly twice the real machine's 110.2 kN control stop.** The
+sim therefore *cannot* be force-limited where the real press is, which is precisely why it always
+reaches its command. A limit set from the measurement would reproduce the shortfall conditionally
+and automatically, with no fitted cap.
+
+🚨 **This would make die closure material-sensitive, which changes what §4.7 means.** §4.7
+established that peak force is nearly blind to the material (10% flow stress → 1.1% force). That
+is true *while the press is position-controlled and never saturates*. At a real force limit the
+relationship inverts: a stronger billet saturates sooner and the press stops further short, so
+flow stress converts into **position** error and therefore into accumulated geometry. This is a
+route by which material properties reach the geometry metric that nobody in this project has
+considered, and it only exists once the limit is modelled.
+
+> ⚠️ **Three things to check before anyone changes `max_force`.** (1) This is the 06-15 session;
+> the 110.2 kN stop is a machine/control property so it *should* carry to the 17-hit sequence,
+> but that is an assumption here, not a measurement. (2) `max_force` is an MJCF actuator limit —
+> its equivalence to the real control stop needs confirming, not assuming. (3) It is shared
+> config that changes behaviour for every consumer of this branch. **Coordinate; do not edit
+> unilaterally.**
+
 ---
 
 ## 4. Established findings
