@@ -721,6 +721,48 @@ Compounding this, the real press is **force-limited at 110.2 kN**, so measured f
 and cannot discriminate above that ceiling. Geometry is the only metric that sees the material —
 which is why §4.5's characterisation of it is load-bearing.
 
+### 4.7.1 🚨 "Peak force" in this sim is a numerical artifact, not the physical load
+
+**Measured 2026-08-13.** The per-step force trace on hit 1 (JC, 1273.15 K, res 7, grid contact),
+logged every third step:
+
+| steps | force L / R | reading |
+|---|---|---|
+| 12–18 | rise to **89.2 / 88.1 kN** | almost certainly the **approach impact** — `approach_speed` is 273 m/s (§4.4) |
+| 21–27 | decay to 50.1 / 49.5 kN | |
+| 30–39 | **plateau ≈ 57 kN**, dies agreeing to **0.3%** | the physically meaningful part |
+| 42–48 | **76.6/91.4 → 155.2/141.6 → 38.1/192.5 kN** | terminal transient; die asymmetry blows out to **5×** |
+
+**This is deterministic, not noise.** Two independent runs reproduce it to 0.06%
+(192,467 vs 192,583 N at the peak), so the shape is a property of the model.
+
+Against the real blow #1 — a **monotonic** rise over 0.505 s to a single peak of **66.5 kN** —
+three things follow:
+
+1. **The shape is wrong.** Real is monotonic-to-peak; sim is impact → decay → plateau → terminal
+   spike. A scalar "peak force" comparison between the two is comparing a physical maximum
+   against a numerical one.
+2. **The sustained force is actually reasonable**: the ~57 kN plateau is **0.86×** the real
+   66.5 kN peak. The 1.34×–2.9× over-prediction quoted from peak samples is dominated by the
+   terminal transient, not by the constitutive response.
+3. ⇒ **Every force calibration in this project's history is suspect on this basis alone** —
+   2.56×, ~1.8×, the retracted 1.34× — independently of the contact-mode confound already known.
+   They were all peak-based, and all on blow #1.
+
+⇒ **A force stop cannot be calibrated against this trace** (§3.5.1). The stop is
+`(force_L > max_force) | (force_R > max_force)` — an **OR over individual dies, evaluated per
+step**, so it keys on the single noisiest quantity available. With a physical plateau near 57 kN
+and a terminal spike near 192 kN, any threshold in between fires on the artifact at the end of
+every press, regardless of material. A threshold at the real 110.2 kN sits squarely in that gap.
+
+**What to do instead.** Define the comparison basis before comparing: sustained force at matched
+reduction, not peak. Both defects behind the artifact are already known and separately actionable
+— the 273 m/s `approach_speed` against a 100 m/s intercept (§4.4), and whatever produces the
+PRESSING→HOLDING transient, which has not been diagnosed.
+
+> 🚩 The 5× die asymmetry at step 48 is unexplained and is recorded, not rationalised. It appears
+> only in the terminal transient; through the plateau the two dies agree to 0.3%.
+
 ### 4.8 The material card is in-domain at the measured temperature
 
 The billet was **measured at ~960 °C at blow #1** (06-15 mcap; session `12b6fa7e` — see §11 for
