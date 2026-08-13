@@ -222,6 +222,7 @@ distro does not carry a second 8.58 GB. `forge-data/WHERE-IS-THE-DATA.md` record
 "Local Windows staging" section; pCloud remains the archive of record.
 
 ⇒ **No validation in this document is blocked on a retrieval.** Phase E is runnable now.
+⇒ And the first thing it unblocked has already been done — see §3.3.
 
 > 🚩 **Keep the failure, not just the correction.** The earlier check searched only the WSL
 > filesystem, concluded "not local", and reported it as blocked *on the user* — who had already
@@ -231,6 +232,63 @@ distro does not carry a second 8.58 GB. `forge-data/WHERE-IS-THE-DATA.md` record
 > ⚠️ Do **not** let a Windows-side tool write into `\\wsl.localhost\` — the 9P bridge zero-pads
 > to 4096-byte boundaries and corrupts silently. Stage on Windows, verify with
 > `rclone check --checksum`, copy in from `/mnt/c` *inside* WSL, re-hash.
+
+---
+
+### 3.3 The ~960 °C figure — re-derived independently, 2026-08-13
+
+The blow-#1 billet temperature had been carried on trust since session `12b6fa7e`
+(§11), with a pushed commit resting on it. It has now been re-derived from the raw
+mcap with an extraction written against `agforge/mcap_thermal.py` rather than
+against the original analysis.
+
+A re-run of the *same* method would have been a mirror test — same systematic
+error, guaranteed agreement, no information. This project has already been caught
+by exactly that (16 thermal tests passed because they re-implemented the same
+units bug). So the checks were chosen to be independent of the original method.
+
+**(a) Structural.** `20260615_180456_T4_bulk.mcap`: 2,378.0 s, 1,683 chunks, 5
+channels — `hmr/sensors/thermalcam`, `hmr/press/state`, `hmr/torm/state`,
+`hmr/ard/state`, `forge/deform/u_taken`. Thermal frames are 288×382 as documented.
+
+**(b) Value.** Workpiece isolated as the largest connected region above
+max(700 °C, p85), in Celsius:
+
+| t [s] | this session p50 | session `12b6fa7e` p50 | Δ |
+|---|---|---|---|
+| 297.0 | 901.1 | 904.6 | −3.5 |
+| ~298.4 | 964.3 | 966.9 (t=298.0) | −2.6 |
+| ~299.8 | 957.1 | 960.9 (t=299.0) | −3.8 |
+| ~302.6 | 943.1 | 945.9 (t=302.0) | −2.8 |
+| ~309.6 | 911.3 | 909.1 (t=310.0) | +2.2 |
+
+Sample times differ because this pass takes one frame per chunk. **The figure
+reproduces within ~4 °C.** Cooling rate over the same span: **4.73 °C/s** here vs
+**~4.8 °C/s** originally.
+
+**(c) Method sensitivity — the genuinely new result.** The original flagged
+"thresholding, not segmentation" as a caveat. Varying the isolation rule across
+four methods (largest connected blob; bare threshold with no connectivity; a fixed
+>900 °C cut; the hottest 10% of the frame with no threshold at all) moves the
+median by **3.8–16.2 °C** once the bar is in frame — well inside the **±50 K**
+emissivity band. ⇒ The caveat is real but **not** the dominant uncertainty; the
+original's own risk assessment was right.
+
+**(d) The structural claim, which is the one that matters.** The value is only
+meaningful if the camera views the press rather than the induction coil — and that
+claim already flipped once, in the opposite direction. Rendered frames settle it:
+at t=295.6 the frame shows machine structure and **no billet**; by t=298.4 a large
+hot bar fills the frame; it then cools monotonically. A coil-mounted view cannot
+produce a workpiece that arrives and departs. **Confirmed.**
+
+⇒ **§11 no longer carries this as unverified.** What it still carries is
+emissivity, which no amount of re-extraction can fix — it is a property of the
+camera's configuration, not of the analysis.
+
+> 🚩 The blow-#1 timing (~299 s) is still inherited from the press-channel decode.
+> It is corroborated here only in that the bar demonstrably enters frame at ~296 s
+> and is hottest at ~298 s, which is consistent with, but not proof of, that
+> alignment.
 
 ---
 
@@ -875,10 +933,14 @@ uses. **B-3's component.** The clean split is *they implement, we measure*.
 Validate force and cooling rate against the 06-15 mcap, which is **already local** (§3.2).
 Nothing blocks this phase.
 
-**First target is not force — it is the ~960 °C blow-#1 figure.** §4.7's "the card is in domain"
-argument, §9.4's acceptance criterion and one pushed commit (`cb3765a3`) all rest on a number
-this project has carried on trust across three sessions without re-deriving it (§11). The data
-to check it has been sitting on disk the whole time.
+~~First target is the ~960 °C blow-#1 figure.~~ ✅ **Done 2026-08-13** (§3.3) — it reproduces,
+so §4.7's "the card is in domain" argument and the commit resting on it stand.
+
+**Next targets, in order.** (1) Per-blow temperature for all 47 blows — the within-bout signal
+that separates temperature from die width, and the input a coupled cooling model would be
+validated against. (2) Peak force per blow, remembering the press is force-limited at 110.2 kN
+and that force is nearly blind to material. The 110.2 kN limit is itself still `12b6fa7e`'s
+number and has not been re-derived.
 
 ---
 
@@ -956,7 +1018,7 @@ no longer an acceptable result format in this workstream.**
 | **Error accumulation rate** | 17-hit meshes | slope of IoU and `dev_max` vs hit number | New in §4.10: ~0.77 → 0.57 and `dev_max` ×10 across 10 hits. A coupled model that tracks reality better should flatten this slope — arguably the single most sensitive available test |
 | **Isothermal prediction** | 17-hit (no temp data) | predicted ΔT over the sequence | Coupled run *should* predict near-isothermal given reheat BCs. Deviation = missing physics or wrong BCs |
 | Cooling rate | 06-15 mcap | ~4.8 °C/s through the blow | **Data local** (§3.2) — runnable now |
-| Billet temperature | 06-15 mcap | ~960 °C at blow #1, per-blow for all 47 | **Data local** (§3.2) — and this is the inherited figure §11 flags, so re-deriving it is the highest-value use of the dataset |
+| Billet temperature | 06-15 mcap | ~960 °C at blow #1, per-blow for all 47 | ✅ **Blow #1 re-derived independently** (§3.3): 964 °C, within ~4 °C of the inherited value. Per-blow extraction for all 47 is still open |
 | Force | 06-15 mcap | peak force per blow | ⚠️ press is **force-limited at 110.2 kN**, and force is nearly **blind to material** (10% flow-stress change → 1.1% force; elastic `nu` change → 10%) |
 
 ### 9.3 Sensitivity matrix
@@ -997,11 +1059,12 @@ still wrong about the world — that is what §9.2 is for.
 
 ## 10. Open questions
 
-1. ~~**Should the 06-15 mcap be retrieved now?**~~ **Resolved 2026-08-13 — it was already
-   local** (§3.2), and had been for three weeks. The live question it becomes: **does the
-   inherited ~960 °C blow-#1 figure survive independent re-derivation?** It is the only path to
-   validating thermal coupling against reality, it has been owed across three sessions, and a
-   pushed commit rests on it (§11).
+1. ~~**Should the 06-15 mcap be retrieved now?**~~ / ~~**does the ~960 °C figure survive
+   re-derivation?**~~ **Both resolved 2026-08-13.** The file was already local (§3.2) and the
+   figure reproduces within ~4 °C from an independently written extraction (§3.3). What remains
+   open is narrower and more useful: **extract per-blow temperature for all 47 blows.** That is
+   the within-bout signal that separates temperature from die width, and it is now a matter of
+   running the extraction rather than of obtaining anything.
 2. **What boundary conditions reproduce the reheat?** The 17-hit bar was reheated to
    ~900–1000 °C between hits. Modelling that explicitly (vs. simply re-initialising temperature
    per hit) determines whether the isothermal-prediction test is meaningful.
@@ -1036,7 +1099,7 @@ Stated in advance so a bad result is recognised as a result rather than absorbed
 | 2 | **FMPM(k) doesn't fit the GPU kernel / Quadrants DSL** | k≥2 needs repeated grid↔particle mappings per step — k extra passes in a hot kernel. | APIC-style affine transfer for temperature (consistent with the momentum path already there), or damped FLIP with explicit smoothing. Both are weaker; document which was chosen and why. |
 | 3 | **`S_T = N` is rejected** because the induction recalibration is too costly | The thermal clock stays 134× off and no coupled result can be physical. | Make the S_T mode **per-scenario** rather than global — forging uses `N`, induction keeps its calibrated value — and reconcile when induction is re-fitted. |
 | 4 | **The stock-geometry fix never lands** (A-7) | Absolute geometry stays capped near 0.80; absolute agreement cannot improve. | Rely on differentials, which §4.6 already prescribes. Does not block this workstream. |
-| 5 | ~~**The 06-15 mcap can't be retrieved**~~ — **void, it is local** (§3.2). The live risk is that **decoding it does not reproduce ~960 °C** | The inherited figure is wrong, and §4.7's "the card is in domain" conclusion moves with it — including a pushed commit. | Re-derive before relying further (phase E). If the true value falls outside Song's 800–1000 °C fit, the Arrhenius card is extrapolating and §4.8 needs revisiting. |
+| 5 | ~~**The 06-15 mcap can't be retrieved**~~ / ~~**decoding does not reproduce ~960 °C**~~ — **both resolved** (§3.2, §3.3) | — | The residual exposure is **emissivity**, not extraction: ±50 K systematic that no re-analysis can remove. At 964 ± 50 °C the card stays inside Song's 800–1000 °C fit at the top of the band, so §4.7's conclusion holds across the whole interval. |
 | 6 | **Coupled runs remain unstable after the gather fix** | Entirely possible: §4.1 establishes that the gather *controls* survival, **not the mechanism** (§11). | Back to diagnosis. The temperature sweep and the runtime-field poke technique are both cheap and reusable. |
 | 7 | **The missing coupling terms dominate** (§2.5) | CTE and E(T) effects (~1.3% strain over 700 K) could exceed the effects being chased, biasing every coupled geometry result. | Bound them analytically first — CTE × ΔT × dimension against the metric's noise floor. Cheap, and it decides whether they must be implemented before Phase D. |
 
@@ -1050,12 +1113,12 @@ early, which is the argument for the ordering in §8.0.
 Statements here carry different weights. These specifically went in **without independent
 verification**:
 
-- **The ~960 °C billet measurement** is inherited from session `12b6fa7e`. Good provenance —
-  per-frame table, documented isolation method, its own caveats (thresholding not segmentation;
-  emissivity unknown ⇒ ±50 K) — but **not re-derived**, and a pushed commit (`cb3765a3`) rests
-  on it. 🚩 Two consecutive handoffs asked for this to be verified first and it still has not
-  been. **There is no data barrier** — the source mcap is local (§3.2); only the doing is
-  missing.
+- ~~**The ~960 °C billet measurement** is inherited and not re-derived.~~ ✅ **Re-derived
+  2026-08-13** — reproduces within ~4 °C, cooling rate 4.73 vs 4.8 °C/s, and the press-not-coil
+  camera view is confirmed by rendered frames (§3.3). The isolation-method caveat is bounded at
+  3.8–16.2 °C, inside the emissivity band. **What remains** is emissivity itself: ±50 K
+  systematic, a property of the camera's configuration that no re-extraction can remove, and the
+  blow-#1 timing (~299 s), still inherited from the press-channel decode.
 - **KE/IE ≈ 3.8%** is a back-of-envelope from die speed, not a measurement of the velocity
   field. Phase A1 exists to replace it.
 - **The FLIP *mechanism* is not pinned.** Contact θ (0.036), `k_conv` (0.0001), `k_rad`
@@ -1192,7 +1255,7 @@ source before relying on it** — §11 exists because that has not always happen
 |---|---|---|
 | Song2020 | The Arrhenius/Zener-Hollomon 316L fit, 800–1000 °C (§4.8) | See `docs/316L_MECHANICAL_PROPERTIES.md` |
 | Ryan & McQueen (1989/1990) | Activation energy `Q = 454 kJ/mol`; the (C, m) pairs | 🚩 **Q verified; (C, m) pairs UNVERIFIED with no path** — thesis is a pure scan, no OCR. Functional form does not match the published equation. |
-| 06-15 T4 bulk mcap | Billet ~960 °C at blow #1; ~4.8 °C/s cooling; press force-limited 110.2 kN | Measured in session `12b6fa7e`; **not re-derived here** (§11). File is **local** (§3.2), so this is re-derivable at will |
+| 06-15 T4 bulk mcap | Billet ~960 °C at blow #1; ~4.8 °C/s cooling; press force-limited 110.2 kN | ✅ Temperature and cooling rate **re-derived independently 2026-08-13** (§3.3). The 110.2 kN force limit is still `12b6fa7e`'s, **not** re-derived |
 | 07-17 mcap + Colton's emails | Coil geometry, heating curve, pixel scale 3.8791 px/mm, coil 250 kHz | B-3's workstream |
 | Colton (direct) | 17-hit sequence reheated to ~900–1000 °C between hits, fast hits | User-relayed, 2026-08-12 (§3.1) |
 
