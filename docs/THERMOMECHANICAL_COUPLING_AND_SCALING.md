@@ -952,10 +952,12 @@ Nothing here depends on the gather fix, and without it no refactor can be evalua
   4. Add it to the runner's read-back verification, so a run that *requested* coupling and
      silently got the frozen path **aborts** rather than reporting a result. This is the same
      failure class as the four-identical-arms incident (§5).
-- **A4. Promote `~/material_arms.py` into a committed sweep harness.** It already carries
-  `--flip-frac`, `--billet-k`, `--approach-speed`, `--cells`, `--thermal-mode`, `--no-thermal`
-  and hard read-back verification. Add `--N`, `--S_T`, structured output, and **keep the
-  abort-on-mismatch property.**
+- **A4. ✅ Partly done (`8112a17b`).** `material_arms.py` is committed, with its FLIP read-back
+  tolerance corrected — it was `1e-9` against a float32 field, so `--flip-frac 0.97` could never
+  verify and the headline arms silently ran on the default (§4.1.1). `detonation_probe.py`,
+  `verify_billet_temp.py` and `dump_frames.py` came with it. **Remaining:** add `--N` and `--S_T`
+  for phase B and D1, and structured output. **Keep the abort-on-mismatch property** — it has now
+  caught three would-be invalid experiments.
 
 ### Phase B — Unify the scaling under one dial
 
@@ -1223,11 +1225,21 @@ export LD_LIBRARY_PATH=/usr/lib/wsl/lib          # else silent CPU fallback
 Run the contact workstream's scorer **in place** — never copy it into this branch, or the two
 sets of numbers become incomparable.
 
-### Diagnostic scripts (WSL home; not yet committed)
+### Diagnostic scripts
+
+✅ **Committed to the repo root 2026-08-13** (`8112a17b`) — the four the current findings depend on:
 
 | Script | Purpose |
 |---|---|
-| `~/material_arms.py` | The verified arm runner. Reads the built scene back and **aborts on mismatch.** |
+| `material_arms.py` | The verified arm runner. Reads the built scene back and **aborts on mismatch.** ⚠️ Its FLIP read-back tolerance is `1e-6`, not `1e-9`, **on purpose** — the field is float32 and a tighter bound is satisfiable only for float32-exact values (§4.1.1). Do not re-tighten it. |
+| `detonation_probe.py` | Reads `solver.particles.temp` across **every** frame buffer at a stability failure. Exists because the built-in forensic trace reads only buffer 0 (§4.1.1). |
+| `verify_billet_temp.py` | Structure + per-frame temperature + isolation-method sensitivity for the 06-15 mcap (§3.3) |
+| `dump_frames.py` | Frame renders and the per-frame cross-method spread (§3.3) |
+
+Still **uncommitted, in the WSL home directory** — useful but not load-bearing for anything above:
+
+| Script | Purpose |
+|---|---|
 | `~/null_floor.py` | `dev_mean` discretisation floor via perfect-lattice fill |
 | `~/null_iou.py` | IoU floor, same method |
 | `~/real_stock.py` | Real bar volume by two independent methods |
@@ -1235,8 +1247,7 @@ sets of numbers become incomparable.
 | `~/verify_volume.py` | Watertightness, voxel-fill convergence, hull bound |
 | `~/cross_section.py` | Cross-section shape (refuted the octagon hypothesis) |
 | `~/viz2.py` | Extent-based comparison plots |
-
-**Phase A4 should commit the useful ones into the repo.**
+| `~/patch_flip.py`, `~/patch_speed.py`, `~/patch_billet_k.py` | The patchers that added `material_arms.py`'s flags — now redundant, since the runner carries them |
 
 ### Sibling sessions — shared worktree
 
