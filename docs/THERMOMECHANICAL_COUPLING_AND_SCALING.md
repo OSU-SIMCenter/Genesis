@@ -871,32 +871,65 @@ Both replay the same 17-hit sequence, so it is a like-for-like comparison.
 **Corrected 2026-08-13 (rev 15). The error was mine.** What stood here said the two sim numbers
 "differ by ~2 mm and **cannot both be right**", and called reconciling them the single most
 important open item. **The cheap test this section itself prescribed refutes the framing.**
-Running `grep 'Strike -> HOLDING'` over an existing multi-hit log (`profile_g0_17_render.log`,
-2026-08-11) shows the stop reason changing *from hit to hit inside one run*:
+Running `grep 'Strike -> HOLDING'` over a complete 17-hit log already on disk
+(`~/profile_g0_17.log`, 2026-08-11) shows the stop reason changing *from hit to hit inside one
+run*:
 
-| hit | commanded strain | achieved | stop reason |
-|---|---|---|---|
-| 1 | 0.2437 | 0.2437 | **Target Strain** |
-| 2 | 0.2903 | 0.2450 | Max Force |
-| 3 | 0.3318 | 0.3352 | **Target Strain** |
-| 4 | 0.3836 | 0.3720 | Max Force |
-| 5 | 0.3100 | 0.3113 | **Target Strain** |
-| 6 | 0.3672 | 0.3261 | Max Force |
-| 7 | 0.3802 | 0.3610 | Max Force |
+| hit | `W_contact` | commanded | achieved | shortfall | stop |
+|---|---|---|---|---|---|
+| 1 | 63.600 | 0.2437 | 0.2437 | — | **Target Strain** |
+| 2 | 63.600 | 0.2903 | 0.2451 | 0.045 | Max Force |
+| 3 | 63.600 | 0.3318 | 0.3325 | — | **Target Strain** |
+| 4 | 63.600 | 0.3836 | 0.3719 | 0.012 | Max Force |
+| 5 | 58.000 | 0.3100 | 0.3113 | — | **Target Strain** |
+| 6 | 58.000 | 0.3672 | 0.3208 | 0.046 | Max Force |
+| 7 | 63.600 | 0.3802 | 0.3593 | 0.021 | Max Force |
+| 8 | 63.601 | 0.2006 | 0.2035 | — | **Target Strain** |
+| 9 | 63.600 | 0.2950 | 0.2950 | — | **Target Strain** |
+| 10 | 55.200 | 0.3710 | 0.2935 | 0.078 | Max Force |
+| 11 | **49.600** | 0.3061 | 0.2141 | **0.092** | Max Force |
+| 12 | 60.800 | 0.3336 | 0.3349 | — | **Target Strain** |
+| 13 | 60.800 | 0.4204 | 0.4137 | 0.007 | Max Force |
+| 14 | **49.600** | 0.3306 | 0.1951 | **0.136** | Max Force |
+| 15 | 63.600 | 0.2619 | 0.2622 | — | **Target Strain** |
+| 16 | 60.801 | 0.3217 | 0.3231 | — | **Target Strain** |
+| 17 | 58.000 | 0.4310 | 0.3062 | 0.125 | Max Force |
 
-⇒ **The limit binds on some hits and not others within a single run**, so two workstreams
+⇒ **The limit binds on 9 of 17 hits and not the other 8, within a single run**, so two workstreams
 reporting different answers to "did the press reach its command" can *both* be correct. The
-configuration candidate is now evidenced rather than speculative: that run presses at
-`W_contact = 63.600 mm` and its **hit 1 reaches its command exactly**, while the runs analysed
-above press at `W_contact = 64.000 mm` and their hit 1 is force-limited.
+configuration candidate is also evidenced rather than speculative: this run presses hit 1 at
+`W_contact = 63.600 mm` and **reaches its command exactly**, while the runs analysed in §4.7.2
+press at `64.000 mm` and their hit 1 is force-limited.
 
-🚩 **Note which hit is the exception.** In that configuration hit 1 is the one hit where the limit
-did *not* bind — and every number in §4.7.2 is hit-1-only. That is §11's first-event pattern
-again, running the other way: here hit 1 is unrepresentative by being *better* behaved than its
-neighbours, not worse.
+🎯 **And the mechanism is contact width, not commanded reduction.** Sort the table by
+`W_contact`: **every hit at ≤ 55.2 mm saturates (3 of 3), and the shortfall grows as the contact
+narrows** — 0.078 at 55.2, then 0.092 and 0.136 at 49.6. At 63.6 mm, 5 of 8 reach command. This
+is not confounded with how hard the hit was: hit 13 commands the *largest* reduction in the run
+(0.4204) at a wide 60.8 mm and lands within 0.007, while hit 14 commands a milder 0.3306 at
+49.6 mm and misses by 0.136 — twenty times worse for a smaller ask. A narrower contact patch
+carries the same die force over less area, so it reaches the threshold earlier in the stroke.
+⇒ **the force stop preferentially truncates the narrow-contact hits**, which are exactly the
+edging/drawing passes where the geometry change is largest. Across the run, mean `W_contact` is
+**58.0 mm on the truncated hits against 62.2 mm on the ones that reached command**.
+
+**Reproduce on any run log:** `python3 stop_reason_table.py ~/profile_g0_17.log` (committed at
+repo root). It reads only the two lines the adapter and controller already emit, so it works on
+logs already on disk — no re-running. **Any run whose stop reasons are all `Target Strain` was
+never force-limited; one with `Max Force` hits is truncated on those hits and its geometry is not
+comparable to a run that completed them.**
+
+🚩 **Note which hit is the exception.** Hit 1 is one of the hits where the limit did *not* bind —
+and every number in §4.7.2 is hit-1-only. That is §11's first-event pattern again, running the
+other way: here hit 1 is unrepresentative by being *better* behaved than its neighbours, not
+worse.
+
+⚠️ **The sim saturates far more often than the machine.** 9 of 17 here (53%) against 9 of 47
+real blows (19%, §3.5). ⚠️ **Denominators are not matched** — the real 9 are counted across the
+whole session while these 17 are one replayed sequence, and the per-hit correspondence has not
+been established. The *direction* is the robust part.
 
 **What is still open is narrower than "one of us is wrong":** whether jaw-gap and cloud-span
-measure the same quantity, and what determines *which* hits saturate.
+measure the same quantity, and whether the contact-width mechanism holds outside this one run.
 
 ⚠️ **`max_force` is no longer one constant across worktrees.** `aims-genesis/nsf-demo` now reads
 it from the environment — `max_force: float = float(os.environ.get("AGF_MAX_FORCE", 200000.0))`
@@ -1704,7 +1737,7 @@ Hashes via `git log --oneline -- docs/THERMOMECHANICAL_COUPLING_AND_SCALING.md`.
 
 | Date | Rev | Change |
 |---|---|---|
-| 2026-08-13 | 15 | 🚩 **Re-pointed ~10 drifted source citations** invalidated by B-3's `d2d7c701` (+12 lines in `options.py`) and `bc850e82` (+10 in `strike_controller.py`) — including `strike_controller.py:661 → :671`, the line §3.5.1's force-limit finding cites. The code was unchanged; only the pointers were wrong. Header now warns that line numbers drift in this shared worktree. 🎯 **§4.7.3 corrects §4.7.2's framing, my error:** "the two sim numbers cannot both be right" was too strong. The stop reason changes *per hit within one run* (`profile_g0_17_render.log`: hits 1/3/5 Target Strain, 2/4/6/7 Max Force), so both workstreams can be right — and in that configuration hit 1 is the one hit that is *not* force-limited, first-event bias running the other way. Also records that `max_force` is now environment-overridable in `nsf-demo` and no longer one constant across worktrees. |
+| 2026-08-13 | 15 | 🚩 **Re-pointed ~10 drifted source citations** invalidated by B-3's `d2d7c701` (+12 lines in `options.py`) and `bc850e82` (+10 in `strike_controller.py`) — including `strike_controller.py:661 → :671`, the line §3.5.1's force-limit finding cites. The code was unchanged; only the pointers were wrong. Header now warns that line numbers drift in this shared worktree. 🎯 **§4.7.3 corrects §4.7.2's framing, my error:** "the two sim numbers cannot both be right" was too strong. The stop reason changes *per hit within one run* (`~/profile_g0_17.log`, complete 17 hits: **9 Max Force, 8 Target Strain**), so both workstreams can be right — and hit 1, which every §4.7.2 number comes from, is one of the hits that is *not* force-limited: first-event bias running the other way. 🎯 **The mechanism is contact width** — every hit at `W_contact` ≤ 55.2 mm saturates and the shortfall grows as contact narrows (0.078 → 0.092 → 0.136), decoupled from commanded reduction (hit 13 asks the most at 60.8 mm and lands within 0.007; hit 14 asks less at 49.6 mm and misses by 0.136). The stop preferentially truncates the narrow-contact passes. Sim saturates 53% of hits vs 19% of real blows, unmatched denominators. Also records that `max_force` is now environment-overridable in `nsf-demo` and no longer one constant across worktrees. |
 | 2026-08-13 | 14 (`aad39ba2`) | ✅ **A5 done: noise floor at n = 5** — σ = 0.00024, range 0.00060, five replicates in separate processes (§4.5). The inherited 0.0002 was right as ~1σ but had been used as a *detection threshold*; acceptance criterion 7 raised 0.0002 → **0.0007 (3σ)**. No prior verdict changes: JC vs clamped-Arrhenius is 0.8σ (confirmed indistinguishable), `m3` 15.9σ, thermal-off 91.7σ. `dev_p95`/`dev_max` were identical across all five — more reproducible than IoU. |
 | 2026-08-13 | 13 (`6f3cfa4c`) | 🚨 **§4.7.2: the press already terminates on `Max Force`, not on target strain** — `HOLDING (Max Force, strain=0.2130, steps=49)`, identical in three runs. The adapter intends position control against `hit.rho`; the force stop was meant as a backstop. ⇒ in this configuration hit-1 closure is set by where a numerical artifact crosses 200 kN. **Must be reconciled with workstream A**, who measure the sim landing on its command to within 0.2 mm — both cannot hold for one run. |
 | 2026-08-13 | 12 (`694b97b5`) | 🎯 **§4.11: emissivity is not the lever on cooling rate and cannot be made into one.** The sim's own parameters give **1.05 °C/s** against the measured **6.03**; the emissivity needed with no conduction is **3.01** (max 1.0). Contact conduction and a surface-vs-bulk confound are the remaining candidates. Adds `cooling_budget.py`. |
