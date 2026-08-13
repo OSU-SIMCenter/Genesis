@@ -337,6 +337,55 @@ motivation) for momentum, and left thermal on raw 1988-era FLIP.
 
 📚 Full reference should be added here once the paper is properly cited — see §13.
 
+### 4.1.1 🎯 What the failure actually is — undershoot, not runaway
+
+**Measured 2026-08-13.** "Thermal Detonation" is a misleading label. `options.py:799-800` fires
+it on `temp > 4000 K` **or** `temp < 0 K` — opposite failures with different fixes. This document
+previously refused to guess between them, and was right to: the answer was not readable from any
+run on disk, for two separate reasons.
+
+1. **The runner could not verify the arm.** `material_arms.py` checked the flip read-back against
+   a `1e-9` tolerance. The field is `gs.qd_float` and Genesis runs precision 32, so 0.97 stores as
+   `0.9700000286…`, 2.9e-8 out — the guard was satisfiable **only for values exactly representable
+   in float32.** 0.0 and 0.5 passed; 0.97 aborted every time. That is why every 0.97 arm on disk
+   records `thermal_flip_frac: null`: the flag was dropped rather than the guard relaxed, so the
+   headline arms ran on the solver default, unverified. Tolerance widened to `1e-6`; the 0.97 arm
+   now reads back `0.9700000286102295`.
+2. **The forensic trace is blind to this failure.** `strike_controller.py` locates the offending
+   particle through `_per_particle_field_cpu`, which at line 35 does
+   `t.reshape(-1, n_particles)[0]` — keeping only the **first** frame buffer — while the trigger
+   at `:1657` tests the whole tensor. Particle state is double-buffered, and the FLIP blend
+   itself (`base_mpm_solver.py:745`) writes to `particles[f + 1]`. The intercept therefore fires
+   on a value the trace cannot find, `bad_indices` comes back empty, and no `GROUND ZERO` block
+   is printed. 🚩 **Every "Thermal Detonation" this project has recorded was unattributable for
+   this reason.**
+
+Reading `solver.particles.temp` directly, across every buffer, at the moment of failure
+(JC, 1273.15 K, res 7, thermal ON, flip 0.97 verified, shape `(2, 3160, 1)`):
+
+| | frame 0 | frame 1 |
+|---|---|---|
+| min | 687.16 K | **−2.99 × 10⁸ K** |
+| max | 1267.64 K | 1290.37 K |
+| n < 0 | 0 | **1,284 of 3,160 (40.6%)** |
+| n > 4000 K | 0 | **0** |
+| NaN | 0 | 0 |
+
+⇒ 🎯 **The failure is one-sided undershoot to negative temperature. It is not runaway.** Not one
+particle exceeds 4000 K, and there are no NaNs. Frame 0 is pristine and byte-identical to its
+post-hit-1 value, so the collapse happens within the first substeps of hit 2 rather than
+accumulating across the hit. Offending values span −16.6 K to −3 × 10⁸ K — an amplified
+oscillation, not a single bad transfer.
+
+This is the signature Nairn describes above, and it closes §4.2's loop. Undershoot needs a
+**gradient** to amplify: after hit 1 the field spans 669–1268 K from die chill, which is ample.
+At a 293 K billet the field sits flat at ambient, there is no gradient, and the run survives —
+which is precisely why 293 K was the only temperature that did.
+
+⚠️ **What is established is that the failure is undershoot and that the flip fraction controls
+it. The route by which FLIP grows the excursion without bound remains a model, not a
+measurement.** Do not upgrade it further without evidence.
+
 ⇒ **Pure PIC (`flip = 0`) is a diagnostic, not the recommendation.**
 
 ### 4.2 🎯 It is not a "hot billet" problem — and it is unconditional
@@ -679,7 +728,8 @@ Every one of these was believed, acted on, or written down. Several are the auth
 | "JC is temperature-blind, therefore not mechanics" | both B sessions, from a stale comment in `material_arms.py` | True only of the *initial* temperature. Plastic work un-clamps `T_star` on the first blow. |
 | Temperature at the blow is not measured | inherited, long-standing | Measured ~960 °C from the 06-15 mcap (session `12b6fa7e`). |
 | "We use grid-only contact" | repeated across sessions | Actually **grid + CPIC** — `enable_CPIC=True` is passed explicitly at `options.py:683`, overriding Genesis's own default of `False`. All results in §4.9 are grid+CPIC with `enable_particle_contact=False`. |
-| The instability is the ~97× thermal-clock discrepancy | prior session | `thermal_time_scale_mode='mechanical'` was verified applied (S_T 237,014 → 1,773) and changed survival not at all. The 97× discrepancy is real and worth fixing (§6.2) — it is simply not the instability. |
+| The instability is the ~97× thermal-clock discrepancy | prior session | `thermal_time_scale_mode='mechanical'` was verified applied (S_T 237,014 → 1,773) and changed survival not at all. The discrepancy is real and worth fixing (§6.2) — it is simply not the instability. ⚠️ Note the **ratio is 134×, not 97×**: see the S_T note below. |
+| S_T is 171,653 and the clock is ~97× off | `options.py` comment block, and `material_arms.py`'s docstring | Both predate `cfl_use_pwave = True` (`options.py:115`). `substep_dt = 0.9·dx/c` and `S_T = 0.25·dx²/(6·α·substep_dt)`, so **S_T ∝ c**. Switching from the bar-wave speed to the p-wave speed raises c by 1.3808× (4,070 → 5,620 m/s at the shipped card), and 171,653 × 1.3808 = **237,015**. The stale figures are self-consistent with each other and with an older CFL criterion; the shipped value is 237,014 and the ratio to N is **133.7×**. 🚩 The in-source comments still say 97× and were left unedited — this worktree is shared with B-3, who owns that block. |
 | The sequence failure is Arrhenius-specific | prior session | Johnson-Cook dies identically at hit 2 under the same conditions. |
 | "They complete 17 hits and we don't" | prior session | The contact sweep's own arms complete 1/2/2/2/3/3/5/5/7/7/7/7/8/10/13/17. Partial failure is normal; a non-17 run is not anomalous on its own. |
 | The clamp fix was "the biggest material error, 2.3×" | prior session | Not load-bearing at 960 °C — the clamp only bites above 1000 °C, which this process never reaches. |
@@ -1121,17 +1171,17 @@ verification**:
   blow-#1 timing (~299 s), still inherited from the press-channel decode.
 - **KE/IE ≈ 3.8%** is a back-of-envelope from die speed, not a measurement of the velocity
   field. Phase A1 exists to replace it.
-- **The FLIP *mechanism* is not pinned.** Contact θ (0.036), `k_conv` (0.0001), `k_rad`
-  (0.0005) and `k_diff` (0.458) are all below their limits, yet the gather controls survival
-  completely. What is established is the **control**, not the **route**. Do not invent a
-  mechanism to fill the gap — **measure it instead.** "Thermal Detonation" is two different
-  failures sharing one label: `options.py:799-800` fires it on `temp > 4000 K` **or**
-  `temp < 0 K`. Negative temperature would be classic FLIP null-space undershoot on a smoothing
-  field; >4000 K would be runaway, a different story with a different fix.
-  `strike_controller.py:1729-1731` already prints the offending particle's temperature in the
-  forensic trace, but `material_arms.py` records only the cause string, so no run on disk
-  preserves it. Capturing stdout on one re-run of a failing arm (~2 min — it dies at hit 2)
-  distinguishes them.
+- **The FLIP mechanism is now half-pinned, not pinned.** ✅ The *failure* is measured: one-sided
+  undershoot to negative temperature in the freshly gathered buffer, 40.6% of particles, zero
+  above 4000 K (§4.1.1). ⚠️ The *route* — why FLIP grows the excursion without bound on this
+  field — is still a model. Contact θ (0.036), `k_conv` (0.0001), `k_rad` (0.0005) and `k_diff`
+  (0.458) all sit below their limits, so no CFL argument explains it. Do not upgrade "consistent
+  with Nairn's null-space account" into "demonstrated to be Nairn's null-space account."
+- 🚩 **Two diagnostics were lying, and both are worth remembering.** The runner's flip read-back
+  was satisfiable only for float32-exact values, so the headline arms were unverified while
+  looking verified; and the forensic trace inspects frame 0 while the trigger tests all buffers,
+  so it reported "Thermal Detonation" with no particle attached. Both failed in the safe
+  direction — one aborted, the other printed nothing — but both hid the answer for weeks.
 - **`jc_C` is dead code** and **`jc_m` is unsourced** — carried from earlier summaries, not
   re-verified here.
 - **The Ryan & McQueen (C, m) pairs remain unverified with no path** — the 1989 Concordia thesis
