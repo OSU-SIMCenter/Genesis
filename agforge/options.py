@@ -619,12 +619,23 @@ class AgilityForgeOptions(Options):
         # S_T IS A NUMERICAL QUANTITY, NOT A PHYSICAL ONE.
         #
         # The value above is 25% of a stability ceiling. Nothing ties it to how
-        # fast the press actually moves. Measured on GPU at the shipped card:
+        # fast the press actually moves.
+        #
+        # NOTE ON THE NUMBERS BELOW: they were measured when S_T was 171653, i.e.
+        # BEFORE cfl_use_pwave = True. S_T scales with the wave speed, and the
+        # p-wave speed is 1.3808x the bar-wave speed, so the shipped S_T is now
+        # 171653 * 1.3808 = 237014 (recomputed straight from TeleopOptions: 237014).
+        # The measurements are kept at the S_T they were actually taken at rather
+        # than relabelled; at today's value every thermal-time figure below scales
+        # up by 1.3808 and the temperatures fall correspondingly.
+        #
+        # Measured on GPU at the then-shipped card:
         #     macro_dt = 9.666e-06 s and S_T = 171653, so ONE macro step advances
         #     1.659 s of THERMAL time, while the mechanics advance 9.666e-06 s of
         #     sim time = 17.1 ms of real time at the 1773x press acceleration.
-        # The two clocks disagree by ~97x. Over a 74-step press that is 123 s of
-        # cooling applied to a blow that really takes 0.505 s.
+        # At the CURRENT S_T = 237014 the two clocks disagree by ~134x (~97x when
+        # these were taken). Over a 74-step press that is ~170 s of cooling applied
+        # to a blow that really takes 0.505 s.
         #
         # This is LATENT, not active, in the default forging path. StrikeController
         # runs with thermal_enabled = False, which snapshots particle temperatures
@@ -636,6 +647,7 @@ class AgilityForgeOptions(Options):
         # is required for die chill. Measured idle, thermal live, 100 steps from a
         # uniform 1273.15 K billet:
         #     S_T = 171653 -> mean 965.8 K, min 473.4 K   (166 s of thermal time)
+        #       (at the current S_T = 237014 this is ~229 s, so colder still)
         #     S_T =   1773 -> mean 1267.4 K, min 1232.7 K (1.7 s of thermal time)
         #
         # The first of those IS the 612-1269 K spread previously attributed to the
