@@ -444,7 +444,12 @@ class StrikeOptions(Options):
     
     # Safety Limits
     max_force_imbalance: float = 20000.0 # 20 kN% compression
-    max_force: float = 200000.0 # 20 tons (200kN)
+    # AGF_MAX_FORCE raises/disables the press control stop (strike_controller.py:663 ends
+    # PRESSING when force_L or force_R exceeds this). Default is unchanged at 200 kN.
+    # Measured 2026-08-13: this stop FIRES on 7 of 17 hits for g1_grid_prod and 14 of 17
+    # for p3_pg2p_pos, and trip-count correlates -0.994 with elongation shortfall across
+    # arms -- so arms may be partly ranked by how often they trip it. Set high to test.
+    max_force: float = float(os.environ.get("AGF_MAX_FORCE", 200000.0)) # 20 tons (200kN)
     pressing_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     release_timeout: float = 10.0 # seconds
