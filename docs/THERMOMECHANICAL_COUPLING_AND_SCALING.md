@@ -925,6 +925,51 @@ error cancels. **(b) is safe; (a) is provisional.**
 
 ---
 
+### 4.11 🎯 The sim's thermal boundary conditions cannot reach the measured cooling rate — and emissivity is not the lever
+
+§3.4 measures **−6.03 °C/s** median within-bout cooling, the only real thermal ground truth this
+project has. A lumped-cylinder estimate at the sim's *own* shipped parameters
+(`cooling_budget.py`; ε = 0.40 `options.py:705`, h = 15, `Cp` from `get_steel_cp`, 38.1 mm bar):
+
+| case | °C/s | vs measured |
+|---|---|---|
+| **sim parameters** (ε 0.40, h 15) | **1.05** | **0.17×** |
+| literature oxidised 316L (ε 0.80, h 15) | 1.81 | 0.30× |
+| ε 0.80 + forced convection h 50 | 2.47 | 0.41× |
+| ε 0.80 + 2% of surface in die contact | 2.94 | 0.49× |
+| ε 0.80 + 5% of surface in die contact | 4.63 | 0.77× |
+| **measured (§3.4)** | **6.03** | — |
+
+🚨 **No emissivity closes this gap.** Solving for the value that would reach 6.03 °C/s with no
+conduction gives **ε = 3.01**, against a physical maximum of 1.0. Free-surface radiation plus
+convection is short by a factor of ~3 even when both are set as favourably as physics allows.
+
+⇒ **This substantially demotes the emissivity question for cooling.** Emissivity has absorbed a
+lot of effort in this project (§14: the Optris calibration hunt, the ±50 K band). It remains the
+dominant uncertainty on *absolute temperature* — but it is **not** the lever on cooling *rate*,
+and it cannot be made into one.
+
+**What the candidates actually are, in order:**
+
+1. **Die/manipulator contact conduction.** `thermal_contact_conductivity = 3000 W/(m²K)` exists
+   (`options.py:693`) and a contact fraction of only ~5% at ε = 0.80 recovers 77% of the measured
+   rate. This is where calibration effort belongs.
+2. 🚩 **Surface versus bulk — a genuine confound in the comparison, not just in the model.** The
+   camera reads a **radiometric surface** temperature; this estimate is **lumped**. Over the ~5 s
+   between blows the diffusion length is √(αt) ≈ 5.5 mm against a 19 mm radius, so a real surface
+   gradient develops and the surface cools faster than the bulk. **Part of the factor of 5.7 is
+   therefore this mismatch rather than missing physics, and this analysis cannot separate them.**
+
+⚠️ Note the lumped assumption biases *against* the conclusion, not toward it: internal gradients
+slow surface-limited bulk cooling, which would widen the gap further. The direction is safe even
+though the magnitude is not.
+
+**Acceptance target for the coupled model (§9.2):** reproduce **−6.03 °C/s** within a bout, and
+the 12-bout spread of −11.58…+2.71. A model that gets there on radiation alone is wrong even if
+the number matches.
+
+---
+
 ## 5. Refuted claims — kept deliberately
 
 Every one of these was believed, acted on, or written down. Several are the author's.
