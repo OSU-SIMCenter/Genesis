@@ -181,7 +181,7 @@ listed as defects in §7 and as open questions in §10.
 |---|---|---|---|
 | **17-hit per-hit meshes** | billet triangle meshes before/after each of 17 hits, ~100–137k verts, mm | `forge_common/main/outputs/real_meshes/hit_NN.npz`, keys `V_before`/`T_before`/`V_after`/`T_after` | **mechanical deformation** |
 | **07-17 mcap** | thermal camera on the **induction coil**, heating curve | `~/GitHub/Genesis/forge-data/20260717_135009.mcap` (1.15 GB, local) | **induction heating** (B-3) |
-| **06-15 T4 bulk mcap** | press force/position telemetry **and** thermal camera on the **press** | pCloud `AgilityForge/2026-06-15_T4_bulk/` (8.58 GB) — **not local** | **force**, **billet temperature during forging**, **cooling rate** |
+| **06-15 T4 bulk mcap** | press force/position telemetry **and** thermal camera on the **press** | `/mnt/c/Users/banko/Documents/forge-data-stage/2026-06-15_T4_bulk/20260615_180456_T4_bulk.mcap` (8.58 GB, **local** — staged on Windows, read over `/mnt/c`) | **force**, **billet temperature during forging**, **cooling rate** |
 
 ### 3.1 The critical property of the 17-hit set
 
@@ -206,10 +206,27 @@ coupled. Both scored on the geometry metrics we already have.
 > once, in both directions. The ~960 °C billet measurement and the ~4.8 °C/s cooling rate are
 > **06-15 properties** and say nothing about the 17-hit geometry sequence.
 
-### 3.2 Retrieval note
+### 3.2 Location note — both datasets are local
 
-`forge-data/WHERE-IS-THE-DATA.md` documents pCloud retrieval. As of 2026-08-12 the C: drive has
-~39.6 GB free, so the 8.58 GB pull is feasible.
+**Corrected 2026-08-13.** Earlier revisions of this document recorded the 06-15 mcap as
+pCloud-only and listed its retrieval as a blocker in §8 (phase E), §9.2, §10 and §12. That was
+wrong. The file has been staged on the **Windows** filesystem since 2026-07-23 and verified
+there on 2026-08-06 — size `8,580,279,846` B, SHA-1 `c7503c2a074c62fa365dd8b0007a57e3102f8a4a`,
+mcap header/footer magic OK.
+
+- Windows: `C:\Users\banko\Documents\forge-data-stage\2026-06-15_T4_bulk\20260615_180456_T4_bulk.mcap`
+- From WSL: `/mnt/c/Users/banko/Documents/forge-data-stage/2026-06-15_T4_bulk/…`
+
+It is deliberately **not** copied into the WSL vhdx — analysis reads it over `/mnt/c` so the
+distro does not carry a second 8.58 GB. `forge-data/WHERE-IS-THE-DATA.md` records this in its
+"Local Windows staging" section; pCloud remains the archive of record.
+
+⇒ **No validation in this document is blocked on a retrieval.** Phase E is runnable now.
+
+> 🚩 **Keep the failure, not just the correction.** The earlier check searched only the WSL
+> filesystem, concluded "not local", and reported it as blocked *on the user* — who had already
+> said both datasets were on disk and was right. A confident negative is only as good as the
+> vantage it was searched from.
 
 > ⚠️ Do **not** let a Windows-side tool write into `\\wsl.localhost\` — the 9P bridge zero-pads
 > to 4096-byte boundaries and corrupts silently. Stage on Windows, verify with
@@ -778,7 +795,7 @@ A6     Coupled path (§2.4) ────────┤        ours, no dependen
 C      Gather fix (B-3's) ─────────┴──► D1b  coupled N-invariance      ⛔ needs A6 AND C
                                         D2-D4, §9.2 thermal tests      ⛔ needs A6 AND C
 
-E      External validation ──► needs the 06-15 mcap retrieved (independent of A6/C)
+E      External validation ──► RUNNABLE NOW — 06-15 mcap is local (§3.2)
 ```
 
 **Only the *coupled* validation is blocked on B-3** — and even that needs **A6** first, which is
@@ -855,8 +872,13 @@ uses. **B-3's component.** The clean split is *they implement, we measure*.
 
 ### Phase E — External validation
 
-Retrieve the 06-15 mcap (8.58 GB; 39.6 GB free as of writing) and validate force and cooling
-rate. Blocked only on that retrieval.
+Validate force and cooling rate against the 06-15 mcap, which is **already local** (§3.2).
+Nothing blocks this phase.
+
+**First target is not force — it is the ~960 °C blow-#1 figure.** §4.7's "the card is in domain"
+argument, §9.4's acceptance criterion and one pushed commit (`cb3765a3`) all rest on a number
+this project has carried on trust across three sessions without re-deriving it (§11). The data
+to check it has been sitting on disk the whole time.
 
 ---
 
@@ -933,8 +955,8 @@ no longer an acceptable result format in this workstream.**
 | Per-hit geometry | 17-hit meshes | IoU@2.0 + dev_* at fixed resolution, **as a curve over hits** | Hit 1 is ceiling-capped ~0.80; hits 5–10 sit at 0.56–0.67 with ample headroom (§4.10) |
 | **Error accumulation rate** | 17-hit meshes | slope of IoU and `dev_max` vs hit number | New in §4.10: ~0.77 → 0.57 and `dev_max` ×10 across 10 hits. A coupled model that tracks reality better should flatten this slope — arguably the single most sensitive available test |
 | **Isothermal prediction** | 17-hit (no temp data) | predicted ΔT over the sequence | Coupled run *should* predict near-isothermal given reheat BCs. Deviation = missing physics or wrong BCs |
-| Cooling rate | 06-15 mcap | ~4.8 °C/s through the blow | Needs retrieval |
-| Billet temperature | 06-15 mcap | ~960 °C at blow #1, per-blow for all 47 | Needs retrieval |
+| Cooling rate | 06-15 mcap | ~4.8 °C/s through the blow | **Data local** (§3.2) — runnable now |
+| Billet temperature | 06-15 mcap | ~960 °C at blow #1, per-blow for all 47 | **Data local** (§3.2) — and this is the inherited figure §11 flags, so re-deriving it is the highest-value use of the dataset |
 | Force | 06-15 mcap | peak force per blow | ⚠️ press is **force-limited at 110.2 kN**, and force is nearly **blind to material** (10% flow-stress change → 1.1% force; elastic `nu` change → 10%) |
 
 ### 9.3 Sensitivity matrix
@@ -975,8 +997,11 @@ still wrong about the world — that is what §9.2 is for.
 
 ## 10. Open questions
 
-1. **Should the 06-15 mcap be retrieved now?** It is the only path to validating thermal
-   coupling against reality. 8.58 GB; space is available.
+1. ~~**Should the 06-15 mcap be retrieved now?**~~ **Resolved 2026-08-13 — it was already
+   local** (§3.2), and had been for three weeks. The live question it becomes: **does the
+   inherited ~960 °C blow-#1 figure survive independent re-derivation?** It is the only path to
+   validating thermal coupling against reality, it has been owed across three sessions, and a
+   pushed commit rests on it (§11).
 2. **What boundary conditions reproduce the reheat?** The 17-hit bar was reheated to
    ~900–1000 °C between hits. Modelling that explicitly (vs. simply re-initialising temperature
    per hit) determines whether the isothermal-prediction test is meaningful.
@@ -1011,7 +1036,7 @@ Stated in advance so a bad result is recognised as a result rather than absorbed
 | 2 | **FMPM(k) doesn't fit the GPU kernel / Quadrants DSL** | k≥2 needs repeated grid↔particle mappings per step — k extra passes in a hot kernel. | APIC-style affine transfer for temperature (consistent with the momentum path already there), or damped FLIP with explicit smoothing. Both are weaker; document which was chosen and why. |
 | 3 | **`S_T = N` is rejected** because the induction recalibration is too costly | The thermal clock stays 134× off and no coupled result can be physical. | Make the S_T mode **per-scenario** rather than global — forging uses `N`, induction keeps its calibrated value — and reconcile when induction is re-fitted. |
 | 4 | **The stock-geometry fix never lands** (A-7) | Absolute geometry stays capped near 0.80; absolute agreement cannot improve. | Rely on differentials, which §4.6 already prescribes. Does not block this workstream. |
-| 5 | **The 06-15 mcap can't be retrieved** | No thermal ground truth at all. The §3.1 isothermal-prediction test becomes the *only* thermal validation. | Thin but not nothing — combined with §9.1's self-consistency tests it still constrains the implementation. State the limitation loudly in any result. |
+| 5 | ~~**The 06-15 mcap can't be retrieved**~~ — **void, it is local** (§3.2). The live risk is that **decoding it does not reproduce ~960 °C** | The inherited figure is wrong, and §4.7's "the card is in domain" conclusion moves with it — including a pushed commit. | Re-derive before relying further (phase E). If the true value falls outside Song's 800–1000 °C fit, the Arrhenius card is extrapolating and §4.8 needs revisiting. |
 | 6 | **Coupled runs remain unstable after the gather fix** | Entirely possible: §4.1 establishes that the gather *controls* survival, **not the mechanism** (§11). | Back to diagnosis. The temperature sweep and the runtime-field poke technique are both cheap and reusable. |
 | 7 | **The missing coupling terms dominate** (§2.5) | CTE and E(T) effects (~1.3% strain over 700 K) could exceed the effects being chased, biasing every coupled geometry result. | Bound them analytically first — CTE × ΔT × dimension against the metric's noise floor. Cheap, and it decides whether they must be implemented before Phase D. |
 
@@ -1028,13 +1053,22 @@ verification**:
 - **The ~960 °C billet measurement** is inherited from session `12b6fa7e`. Good provenance —
   per-frame table, documented isolation method, its own caveats (thresholding not segmentation;
   emissivity unknown ⇒ ±50 K) — but **not re-derived**, and a pushed commit (`cb3765a3`) rests
-  on it.
+  on it. 🚩 Two consecutive handoffs asked for this to be verified first and it still has not
+  been. **There is no data barrier** — the source mcap is local (§3.2); only the doing is
+  missing.
 - **KE/IE ≈ 3.8%** is a back-of-envelope from die speed, not a measurement of the velocity
   field. Phase A1 exists to replace it.
 - **The FLIP *mechanism* is not pinned.** Contact θ (0.036), `k_conv` (0.0001), `k_rad`
   (0.0005) and `k_diff` (0.458) are all below their limits, yet the gather controls survival
   completely. What is established is the **control**, not the **route**. Do not invent a
-  mechanism to fill the gap.
+  mechanism to fill the gap — **measure it instead.** "Thermal Detonation" is two different
+  failures sharing one label: `options.py:799-800` fires it on `temp > 4000 K` **or**
+  `temp < 0 K`. Negative temperature would be classic FLIP null-space undershoot on a smoothing
+  field; >4000 K would be runaway, a different story with a different fix.
+  `strike_controller.py:1729-1731` already prints the offending particle's temperature in the
+  forensic trace, but `material_arms.py` records only the cause string, so no run on disk
+  preserves it. Capturing stdout on one re-run of a failing arm (~2 min — it dies at hit 2)
+  distinguishes them.
 - **`jc_C` is dead code** and **`jc_m` is unsourced** — carried from earlier summaries, not
   re-verified here.
 - **The Ryan & McQueen (C, m) pairs remain unverified with no path** — the 1989 Concordia thesis
@@ -1158,7 +1192,7 @@ source before relying on it** — §11 exists because that has not always happen
 |---|---|---|
 | Song2020 | The Arrhenius/Zener-Hollomon 316L fit, 800–1000 °C (§4.8) | See `docs/316L_MECHANICAL_PROPERTIES.md` |
 | Ryan & McQueen (1989/1990) | Activation energy `Q = 454 kJ/mol`; the (C, m) pairs | 🚩 **Q verified; (C, m) pairs UNVERIFIED with no path** — thesis is a pure scan, no OCR. Functional form does not match the published equation. |
-| 06-15 T4 bulk mcap | Billet ~960 °C at blow #1; ~4.8 °C/s cooling; press force-limited 110.2 kN | Measured in session `12b6fa7e`; **not re-derived here** (§11) |
+| 06-15 T4 bulk mcap | Billet ~960 °C at blow #1; ~4.8 °C/s cooling; press force-limited 110.2 kN | Measured in session `12b6fa7e`; **not re-derived here** (§11). File is **local** (§3.2), so this is re-derivable at will |
 | 07-17 mcap + Colton's emails | Coil geometry, heating curve, pixel scale 3.8791 px/mm, coil 250 kHz | B-3's workstream |
 | Colton (direct) | 17-hit sequence reheated to ~900–1000 °C between hits, fast hits | User-relayed, 2026-08-12 (§3.1) |
 
