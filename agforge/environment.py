@@ -22,6 +22,53 @@ def resource_path(relative_path):
 
     return os.path.join(base_path, relative_path)
 
+
+def _billet_morph(robot_cfg):
+    """The billet's initial condition: parametric cylinder (default) or the real scanned bar.
+
+    The cylinder is the BOUNDING BOX of the hit-1-before scan -- which is how
+    forge_common's REAL_STOCK_RADIUS_MM = 20.0 was picked, a bare constant with no
+    derivation in that file. Measured, it starts the sim with +10.9% too much material
+    (74,128 mm^3 sampled against the scan's 66,825), and volume error puts a hard ceiling on
+    achievable IoU. Seeding from the scan itself measures +0.1%, and additionally reproduces
+    the tapered ends, which no choice of radius can.
+
+    AGF_BILLET_MESH=<path.obj> switches it on. Build the file with
+    agforge/analysis/make_billet_mesh.py -- the mesh must be CENTRED on its bounding-box
+    centroid (the morph's `pos` then places it exactly where the cylinder sat) and decimated:
+    Genesis binds every visual vertex to every particle in one dense (V, P, 3) float32 array,
+    so the raw 119k-vertex scan asks for 11.2 GiB. 8k faces costs -0.14% of volume, and at
+    2 mm particle spacing the discarded detail was never resolvable anyway.
+
+    Grid sizing is deliberately NOT touched. cylinder_diameter still drives
+    base_grid_density, so dx, substep_dt and particle_size are identical across the switch
+    and runs stay comparable; only the material being seeded changes.
+    """
+    mesh_path = os.environ.get("AGF_BILLET_MESH", "").strip()
+    if not mesh_path:
+        return gs.morphs.Cylinder(
+            radius=robot_cfg.cylinder_radius,
+            height=robot_cfg.cylinder_height,
+            pos=robot_cfg.cylinder_pos,
+            euler=robot_cfg.cylinder_euler,
+        )
+    if not os.path.isfile(mesh_path):
+        raise FileNotFoundError("AGF_BILLET_MESH=%s does not exist" % mesh_path)
+    # The scan is in millimetres; Genesis works in metres.
+    scale = float(os.environ.get("AGF_BILLET_MESH_SCALE", "0.001"))
+    # The prepared mesh already lies along +x, which is where euler=(0,90,0) puts the
+    # cylinder's axis, so no rotation is applied by default.
+    euler = tuple(float(v) for v in
+                  os.environ.get("AGF_BILLET_MESH_EULER", "0,0,0").split(","))
+    print("[agforge] billet seeded from MESH %s (scale %g, euler %s) -- NOT the nominal "
+          "cylinder" % (mesh_path, scale, euler))
+    return gs.morphs.Mesh(
+        file=mesh_path,
+        scale=scale,
+        pos=tuple(float(v) for v in robot_cfg.cylinder_pos),
+        euler=euler,
+    )
+
 class AgilityForgeManipulator:
     """Encapsulates the robot's properties and provides a clean action interface."""
     def __init__(self, scene: gs.Scene, robot_cfg: RobotOptions):
@@ -255,11 +302,40 @@ class AgilityForgeEnv:
         """Configures and initializes the simulation scene from config objects."""
         viewer_options = self.cfg.viewer if self.cfg.general.show_viewer else gs.options.ViewerOptions()
         
+        # Rigid-MPM contact method. Previously unreachable: no coupler_options were passed, so
+        # the scene silently used the default LegacyCouplerOptions(). Defaults below reproduce
+        # that exactly.
+        #   AGF_CONTACT_MODE=grid|particle|fluidlab|postg2p_velocity|postg2p_position|penalty
+        #   AGF_CONTACT_PER_NODE=1        (particle mode only)
+        #   AGF_CONTACT_C_INJECTION=1     (particle mode only)
+        #   AGF_PENALTY_K=5e7             (penalty mode only, N/m)
+        # NB particle/fluidlab require AGF_ENABLE_CPIC=0 -- both resolve contact in g2p.
+        coupler_options = gs.options.LegacyCouplerOptions(
+            rigid_mpm_contact_mode=os.environ.get("AGF_CONTACT_MODE", "grid"),
+            rigid_mpm_contact_per_node=bool(int(os.environ.get("AGF_CONTACT_PER_NODE", "0"))),
+            rigid_mpm_contact_c_injection=bool(int(os.environ.get("AGF_CONTACT_C_INJECTION", "0"))),
+            #   AGF_CONTACT_FTMP_PROJ=1 <cmd>
+            rigid_mpm_contact_ftmp_projection=bool(
+                int(os.environ.get("AGF_CONTACT_FTMP_PROJ", "0"))),
+            # Compile all contact paths and gate them on runtime fields so an arm sweep can
+            # share one scene build. Must match base_mpm_solver._pc_switchable, which reads the
+            # same variable; the coupler raises at build time if the two disagree.
+            #   AGF_CONTACT_RUNTIME_SWITCH=1 <cmd>
+            rigid_mpm_contact_runtime_switchable=bool(
+                int(os.environ.get("AGF_CONTACT_RUNTIME_SWITCH", "0"))),
+            #   AGF_DIAG_PENETRATION=1 <cmd>
+            rigid_mpm_penetration_probe=bool(
+                int(os.environ.get("AGF_DIAG_PENETRATION", "0"))),
+            rigid_mpm_penalty_stiffness=float(os.environ.get("AGF_PENALTY_K", "5e7")),
+            rigid_mpm_penalty_damping=float(os.environ.get("AGF_PENALTY_DAMPING", "1.0")),
+        )
+
         self.scene = gs.Scene(
             sim_options=self.cfg.sim,
             viewer_options=viewer_options,
             rigid_options=gs.options.RigidOptions(dt=self.cfg.sim.dt),
             mpm_options=self.cfg.mpm,
+            coupler_options=coupler_options,
             vis_options=self.cfg.vis,
             profiling_options=self.cfg.profiling,
             show_viewer=self.cfg.general.show_viewer,
@@ -290,9 +366,7 @@ class AgilityForgeEnv:
                 T_ref=293.15, T_melt=1793.0, jc_m=1.03,
                 **material_kwargs,
             ),
-            morph=gs.morphs.Cylinder(
-                radius=self.cfg.robot.cylinder_radius, height=self.cfg.robot.cylinder_height, pos=self.cfg.robot.cylinder_pos, euler=self.cfg.robot.cylinder_euler
-            ),
+            morph=_billet_morph(self.cfg.robot),
             surface=gs.surfaces.Metal(color=(0.8, 0.4, 0.0), vis_mode="particle"),
         )
         if self.cfg.env.show_target_bounds:

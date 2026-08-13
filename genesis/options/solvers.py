@@ -111,6 +111,46 @@ class LegacyCouplerOptions(BaseCouplerOptions):
     fem_mpm: StrictBool = True
     fem_sph: StrictBool = True
 
+    # Rigid-MPM contact method. These differ in WHERE the contact constraint is applied, and
+    # therefore in whether the correction reaches the affine field C (and hence F):
+    #   "grid"              velocity projection on grid nodes inside mpm_grid_op   (partially)
+    #   "particle"          continuous SDF at the particle, inside g2p             (yes)
+    #   "fluidlab"          one-way velocity fix after new_C is formed             (no)
+    #   "postg2p_velocity"  velocity fix on advected particles                     (no)
+    #   "postg2p_position"  as above + hard projection out to a particle_size/2 margin (no)
+    #   "penalty"           spring force into grid momentum before the grid op     (yes)
+    rigid_mpm_contact_mode: str = "grid"
+    # Refinements, "particle" mode only. per_node samples the SDF at each stencil node so the
+    # compression gradient survives; c_injection writes the contact compression rate directly
+    # into the normal-normal component of C.
+    rigid_mpm_contact_per_node: StrictBool = False
+    rigid_mpm_contact_c_injection: StrictBool = False
+    # Inject the contact compression into the TRIAL F_tmp, after compute_F_tmp and before
+    # the SVD/stress step, so the constitutive model (including plastic return mapping)
+    # processes it and the resulting stress reaches the grid via p2g in the same substep.
+    # Detection is at the particle's exact position (sub-grid), response is through the
+    # grid's force balance -- the one combination that gets both. Allowed on 'grid' here;
+    # genesis-dev restricts it to 'particle'.
+    rigid_mpm_contact_ftmp_projection: StrictBool = False
+    # Compile every contact path into the kernels and gate them on runtime fields instead of
+    # `qd.static` flags, so the contact mode / refinements / teleport can be changed without
+    # rebuilding the scene. Costs a little kernel size and loses the dead-code elimination of the
+    # unused paths; in exchange an N-arm sweep pays ONE ~117 s scene build instead of N. Default
+    # OFF so production builds keep their original specialization byte-for-byte.
+    rigid_mpm_contact_runtime_switchable: StrictBool = False
+    # Measure how far material actually gets inside the die, independent of contact mode, so
+    # contact arms can be compared on the axis they all exist to control. Costs one extra
+    # particle x geom SDF pass per substep; off by default.
+    rigid_mpm_penetration_probe: StrictBool = False
+    # Penalty spring stiffness [N/m]. The physically consistent scale is ~E*psize^2/dx, which
+    # for this material/resolution is ~5e7; genesis-dev's 1e5 default is far too soft and lets
+    # particles sink through the die.
+    rigid_mpm_penalty_stiffness: float = 5e7
+    # Penalty damping ratio. c = 2*zeta*sqrt(k*m), applied to the approach velocity only.
+    # 0.0 reproduces the undamped genesis-dev behaviour, which is unstable here at every
+    # stiffness tried; 1.0 is critical damping.
+    rigid_mpm_penalty_damping: float = 1.0
+
 
 class SAPCouplerOptions(BaseCouplerOptions):
     """
