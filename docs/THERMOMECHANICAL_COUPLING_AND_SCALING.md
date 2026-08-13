@@ -285,10 +285,80 @@ produce a workpiece that arrives and departs. **Confirmed.**
 emissivity, which no amount of re-extraction can fix — it is a property of the
 camera's configuration, not of the analysis.
 
-> 🚩 The blow-#1 timing (~299 s) is still inherited from the press-channel decode.
-> It is corroborated here only in that the bar demonstrably enters frame at ~296 s
-> and is hottest at ~298 s, which is consistent with, but not proof of, that
-> alignment.
+> ✅ **The blow-#1 timing has since been re-derived — and it moved.** `analyze_press_mcap.py`
+> segments the force channel independently and puts blow #1's **force episode at 302.7 s**, peak
+> 66.5 kN at 303.18 s. The ~299.25 s figure is the `u_taken` **command** timestamp, not contact.
+> Sampling at the command reads the bar ~4 s early and so ~18 °C hot: **942.6 °C at the force
+> episode** against the inherited 960.9 °C. Small beside the ±50 K emissivity band, but a real
+> systematic, and it ran in the flattering direction. The bar enters frame at ~296.6 s (blob
+> growing 5,820 → 15,473 px) and peaks ~298 s, so it is **already cooling** when the press
+> engages.
+
+---
+
+### 3.4 🎯 All 47 blows — and blow #1 is the 96th percentile
+
+**Measured 2026-08-13** (`per_blow_temp.py`). Press episodes segmented from the force channel by
+`analyze_press_mcap.py`, then the thermal camera sampled at each. Both come from the same file,
+so the two clocks are the same clock and no alignment is assumed.
+
+| | °C |
+|---|---|
+| min | **615.2** |
+| p25 | 783.4 |
+| **median** | **823.6** |
+| p75 | 862.0 |
+| max | **967.1** |
+| **blow #1** | **942.6 — the 96th percentile, 119 °C above the median** |
+
+🚨 **Every thermal number this project uses is a blow-#1 number, and blow #1 is nearly the
+hottest blow in the session.** This is the same error as §4.10's — where every geometry score
+had been taken at hit 1 — in a different domain, found five days apart. It is worth treating as
+a standing failure mode rather than two coincidences: *the first event of a sequence is the one
+that gets analysed, and it is systematically unrepresentative.*
+
+**The bout structure.** Twelve bouts separated by 100–274 s reheats, cooling monotonically
+within each:
+
+| bout | blows | T first → last °C | °C/s |
+|---|---|---|---|
+| 1 | 1–5 | 942.6 → 848.9 | −4.74 |
+| 2 | 6–10 | 926.3 → 809.9 | −5.73 |
+| 3 | 11–13 | 803.6 → 795.8 | −0.68 |
+| 4 | 14–18 | 879.6 → 773.9 | −4.64 |
+| 5 | 19–23 | 853.4 → 798.9 | −2.85 |
+| 6 | 24–27 | 817.1 → 687.1 | −7.50 |
+| 7 | 28–31 | 744.1 → 787.4 | **+2.71** |
+| 8 | 32–35 | 830.8 → 615.2 | −11.58 |
+| 9 | 36–39 | 967.1 → 839.8 | −7.50 |
+| 10 | 40–42 | 862.4 → 776.6 | −6.32 |
+| 11 | 43–45 | 829.4 → 722.1 | −6.54 |
+| 12 | 46–47 | 834.1 → 765.8 | −10.66 |
+
+**Median within-bout cooling is −6.03 °C/s**, spanning −11.58 to +2.71. ⇒ The inherited
+**~4.8 °C/s is also a blow-#1 artifact** — bout 1 is the *slowest-cooling bout in the session*,
+and the typical rate is ~25% faster. 🚩 Bout 7 *warms*. Not explained; plausibly a re-grip
+exposing a hotter face, or a partial reheat. Recorded, not rationalised.
+
+**Reheats do not return the bar to a fixed temperature.** Bout-opening values run 744–967 °C.
+Any coupled model that assumes a constant reheat setpoint will not match this sequence.
+
+**Temperature drop through contact:** median **−16.8 °C**, p10 −30.2, p90 −6.2 — the die-chill
+signal a coupled run must reproduce over a ~0.5–1.7 s contact.
+
+> 🚩 **A bug in this analysis, caught and fixed, worth keeping.** The first pass isolated the
+> workpiece as the largest region above `max(700 °C, p85)` — the rule inherited from the blow-#1
+> analysis. It returned "no bar in frame" for four blows. They were not camera gaps: all four had
+> 216 thermal frames available and were simply the **coolest** blows, where too little of the bar
+> cleared 700 °C. The floor was silently truncating the low tail, biasing the median **high** —
+> the same direction as the error it was embedded in. Removing the floor recovered all 47 blows
+> and dropped the minimum from 724 °C to **615 °C**. `p85` alone is the principled rule: the
+> workpiece occupies ~16,400 of 110,016 px ≈ 15% of the frame, so the 85th percentile is
+> calibrated to its own frame fraction and follows the bar down as it cools.
+
+⚠️ **This is the 06-15 session, not the 17-hit geometry sequence.** Per §3.1 the two must not be
+generalised between. The 17-hit set was reheated to ~900–1000 °C; the 06-15 session runs
+substantially cooler. They are experiments at *different temperatures*.
 
 ---
 
@@ -572,17 +642,35 @@ The billet was **measured at ~960 °C at blow #1** (06-15 mcap; session `12b6fa7
 its caveats). Song2020 is fitted over **800–1000 °C**; the Arrhenius kernel clamps to
 [1073.15, 1473.15] K.
 
-**960 °C = 1233.15 K is comfortably inside both — nothing extrapolates and nothing clamps.**
-The card is calibrated at 1000 °C and the bar runs 40 °C cooler. Flow stress 212.4 MPa at
-960 °C vs 181.1 at 1000 °C.
+**At blow #1 that is comfortably inside both — nothing extrapolates and nothing clamps.** The
+card is calibrated at 1000 °C and the bar runs 40 °C cooler. Flow stress 212.4 MPa at 960 °C vs
+181.1 at 1000 °C.
 
-This is the strongest validation the material card has, and it came from a measurement rather
-than a simulation. It also **demotes** a previously headline finding: the temperature clamp was
-called "the biggest material error, 2.3×", but it only bites above 1000 °C, which this process
-never reaches. Raising `T_fit_max` remains correct in general and changes nothing here.
+🚨 **But this is a blow-#1 statement, and §3.4 now shows blow #1 is the 96th percentile of its
+session.** Across all 47 blows:
 
-⚠️ Note the reheat target for the 17-hit sequence (~900–1000 °C, §3.1) is the *same window*.
-Both experiments sit inside the fitted domain.
+| | |
+|---|---|
+| session median | **823.6 °C** — 24 °C above Song's floor, not 40 °C below its ceiling |
+| **below the 800 °C fit floor** | **18 of 47 = 38%** |
+| in domain | 29 of 47 |
+| above 1000 °C | **0** |
+| minimum | **615.2 °C** — 185 °C below the fit |
+
+⇒ **The corrected claim: the card never extrapolates upward, and the clamp demotion stands.
+"In domain" holds for the hot end of the session and fails for over a third of it.** Song's fit
+is being read below its floor on 38% of blows, and the Arrhenius kernel's lower clamp
+(1073.15 K = 800 °C) is therefore *active* on those blows rather than dormant — flow stress is
+being evaluated at 800 °C for a bar that is sometimes 185 °C colder, which **under-predicts**
+strength exactly where the metal is strongest.
+
+This remains the strongest validation the card has, and it still came from a measurement rather
+than a simulation. What changes is its scope: it validates the card **at the top of the
+session**, and identifies a live extrapolation at the bottom.
+
+⚠️ The reheat target for the 17-hit sequence (~900–1000 °C, §3.1) *is* inside the fitted window.
+The 06-15 session is not the same experiment and runs substantially cooler (§3.4) — **do not
+merge the two temperature distributions.**
 
 ### 4.9 Primary data
 
@@ -1069,8 +1157,8 @@ no longer an acceptable result format in this workstream.**
 | Per-hit geometry | 17-hit meshes | IoU@2.0 + dev_* at fixed resolution, **as a curve over hits** | Hit 1 is ceiling-capped ~0.80; hits 5–10 sit at 0.56–0.67 with ample headroom (§4.10) |
 | **Error accumulation rate** | 17-hit meshes | slope of IoU and `dev_max` vs hit number | New in §4.10: ~0.77 → 0.57 and `dev_max` ×10 across 10 hits. A coupled model that tracks reality better should flatten this slope — arguably the single most sensitive available test |
 | **Isothermal prediction** | 17-hit (no temp data) | predicted ΔT over the sequence | Coupled run *should* predict near-isothermal given reheat BCs. Deviation = missing physics or wrong BCs |
-| Cooling rate | 06-15 mcap | ~4.8 °C/s through the blow | **Data local** (§3.2) — runnable now |
-| Billet temperature | 06-15 mcap | ~960 °C at blow #1, per-blow for all 47 | ✅ **Blow #1 re-derived independently** (§3.3): 964 °C, within ~4 °C of the inherited value. Per-blow extraction for all 47 is still open |
+| Cooling rate | 06-15 mcap | **median −6.03 °C/s within a bout**, range −11.58…+2.71 across 12 bouts (§3.4) | ✅ Extracted. The inherited ~4.8 °C/s is bout 1 only — the slowest bout in the session |
+| Billet temperature | 06-15 mcap | all 47 blows: median **823.6 °C**, range **615.2–967.1** (§3.4) | ✅ **Done.** Blow #1 re-derived (§3.3) *and* the full session extracted — which showed blow #1 is the **96th percentile**, so every prior thermal number was unrepresentative |
 | Force | 06-15 mcap | peak force per blow | ⚠️ press is **force-limited at 110.2 kN**, and force is nearly **blind to material** (10% flow-stress change → 1.1% force; elastic `nu` change → 10%) |
 
 ### 9.3 Sensitivity matrix
@@ -1151,7 +1239,7 @@ Stated in advance so a bad result is recognised as a result rather than absorbed
 | 2 | **FMPM(k) doesn't fit the GPU kernel / Quadrants DSL** | k≥2 needs repeated grid↔particle mappings per step — k extra passes in a hot kernel. | APIC-style affine transfer for temperature (consistent with the momentum path already there), or damped FLIP with explicit smoothing. Both are weaker; document which was chosen and why. |
 | 3 | **`S_T = N` is rejected** because the induction recalibration is too costly | The thermal clock stays 134× off and no coupled result can be physical. | Make the S_T mode **per-scenario** rather than global — forging uses `N`, induction keeps its calibrated value — and reconcile when induction is re-fitted. |
 | 4 | **The stock-geometry fix never lands** (A-7) | Absolute geometry stays capped near 0.80; absolute agreement cannot improve. | Rely on differentials, which §4.6 already prescribes. Does not block this workstream. |
-| 5 | ~~**The 06-15 mcap can't be retrieved**~~ / ~~**decoding does not reproduce ~960 °C**~~ — **both resolved** (§3.2, §3.3) | — | The residual exposure is **emissivity**, not extraction: ±50 K systematic that no re-analysis can remove. At 964 ± 50 °C the card stays inside Song's 800–1000 °C fit at the top of the band, so §4.7's conclusion holds across the whole interval. |
+| 5 | ~~**The 06-15 mcap can't be retrieved**~~ / ~~**decoding does not reproduce ~960 °C**~~ — **both resolved** (§3.2, §3.3). Replaced by: **38% of blows sit below Song's fit floor** (§3.4) | The Arrhenius lower clamp is active on those blows, under-predicting flow stress where the metal is coldest and strongest. | Quantify the error over 615–800 °C before using 06-15 force as a material target. ⚠️ The ±50 K emissivity systematic dominates the count: at −50 K it is **30 of 47** below the floor, at +50 K only **6 of 47**. The *existence* of a sub-floor population is robust; its size is not. |
 | 6 | **Coupled runs remain unstable after the gather fix** | Entirely possible: §4.1 establishes that the gather *controls* survival, **not the mechanism** (§11). | Back to diagnosis. The temperature sweep and the runtime-field poke technique are both cheap and reusable. |
 | 7 | **The missing coupling terms dominate** (§2.5) | CTE and E(T) effects (~1.3% strain over 700 K) could exceed the effects being chased, biasing every coupled geometry result. | Bound them analytically first — CTE × ΔT × dimension against the metric's noise floor. Cheap, and it decides whether they must be implemented before Phase D. |
 
@@ -1170,7 +1258,8 @@ verification**:
   camera view is confirmed by rendered frames (§3.3). The isolation-method caveat is bounded at
   3.8–16.2 °C, inside the emissivity band. **What remains** is emissivity itself: ±50 K
   systematic, a property of the camera's configuration that no re-extraction can remove, and the
-  blow-#1 timing (~299 s), still inherited from the press-channel decode.
+  blow-#1 timing, **re-derived and corrected** — contact is at 302.7 s, not ~299 s, which is
+  the command timestamp; the bar reads 942.6 °C there, not 960.9 (§3.3).
 - **KE/IE ≈ 3.8%** is a back-of-envelope from die speed, not a measurement of the velocity
   field. Phase A1 exists to replace it.
 - **The FLIP mechanism is now half-pinned, not pinned.** ✅ The *failure* is measured: one-sided
