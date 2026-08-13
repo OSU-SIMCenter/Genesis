@@ -31,10 +31,20 @@ def _per_particle_field_cpu(field: torch.Tensor, n_particles: int) -> torch.Tens
         return t.reshape(0)
     if t.dim() == 1 and t.shape[0] == n_particles:
         return t
+    # Reduce ACROSS frame buffers, don't take buffer 0. MPM keeps two buffers and the
+    # constitutive/G2P steps write to f+1, so at an intercept buffer 0 still holds the last
+    # good state while the violation sits in buffer 1. The trigger at the call site tests the
+    # whole tensor, so collapsing to [0] here meant the mask came back empty and no GROUND
+    # ZERO block printed -- every thermal intercept recorded so far was unattributable.
+    # Keep the value of largest magnitude per particle: temperature is Kelvin, so both a
+    # negative undershoot and a runaway survive the collapse, and in normal operation the
+    # two buffers agree closely enough that the choice does not matter.
     if t.dim() >= 2 and t.shape[-1] == n_particles:
-        return t.reshape(-1, n_particles)[0]
+        frames = t.reshape(-1, n_particles)
+        return frames.gather(0, frames.abs().argmax(dim=0, keepdim=True)).reshape(n_particles)
     if t.dim() >= 2 and t.shape[1] == n_particles:
-        return t[0].reshape(n_particles)
+        frames = t.reshape(t.shape[0], n_particles, -1)[..., 0]
+        return frames.gather(0, frames.abs().argmax(dim=0, keepdim=True)).reshape(n_particles)
     flat = t.reshape(-1)
     return flat[:n_particles]
 
