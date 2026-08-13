@@ -392,25 +392,57 @@ the 38 blows that the real press completed. It survives on the 17-hit sequence o
 sequence commands deep closures (8.3–17.7 mm) where the limit binds every time — it is a fit to
 the saturated regime, not the mechanism.
 
-🎯 **And the sim already has the knob, set wrong.** `options.py:785` gives the press
-`max_force = 200000.0` N — **200 kN, nearly twice the real machine's 110.2 kN control stop.** The
-sim therefore *cannot* be force-limited where the real press is, which is precisely why it always
-reaches its command. A limit set from the measurement would reproduce the shortfall conditionally
-and automatically, with no fitted cap.
+### 3.5.1 The sim already implements this mechanism — the problem is calibration
 
-🚨 **This would make die closure material-sensitive, which changes what §4.7 means.** §4.7
-established that peak force is nearly blind to the material (10% flow stress → 1.1% force). That
-is true *while the press is position-controlled and never saturates*. At a real force limit the
-relationship inverts: a stronger billet saturates sooner and the press stops further short, so
-flow stress converts into **position** error and therefore into accumulated geometry. This is a
-route by which material properties reach the geometry metric that nobody in this project has
-considered, and it only exists once the limit is modelled.
+**Corrected 2026-08-13, same day, both errors mine.**
 
-> ⚠️ **Three things to check before anyone changes `max_force`.** (1) This is the 06-15 session;
-> the 110.2 kN stop is a machine/control property so it *should* carry to the 17-hit sequence,
-> but that is an assumption here, not a measurement. (2) `max_force` is an MJCF actuator limit —
-> its equivalence to the real control stop needs confirming, not assuming. (3) It is shared
-> config that changes behaviour for every consumer of this branch. **Coordinate; do not edit
+**The sim is not missing a force limit.** `strike_controller.py:661` runs
+`cond_force = (force_L > max_force) | (force_R > max_force)` during PRESSING and halts with
+`stop_reason = "Max Force"` — structurally the same control stop as the real machine's. The
+threshold is `options.py:785`, `max_force = 200000.0` N. So the earlier statement here that the
+sim "*cannot* be force-limited where the real press is" was wrong: it can, and today's hit 1
+reached **F = [38.1, 192.5] kN against a 200 kN threshold — within 4% of tripping it.** The limit
+may already bind occasionally, unnoticed.
+
+🚨 **But the sim's force cannot calibrate that threshold**, so `max_force = 110200` must **not**
+be set. Within a single hit-1 run:
+
+| | force | vs real blow #1 (66.5 kN) |
+|---|---|---|
+| smooth peak | ~89 kN | 1.34× |
+| maximum sample | **192 kN** | **2.9×** |
+| left vs right die, **same step** | 38.1 vs 192.5 kN | **5× disagreement** |
+
+"Peak force" is not a well-defined quantity here. Add the standing problems: force spans **3.3×
+across press speeds and has never converged** even at 111× real die speed (§4.7), it is nearly
+**blind to material** (10% flow stress → 1.1%) yet **sensitive to elasticity** (`nu` → 10%), so
+it is dominated by contact and elastic terms rather than plasticity; and the one clean 1.34×
+calibration was **retracted** as a hybrid-contact artifact (grid-only gave ~1.8×). Three
+different sim/real ratios are in circulation and none is converged.
+
+⇒ Setting the threshold to the real 110.2 kN would make the sim trip **early** and under-close
+blows the real press completed — the opposite of the observed error, corrupting every downstream
+geometry result.
+
+**What would make it calibratable.** The limit does not need the absolute force to be right; it
+needs the sim to saturate on **the same blows**. That is a correspondence question, and it is now
+answerable for the first time: §3.4 yields **47 real peak forces**, where every previous force
+comparison in this project used blow #1 alone — the *third* instance of the first-event failure
+mode. Regress sim peak force against real peak force across many blows. If sim ≈ k × real with a
+stable k, set the threshold at 110.2 × k **in sim units**. If the relationship is noisy or
+non-monotonic, the limit is uncalibratable and this idea parks until the force model converges.
+
+**And the material→geometry route is weaker than first claimed.** The earlier text here said a
+force limit makes closure material-sensitive and called it a route nobody had considered. The
+route is real, but it scales with the *same* weak coupling that makes force blind to material: if
+10% flow stress moves force 1.1%, then near saturation it moves the stopping position by a
+correspondingly small amount, further divided by the steep force–closure slope of a stiff
+contact. Treat it as a second-order effect worth measuring, **not** as a new lever.
+
+> ⚠️ **Before anyone changes `max_force`.** (1) 110.2 kN is measured on 06-15; it is a
+> machine/control property so it *should* carry to the 17-hit sequence, but that is an assumption
+> here. (2) It is shared config that changes behaviour for every consumer of this branch, and
+> workstream A currently has **uncommitted edits to `options.py`**. **Coordinate; do not edit
 > unilaterally.**
 
 ---
