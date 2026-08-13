@@ -512,8 +512,11 @@ run on disk, for two separate reasons.
    at `:1657` tests the whole tensor. Particle state is double-buffered, and the FLIP blend
    itself (`base_mpm_solver.py:745`) writes to `particles[f + 1]`. The intercept therefore fires
    on a value the trace cannot find, `bad_indices` comes back empty, and no `GROUND ZERO` block
-   is printed. 🚩 **Every "Thermal Detonation" this project has recorded was unattributable for
-   this reason.**
+   is printed. 🚩 **Every "Thermal Detonation" this project had recorded was unattributable for
+   this reason.** ✅ **Fixed by B-3 the same day (`bc850e82`)** — the helper now reduces *across*
+   frame buffers, keeping the largest-magnitude value per particle, so both a negative undershoot
+   and a runaway survive the collapse. Runs from `bc850e82` onward should print a populated
+   `GROUND ZERO` block; **anything recorded before it still carries the blind spot.**
 
 Reading `solver.particles.temp` directly, across every buffer, at the moment of failure
 (JC, 1273.15 K, res 7, thermal ON, flip 0.97 verified, shape `(2, 3160, 1)`):
@@ -831,12 +834,40 @@ geometrically reachable.
 inherits that. This is the most consequential item in §4.7, and it was invisible for as long as
 nobody read the stop reason.
 
-🚩 **It also has to be reconciled with workstream A**, who measure the sim landing on its
-commanded gap to within 0.2 mm — which cannot both be true of the same run. Their arm
-(`g1_grid_prod`) differs from this one in resolution and contact settings, so the likeliest
-reading is that the force limit binds in *some* configurations and not others. **That is worth
-establishing before either number is used**, because "does the press reach its command" is a
-precondition for every geometry comparison in both workstreams, and neither of us checked it.
+**The target strain was set correctly — this is not a misconfiguration.** The adapter's
+diagnostic fires in every run:
+
+```
+[genesis adapter] PRESSING target_strain=0.2484 (W_contact=64.000mm, jaw_pair_thickness=16.000mm)
+```
+
+Commanded 0.2484, achieved 0.2130. Working back through
+`strain = 1 − (rho + jaw_thickness) / W_contact`:
+
+| | strain | jaw centres | **face gap** |
+|---|---|---|---|
+| commanded | 0.2484 | 48.102 mm | **32.102 mm** |
+| achieved | 0.2130 | 50.368 mm | **34.368 mm** |
+
+The derived command of **32.102 mm** matches workstream A's independently-read `Hit.rho` of
+**32.100 mm**, which confirms the derivation. **The press stopped 2.27 mm short of its command.**
+
+🎯 **And that lands 0.13 mm from the real machine.** A-7 measured the *real* press finishing
+hit 1 at **34.50 mm** — 2.4 mm short of the same command. This run finishes at **34.37 mm**.
+Both replay the same 17-hit sequence, so it is a like-for-like comparison.
+
+⚠️ **Do not read that as "the sim is right."** It is n = 1, one hit, and the sim's gap here is
+*derived from the controller's strain* rather than measured from the particle cloud — while A-7
+*measures the cloud* and gets ~32.3 mm corrected for the same nominal quantity. **Those two sim
+numbers differ by ~2 mm and cannot both be right.** Candidate explanations: their arm
+(`g1_grid_prod`) differs in resolution and contact so the force limit may bind in some
+configurations and not others; or jaw-gap and cloud-span are not the same measurement; or one
+derivation is wrong.
+
+🚩 **This is the single most important open item.** "Does the press reach its command" is a
+precondition for every geometry comparison in *both* workstreams, the two workstreams currently
+disagree about it, and neither had checked it. It is also cheap: `grep 'Strike -> HOLDING'` over
+any existing run log says immediately whether that run was force-limited.
 
 ⚠️ Do **not** conclude from this that lowering `max_force` to the real 110.2 kN would help. It
 would move an already-active stop from one point on an artifact to an earlier one. §3.5.1's
@@ -1069,7 +1100,7 @@ Every one of these was believed, acted on, or written down. Several are the auth
 | Temperature at the blow is not measured | inherited, long-standing | Measured ~960 °C from the 06-15 mcap (session `12b6fa7e`). |
 | "We use grid-only contact" | repeated across sessions | Actually **grid + CPIC** — `enable_CPIC=True` is passed explicitly at `options.py:683`, overriding Genesis's own default of `False`. All results in §4.9 are grid+CPIC with `enable_particle_contact=False`. |
 | The instability is the ~97× thermal-clock discrepancy | prior session | `thermal_time_scale_mode='mechanical'` was verified applied (S_T 237,014 → 1,773) and changed survival not at all. The discrepancy is real and worth fixing (§6.2) — it is simply not the instability. ⚠️ Note the **ratio is 134×, not 97×**: see the S_T note below. |
-| S_T is 171,653 and the clock is ~97× off | `options.py` comment block, and `material_arms.py`'s docstring | Both predate `cfl_use_pwave = True` (`options.py:115`). `substep_dt = 0.9·dx/c` and `S_T = 0.25·dx²/(6·α·substep_dt)`, so **S_T ∝ c**. Switching from the bar-wave speed to the p-wave speed raises c by 1.3808× (4,070 → 5,620 m/s at the shipped card), and 171,653 × 1.3808 = **237,015**. The stale figures are self-consistent with each other and with an older CFL criterion; the shipped value is 237,014 and the ratio to N is **133.7×**. 🚩 The in-source comments still say 97× and were left unedited — this worktree is shared with B-3, who owns that block. |
+| S_T is 171,653 and the clock is ~97× off | `options.py` comment block, and `material_arms.py`'s docstring | Both predate `cfl_use_pwave = True` (`options.py:115`). `substep_dt = 0.9·dx/c` and `S_T = 0.25·dx²/(6·α·substep_dt)`, so **S_T ∝ c**. Switching from the bar-wave speed to the p-wave speed raises c by 1.3808× (4,070 → 5,620 m/s at the shipped card), and 171,653 × 1.3808 = **237,015**. The stale figures are self-consistent with each other and with an older CFL criterion; the shipped value is 237,014 and the ratio to N is **133.7×**. ✅ **B-3 dated the in-source commentary the same day (`d2d7c701`)**, so the 97× figure is no longer presented as current. |
 | The sequence failure is Arrhenius-specific | prior session | Johnson-Cook dies identically at hit 2 under the same conditions. |
 | "They complete 17 hits and we don't" | prior session | The contact sweep's own arms complete 1/2/2/2/3/3/5/5/7/7/7/7/8/10/13/17. Partial failure is normal; a non-17 run is not anomalous on its own. |
 | The clamp fix was "the biggest material error, 2.3×" | prior session | Not load-bearing at 960 °C — the clamp only bites above 1000 °C, which this process never reaches. |
