@@ -4,6 +4,12 @@
 `agforge/v2/thermal-st-invariance`. Written 2026-08-12 from session `dbc3b95f`
 (← `2c4556e5` ← `156eb841`). Repo state at writing: `cb3765a3`, clean.
 
+⚠️ **Source line numbers in this document are valid as of `5f594e5e` (2026-08-13) and drift.**
+This worktree is shared: B-3's `d2d7c701` inserted a net +12 lines into `agforge/options.py` and
+`bc850e82` a net +10 into `agforge/strike_controller.py`, silently invalidating every citation
+below their insertion points — including the one the §3.5.1 force-limit finding rests on. They
+were re-pointed at `5f594e5e`. **Grep for the symbol, not the line.**
+
 **Read this before touching the thermal solver, the time-scaling knobs, or the geometry
 metric.** Sections 5 and 11 exist specifically to stop work being redone or wrong conclusions
 being re-derived — several claims in this project have been confidently wrong, including
@@ -78,9 +84,9 @@ Per substep, in order (`base_mpm_solver.py`, `legacy_coupler.py`):
 
 | Knob | Value | Where set | What it multiplies |
 |---|---|---|---|
-| `pressing_speed` | 25.0 m/s | `options.py:766` | die velocity during the blow |
-| `real_die_speed` | 0.0141 m/s | `options.py:776` | the physical reference |
-| **N (mechanical accel.)** | **1,773** | derived, `options.py:652` | = `pressing_speed / real_die_speed` |
+| `pressing_speed` | 25.0 m/s | `options.py:778` | die velocity during the blow |
+| `real_die_speed` | 0.0141 m/s | `options.py:788` | the physical reference |
+| **N (mechanical accel.)** | **1,773** | derived, `options.py:664` | = `pressing_speed / real_die_speed` |
 | `thermal_time_scale` (S_T) | **237,014** default | `options.py:616` | `dt_th = substep_dt · S_T` — every transport term |
 | `thermal_time_scale_mode` | `'cfl'` default | `options.py:516` | `'mechanical'` sets S_T = N = 1,773 |
 | `thermal_cfl_fraction` | 0.25 | `options.py:614` | fraction of diffusion CFL used for S_T |
@@ -107,7 +113,7 @@ E = 121.5 GPa (CONSTANT)   nu = 0.383 (CONSTANT)   rho = 7334 (CONSTANT)
 | Switch | Default | Meaning |
 |---|---|---|
 | `MPMOptions.enable_thermal` | **True** (`options.py:684`) | The solver *runs* the thermal kernels — diffusion, surface flux, gather, contact |
-| `StrikeController.thermal_enabled` | **False** (`strike_controller.py:130`) | "Thermal Freezing" — snapshots particle temperatures before each physics step and **restores them after** (`:945`, `:963`) |
+| `StrikeController.thermal_enabled` | **False** (`strike_controller.py:140`) | "Thermal Freezing" — snapshots particle temperatures before each physics step and **restores them after** (`:958`, `:976`) |
 
 ⇒ **In the default forging path the solver computes a full thermal solution every substep and
 `StrikeController` then discards it**, restoring the snapshot. A press is therefore exactly
@@ -396,10 +402,10 @@ the saturated regime, not the mechanism.
 
 **Corrected 2026-08-13, same day, both errors mine.**
 
-**The sim is not missing a force limit.** `strike_controller.py:661` runs
+**The sim is not missing a force limit.** `strike_controller.py:671` runs
 `cond_force = (force_L > max_force) | (force_R > max_force)` during PRESSING and halts with
 `stop_reason = "Max Force"` — structurally the same control stop as the real machine's. The
-threshold is `options.py:785`, `max_force = 200000.0` N. So the earlier statement here that the
+threshold is `options.py:797`, `max_force = 200000.0` N. So the earlier statement here that the
 sim "*cannot* be force-limited where the real press is" was wrong: it can, and today's hit 1
 reached **F = [38.1, 192.5] kN against a 200 kN threshold — within 4% of tripping it.** The limit
 may already bind occasionally, unnoticed.
@@ -494,7 +500,7 @@ motivation) for momentum, and left thermal on raw 1988-era FLIP.
 
 ### 4.1.1 🎯 What the failure actually is — undershoot, not runaway
 
-**Measured 2026-08-13.** "Thermal Detonation" is a misleading label. `options.py:799-800` fires
+**Measured 2026-08-13.** "Thermal Detonation" is a misleading label. `options.py:811-812` fires
 it on `temp > 4000 K` **or** `temp < 0 K` — opposite failures with different fixes. This document
 previously refused to guess between them, and was right to: the answer was not readable from any
 run on disk, for two separate reasons.
@@ -858,16 +864,52 @@ Both replay the same 17-hit sequence, so it is a like-for-like comparison.
 
 ⚠️ **Do not read that as "the sim is right."** It is n = 1, one hit, and the sim's gap here is
 *derived from the controller's strain* rather than measured from the particle cloud — while A-7
-*measures the cloud* and gets ~32.3 mm corrected for the same nominal quantity. **Those two sim
-numbers differ by ~2 mm and cannot both be right.** Candidate explanations: their arm
-(`g1_grid_prod`) differs in resolution and contact so the force limit may bind in some
-configurations and not others; or jaw-gap and cloud-span are not the same measurement; or one
-derivation is wrong.
+*measures the cloud* and gets ~32.3 mm corrected for the same nominal quantity.
 
-🚩 **This is the single most important open item.** "Does the press reach its command" is a
-precondition for every geometry comparison in *both* workstreams, the two workstreams currently
-disagree about it, and neither had checked it. It is also cheap: `grep 'Strike -> HOLDING'` over
-any existing run log says immediately whether that run was force-limited.
+#### 4.7.3 The stop is per-hit and configuration-dependent
+
+**Corrected 2026-08-13 (rev 15). The error was mine.** What stood here said the two sim numbers
+"differ by ~2 mm and **cannot both be right**", and called reconciling them the single most
+important open item. **The cheap test this section itself prescribed refutes the framing.**
+Running `grep 'Strike -> HOLDING'` over an existing multi-hit log (`profile_g0_17_render.log`,
+2026-08-11) shows the stop reason changing *from hit to hit inside one run*:
+
+| hit | commanded strain | achieved | stop reason |
+|---|---|---|---|
+| 1 | 0.2437 | 0.2437 | **Target Strain** |
+| 2 | 0.2903 | 0.2450 | Max Force |
+| 3 | 0.3318 | 0.3352 | **Target Strain** |
+| 4 | 0.3836 | 0.3720 | Max Force |
+| 5 | 0.3100 | 0.3113 | **Target Strain** |
+| 6 | 0.3672 | 0.3261 | Max Force |
+| 7 | 0.3802 | 0.3610 | Max Force |
+
+⇒ **The limit binds on some hits and not others within a single run**, so two workstreams
+reporting different answers to "did the press reach its command" can *both* be correct. The
+configuration candidate is now evidenced rather than speculative: that run presses at
+`W_contact = 63.600 mm` and its **hit 1 reaches its command exactly**, while the runs analysed
+above press at `W_contact = 64.000 mm` and their hit 1 is force-limited.
+
+🚩 **Note which hit is the exception.** In that configuration hit 1 is the one hit where the limit
+did *not* bind — and every number in §4.7.2 is hit-1-only. That is §11's first-event pattern
+again, running the other way: here hit 1 is unrepresentative by being *better* behaved than its
+neighbours, not worse.
+
+**What is still open is narrower than "one of us is wrong":** whether jaw-gap and cloud-span
+measure the same quantity, and what determines *which* hits saturate.
+
+⚠️ **`max_force` is no longer one constant across worktrees.** `aims-genesis/nsf-demo` now reads
+it from the environment — `max_force: float = float(os.environ.get("AGF_MAX_FORCE", 200000.0))`
+(`nsf-demo/agforge/options.py:452`, uncommitted at time of writing). This worktree still has the
+plain literal. **A run's effective threshold now depends on which worktree and which environment
+it ran in**, which any cross-workstream force comparison has to control for.
+
+📌 **Second-hand, recorded as a pointer not a finding.** Workstream A-8 reports mid-batch that
+arms `p1_particle` and `p3_pg2p_pos` complete 17/17 with the force stop relaxed, having failed at
+hits 14 and 10 respectively with it active — same mesh IC, only the stop differs. **Not verified
+here**, and their batch was still running. If it holds, the force stop is upstream of stability
+failures this project has been attributing to the material and the timestep, which would matter
+considerably more than the closure number. **Workstream A owns it; do not open a second front.**
 
 ⚠️ Do **not** conclude from this that lowering `max_force` to the real 110.2 kN would help. It
 would move an already-active stop from one point on an artifact to an earlier one. §3.5.1's
@@ -1040,7 +1082,7 @@ error cancels. **(b) is safe; (a) is provisional.**
 
 §3.4 measures **−6.03 °C/s** median within-bout cooling, the only real thermal ground truth this
 project has. A lumped-cylinder estimate at the sim's *own* shipped parameters
-(`cooling_budget.py`; ε = 0.40 `options.py:705`, h = 15, `Cp` from `get_steel_cp`, 38.1 mm bar):
+(`cooling_budget.py`; ε = 0.40 `options.py:717`, h = 15, `Cp` from `get_steel_cp`, 38.1 mm bar):
 
 | case | °C/s | vs measured |
 |---|---|---|
@@ -1063,7 +1105,7 @@ and it cannot be made into one.
 **What the candidates actually are, in order:**
 
 1. **Die/manipulator contact conduction.** `thermal_contact_conductivity = 3000 W/(m²K)` exists
-   (`options.py:693`) and a contact fraction of only ~5% at ε = 0.80 recovers 77% of the measured
+   (`options.py:705`) and a contact fraction of only ~5% at ε = 0.80 recovers 77% of the measured
    rate. This is where calibration effort belongs.
 2. 🚩 **Surface versus bulk — a genuine confound in the comparison, not just in the model.** The
    camera reads a **radiometric surface** temperature; this estimate is **lumped**. Over the ~5 s
@@ -1253,7 +1295,7 @@ Ranked by impact on the coupled-physics goal.
 | 7 | **`approach_speed` = 273.2 m/s** vs a 100 m/s intercept | `options.py:940` — uses macro `dt`, not `substep_dt` | Real defect; **not** the thermal cause | unclaimed |
 | 8 | **No KE/IE assertion** | — | The validity of the whole time-scaling scheme is unmonitored | this workstream |
 | 9 | Stock volume +9.9% | `real_scale.py:47` | Caps absolute geometry agreement at ~0.80 IoU | A-7 |
-| 10 | "Thermal Detonation" is a misleading name | `strike_controller.py:1657` | Checks `T > 4000 K` **or** `T < 0 K` — fires on numerical collapse, not overheating | cosmetic |
+| 10 | "Thermal Detonation" is a misleading name | `strike_controller.py:1667` | Checks `T > 4000 K` **or** `T < 0 K` — fires on numerical collapse, not overheating | cosmetic |
 
 ---
 
@@ -1662,11 +1704,12 @@ Hashes via `git log --oneline -- docs/THERMOMECHANICAL_COUPLING_AND_SCALING.md`.
 
 | Date | Rev | Change |
 |---|---|---|
+| 2026-08-13 | 15 | 🚩 **Re-pointed ~10 drifted source citations** invalidated by B-3's `d2d7c701` (+12 lines in `options.py`) and `bc850e82` (+10 in `strike_controller.py`) — including `strike_controller.py:661 → :671`, the line §3.5.1's force-limit finding cites. The code was unchanged; only the pointers were wrong. Header now warns that line numbers drift in this shared worktree. 🎯 **§4.7.3 corrects §4.7.2's framing, my error:** "the two sim numbers cannot both be right" was too strong. The stop reason changes *per hit within one run* (`profile_g0_17_render.log`: hits 1/3/5 Target Strain, 2/4/6/7 Max Force), so both workstreams can be right — and in that configuration hit 1 is the one hit that is *not* force-limited, first-event bias running the other way. Also records that `max_force` is now environment-overridable in `nsf-demo` and no longer one constant across worktrees. |
 | 2026-08-13 | 14 (`aad39ba2`) | ✅ **A5 done: noise floor at n = 5** — σ = 0.00024, range 0.00060, five replicates in separate processes (§4.5). The inherited 0.0002 was right as ~1σ but had been used as a *detection threshold*; acceptance criterion 7 raised 0.0002 → **0.0007 (3σ)**. No prior verdict changes: JC vs clamped-Arrhenius is 0.8σ (confirmed indistinguishable), `m3` 15.9σ, thermal-off 91.7σ. `dev_p95`/`dev_max` were identical across all five — more reproducible than IoU. |
 | 2026-08-13 | 13 (`6f3cfa4c`) | 🚨 **§4.7.2: the press already terminates on `Max Force`, not on target strain** — `HOLDING (Max Force, strain=0.2130, steps=49)`, identical in three runs. The adapter intends position control against `hit.rho`; the force stop was meant as a backstop. ⇒ in this configuration hit-1 closure is set by where a numerical artifact crosses 200 kN. **Must be reconciled with workstream A**, who measure the sim landing on its command to within 0.2 mm — both cannot hold for one run. |
 | 2026-08-13 | 12 (`694b97b5`) | 🎯 **§4.11: emissivity is not the lever on cooling rate and cannot be made into one.** The sim's own parameters give **1.05 °C/s** against the measured **6.03**; the emissivity needed with no conduction is **3.01** (max 1.0). Contact conduction and a surface-vs-bulk confound are the remaining candidates. Adds `cooling_budget.py`. |
 | 2026-08-13 | 11 (`b5b88037`) | 🚨 **§4.7.1: "peak force" here is a numerical artifact.** Deterministic profile (two runs, 0.06%): approach impact to 89 kN → decay → **plateau ~57 kN, dies to 0.3%** → terminal spike to **192 kN with 5× die asymmetry**. Real blow #1 is monotonic to 66.5 kN. The plateau is **0.86×** real; the over-prediction is the transient. ⇒ every force calibration in this project (2.56×, 1.8×, retracted 1.34×) was peak-based and blow-1-based. |
-| 2026-08-13 | 10 (`7114a482`) | **Corrected rev 9, same day, both errors mine.** The sim is *not* missing a force limit — `strike_controller.py:661` implements it, threshold 200 kN. And its force cannot calibrate that threshold (1.34–2.9× spread, 5× die disagreement), so `max_force = 110200` must not be set. The material→geometry route was **oversold**: it scales with the same 1.1%-per-10% coupling. |
+| 2026-08-13 | 10 (`7114a482`) | **Corrected rev 9, same day, both errors mine.** The sim is *not* missing a force limit — `strike_controller.py:671` implements it, threshold 200 kN. And its force cannot calibrate that threshold (1.34–2.9× spread, 5× die disagreement), so `max_force = 110200` must not be set. The material→geometry route was **oversold**: it scales with the same 1.1%-per-10% coupling. |
 | 2026-08-13 | 9 (`deb4337d`) | **§3.5: the die-closure shortfall is a force limit, not a closure cap.** 38 of 47 blows land within 0.13 mm of command; the 9 that miss are exactly the 9 saturating 110.2 kN, clean separation (105.9 vs 110.1 kN). A fixed 7.94 mm cap would under-close 33 of the 38 the real press completed. |
 | 2026-08-13 | 8 | 🎯 **§4.1.1: measured what "Thermal Detonation" actually is — one-sided undershoot to negative temperature, not runaway.** 1,284 of 3,160 particles below 0 K in the freshly gathered buffer, **zero** above 4000 K, no NaN, frame 0 pristine. Closes §4.2's loop: undershoot needs a gradient, and a 293 K billet has none, which is why it was the only surviving temperature. §11 downgraded from "mechanism not pinned" to **half-pinned** — the failure is measured, the route is still a model. Also found **two lying diagnostics**: the runner's flip read-back used a `1e-9` tolerance on a float32 field, so 0.97 could never verify and the headline arms silently ran unverified on the default; and the forensic trace inspects frame 0 while the trigger tests all buffers, so it reported the failure with no particle attached. Reconciled the repo's two S_T figures — the in-source 171,653 / ~97× predates `cfl_use_pwave`, and 171,653 × 1.3808 = 237,015. |
 | 2026-08-13 | 7 (`fadfd527`) | ✅ **§3.3: re-derived the ~960 °C blow-#1 billet temperature independently** — the oldest outstanding item in the document, requested by two prior handoffs and never done. Reproduces within ~4 °C, cooling rate 4.73 vs 4.8 °C/s, and the press-not-coil camera view is confirmed by rendered frames. **New:** isolation-method sensitivity bounded at 3.8–16.2 °C, i.e. inside the ±50 K emissivity band, so the original's own risk assessment was right. §11 no longer carries it as unverified; risk 5 and open question 1 both resolve; phase E re-ordered onto per-blow extraction. |
