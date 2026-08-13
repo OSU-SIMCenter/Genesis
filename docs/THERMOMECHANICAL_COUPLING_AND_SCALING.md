@@ -763,6 +763,42 @@ PRESSING→HOLDING transient, which has not been diagnosed.
 > 🚩 The 5× die asymmetry at step 48 is unexplained and is recorded, not rationalised. It appears
 > only in the terminal transient; through the plateau the two dies agree to 0.3%.
 
+#### 4.7.2 🚨 And the press is already stopping on that transient
+
+Three independent runs of hit 1 end identically:
+
+```
+Strike -> HOLDING (Max Force, strain=0.2130, steps=49)
+```
+
+**Not `Target Strain`. `Max Force`.** Same stop reason, same strain to four decimals, same step,
+in every run — the terminal transient of §4.7.1 crosses the 200 kN threshold at step 49 and halts
+the press.
+
+This is not the adapter's intent. `genesis_forge_adapter.py:327` triggers the strike with a
+placeholder `0.95`, then `:338` sets the real target strain mid-stroke once both jaws touch and
+`W_contact` is known, from `hit.rho`. The design is **position** control against the commanded
+gap; the force limit is meant as a backstop. The adapter even warns explicitly when `rho` is
+below the jaws' mechanical stop — that warning did **not** fire here, so the commanded gap was
+geometrically reachable.
+
+⇒ **In this configuration the sim's hit-1 closure is set by where a numerical artifact crosses
+200 kN, not by the commanded reduction.** Every geometry number produced in this configuration
+inherits that. This is the most consequential item in §4.7, and it was invisible for as long as
+nobody read the stop reason.
+
+🚩 **It also has to be reconciled with workstream A**, who measure the sim landing on its
+commanded gap to within 0.2 mm — which cannot both be true of the same run. Their arm
+(`g1_grid_prod`) differs from this one in resolution and contact settings, so the likeliest
+reading is that the force limit binds in *some* configurations and not others. **That is worth
+establishing before either number is used**, because "does the press reach its command" is a
+precondition for every geometry comparison in both workstreams, and neither of us checked it.
+
+⚠️ Do **not** conclude from this that lowering `max_force` to the real 110.2 kN would help. It
+would move an already-active stop from one point on an artifact to an earlier one. §3.5.1's
+argument stands: the trace cannot calibrate the threshold. What changes is the urgency — the
+threshold is not dormant, it is load-bearing today.
+
 ### 4.8 The material card is in-domain at the measured temperature
 
 The billet was **measured at ~960 °C at blow #1** (06-15 mcap; session `12b6fa7e` — see §11 for
