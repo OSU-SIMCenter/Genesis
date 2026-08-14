@@ -98,6 +98,16 @@ def main():
     # 100 m/s stability intercept). The contact workstream found 35 m/s takes their
     # arms to 17/17.
     ap.add_argument("--approach-speed", type=float, default=None)
+    # Die-balance loop gain (options.py:793, default 1.5e-4). The loop drives one die
+    # to zero velocity above |dF|_stall = sqrt(pressing_speed*20000/gain) = 57.7 kN at
+    # the shipped values, which happens on 14 of 17 hits -- see doc 4.7.4. Lowering the
+    # gain raises that threshold as 1/sqrt(gain); whether it also removes the underlying
+    # sign-alternating divergence is the open question this knob exists to answer.
+    ap.add_argument("--force-balance-gain", type=float, default=None)
+    # N = pressing_speed / real_die_speed. Sweeping this is D1a (mechanical
+    # N-invariance). CONFOUNDED while the balance loop is unstable -- an N sweep run
+    # today measures the controller, not the similarity transform. Fix the gain first.
+    ap.add_argument("--pressing-speed", type=float, default=None)
     args = ap.parse_args()
 
     use_arr, billet_k, t_fit_max = ARMS[args.arm]
@@ -129,6 +139,10 @@ def main():
         self.mpm.default_initial_temperature = billet_k
         if args.approach_speed is not None:
             self.strike.approach_speed = float(args.approach_speed)
+        if args.force_balance_gain is not None:
+            self.strike.force_balance_gain = float(args.force_balance_gain)
+        if args.pressing_speed is not None:
+            self.strike.pressing_speed = float(args.pressing_speed)
         if args.no_thermal:
             self.mpm.enable_thermal = False
 
@@ -214,6 +228,29 @@ def main():
                              % (args.approach_speed, approach_used))
         print("[verify] approach_speed = %.3f m/s" % approach_used)
 
+    # --- press-control read-back (same abort-on-mismatch contract as the rest) ---
+    gain_used = float(state.env.cfg.strike.force_balance_gain)
+    if args.force_balance_gain is not None:
+        # Tolerance is relative: the gain is O(1e-4), so an absolute 1e-6 bound would
+        # accept a 1% error. This is the trap the flip-frac read-back fell into with a
+        # 1e-9 absolute tolerance on a float32 field.
+        if abs(gain_used - args.force_balance_gain) > 1e-6 * abs(args.force_balance_gain):
+            raise SystemExit("FORCE BALANCE GAIN MISMATCH: asked %.6e, cfg reads %.6e"
+                             % (args.force_balance_gain, gain_used))
+        print("[verify] force_balance_gain = %.4e" % gain_used)
+
+    press_used = float(state.env.cfg.strike.pressing_speed)
+    real_die_speed = float(state.env.cfg.strike.real_die_speed)
+    if args.pressing_speed is not None:
+        if abs(press_used - args.pressing_speed) > 1e-6 * abs(args.pressing_speed):
+            raise SystemExit("PRESSING SPEED MISMATCH: asked %.4f m/s, cfg reads %.4f"
+                             % (args.pressing_speed, press_used))
+        print("[verify] pressing_speed = %.4f m/s" % press_used)
+
+    N_used = press_used / real_die_speed if real_die_speed else float("nan")
+    stall_dF = (press_used * 20000.0 / gain_used) ** 0.5 if gain_used > 0 else float("inf")
+    print("[verify] N = %.1f, |dF|_stall = %.0f N" % (N_used, stall_dF))
+
     # --- thermal FLIP/PIC override, with read-back (runtime field, no recompile) ---
     flip_used = None
     if args.flip_frac is not None:
@@ -256,7 +293,11 @@ def main():
                 "billet_K_cfg": cfg_temp, "billet_K_solver": solver_temp,
                 "enable_particle_contact": pc,
                 "thermal_flip_frac": flip_used,
-                "approach_speed": approach_used}
+                "approach_speed": approach_used,
+                "force_balance_gain": gain_used,
+                "pressing_speed": press_used,
+                "N": N_used,
+                "stall_dF_N": stall_dF}
     print("[verify] OK -- %s" % json.dumps(observed))
 
     status, n_done, err = "completed", 0, None
