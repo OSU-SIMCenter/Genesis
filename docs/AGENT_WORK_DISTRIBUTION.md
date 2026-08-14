@@ -134,6 +134,14 @@ Checked live 2026-08-14.
   `-xhigh` (each with a `-fast` twin).
 - **`-p` has full write + shell access by default.** Read-only is opt-in via `--mode ask` or
   `--mode plan`. Use `--mode ask` for anything that should not touch the tree.
+- 🚨 **The whole dispatch must live in a shell script file. Never inline the prompt.**
+  Passing it through PowerShell → `wsl.exe` → `bash -lc` **strips the double quotes**, so
+  `cursor-agent` receives only the **first token** of the prompt and the remaining words become
+  stray argv entries. **Verified 2026-08-14:** `"Reply with exactly: PILOT_OK"` arrived as
+  `Reply`. ⚠️ **The run still exits 0 and returns a well-formed success JSON** — the agent
+  cheerfully answers the truncated prompt — so this fails *silently* and looks like a bad model
+  response rather than a broken dispatch. The first pilot dispatch was lost to exactly this.
+  Stage the script on Windows, `cp` it in from `/mnt/c`, then `bash -lc /path/to/script.sh`.
 - **Long briefs go in a file**; the dispatch prompt stays one line pointing at it.
 - Auth is per-account and has changed before — run `cursor-agent status` rather than assuming.
 - Every run is auditable afterwards at `~/.cursor/chats/<hash>/<uuid>/store.db` (SQLite, plaintext
@@ -184,3 +192,34 @@ that for the price of one workstream instead of three.
 
 ⚠️ **Record the answer here either way.** An unrecorded negative result is how
 `benchmark_force_balance.py` stayed broken and cited for weeks.
+
+### ✅ Pilot 1 result, 2026-08-14 — `clamp_probe.py`, `cursor-grok-4.6-xhigh`
+
+**Verdict: pass, and the output improved the Claude-tier work rather than merely matching it.**
+579 s, 157k in / 37k out.
+
+- **Calibration gauge 5/5**, with three genuine additions the orchestrator did not have: that the
+  `JohnsonCookPlasticity` class docstring still advertises the `(1 + C ln ε̇*)` term the kernel
+  never evaluates; that Genesis's own `SimOptions` default is 1 substep, not this worktree's 8;
+  and the mirroring comment in `base_mpm_solver.py` that names the consistency test.
+- **Acceptance criteria 2–5 met**, including reproducing the known 2.33× clamp error exactly
+  (181.1 vs 77.8 MPa) — the criterion it was invited to fail honestly, and did not need to.
+- **Criterion 1 was mis-specified by the orchestrator** ("without pixi") — numpy is not in the
+  system interpreter, so no script in this repo can meet it. The intent (no GPU, seconds) is met:
+  ~1 s under pixi. **The criterion was wrong, not the work.**
+- **It respected the shared-source constraint**: `git status` showed exactly one untracked file.
+- 🎯 **It pushed back on the brief, correctly.** It found that the brief's criterion 4 targeted
+  the *former* temperature wall while part (3) specified measured medians — inconsistent as
+  written — and printed both. And it found the result recorded in §8.3.1 of the material doc:
+  the clamp that actually binds is the temperature **floor**, not the rate ceiling. That
+  reversed the priority ordering in a document the orchestrator had written the day before.
+
+**What this says about routing.** The task was well-suited by construction — mechanically
+checkable output, no shared-source edits, no physics judgment required, and acceptance criteria
+fixed before dispatch. The pushback in §4 of its report is the part that earned trust, and it
+only exists because the brief explicitly invited it. **Keep that invitation in every brief.**
+
+⚠️ **The failure mode this pilot did *not* test:** every number it produced was independently
+re-derivable, and the orchestrator re-ran the script and checked the envelope figures against a
+separate prior derivation. A task whose output *cannot* be checked that cheaply has not been
+shown to be safe to delegate.

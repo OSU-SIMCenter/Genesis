@@ -404,6 +404,71 @@ noting that Gupta tested at 323–623 K, presenting them as an answer about the 
 regime. The deep-research run caught it. The regime caveat is the whole ballgame
 here, so a confident-looking citation is not sufficient — check the test window.
 
+## 7.5 AISI 4340 is promoted to a first-class alternative — decided 2026-08-14
+
+**This reverses the drift toward treating 316L as the only material.** 4340 was never actually
+purged — `material_properties.py` already carries `MATERIALS = {"316L": ..., "4340": ...}` and its
+docstring says *"Both are kept."* But retention had decayed to thermal-only, and nothing exercised
+the 4340 path.
+
+### Why keep it, stated plainly
+
+**316L and 4340 answer different questions, and we currently can only ask one of them.**
+
+- **316L is the validation-against-reality material.** Every measurement we have — the mcap, the
+  thermal camera, all 47 blows — is 316L. It is the only material that can tell us whether the sim
+  matches *the machine*.
+- **4340 is the validation-against-literature material.** It is the canonical benchmark for this
+  model class: Johnson & Cook's original 1983 paper used it, and MTS parameters are published for
+  multiple tempers (Banerjee 2005, §8.3). Its published constitutive data is far denser than 316L's.
+
+⇒ **Today, when a 316L run disagrees with reality, we cannot separate "the solver is wrong" from
+"the card is wrong."** A material whose card is independently, densely published breaks that
+ambiguity. That is the entire argument, and it is a numerical-verification argument, not a
+process-fidelity one. **4340 is not a substitute for 316L validation and must not be reported as
+one.**
+
+### Current state, checked at `e489a7bd` — three layers, not one
+
+| layer | 4340 state |
+|---|---|
+| **Thermal properties** | ✅ **Complete.** `AISI_4340` carries k, cp, ρ_e, μ_r, Curie behaviour; `ACTIVE_MATERIAL` is a one-line switch |
+| **Mechanical card** | ❌ **Overwritten in place.** The Johnson & Cook (1983) 4340 set survives only as a *comment* — `options.py:128`, A=792 MPa, B=510, n=0.26, C=0.014 — with each replaced value annotated at `:175`, `:178`, `:189`, `:204` |
+| **Solver kernels** | ⚠️ **Compiled 316L literals.** `material_properties.py` warns: *"the GPU kernel curves in `base_mpm_solver.py` do NOT read this — changing this alone silently desynchronises them"* |
+
+### 🚩 The trap nobody has hit yet: the test suite asserts 316L, not `ACTIVE_MATERIAL`
+
+`tests/test_material_property_consistency.py` is written to assert **316L specifically**, and
+deliberately so — `test_conductivity_rises_with_temperature` documents its own failure mode as
+*"here means someone reinstated an AISI 4340-shaped curve"*, and `test_alpha_worst_is_at_the_hot_end_for_316l`
+encodes the same asymmetry.
+
+⇒ **Switching `ACTIVE_MATERIAL` to 4340 today makes the consistency suite fail — correctly, but
+for the wrong reason.** Those tests must become **material-parametrised** (assert the shape that
+the *active* material declares) before 4340 is runnable. This is the real work in the task and it
+is not large; it is just not the one-line switch the registry makes it look like.
+
+### Scope, in dependency order
+
+1. **Parametrise the consistency tests** over `MATERIALS` so each asserts its own material's
+   declared shape rather than 316L's. Nothing else can land first.
+2. **Restore the 4340 mechanical card as selectable** — the JC constants are already in the
+   comment at `options.py:128`; source them properly to Johnson & Cook (1983) rather than to a
+   comment, and note that 4340's constants are **room-temperature referenced** while 316L's `A`/`B`
+   are already the 1000 °C values with `T_ref = 1273.15`. **The two cards use different reference
+   conventions and mixing them silently double-softens or under-softens.** This is the single
+   highest-risk detail in the task.
+3. **Make the kernel curves read the registry**, or add a guard that refuses to run when
+   `ACTIVE_MATERIAL` and the compiled literals disagree. The warning in the source is currently
+   the only protection and it is a comment.
+4. **Retrieve and cite 4340 reference data** — JC and MTS parameter sets with sources. Good
+   delegation candidate (fetch URLs and verbatim values; do not let a delegated agent *summarise*
+   parameters, per `AGENT_WORK_DISTRIBUTION.md` §2).
+5. **Run one arm each way** and report both against the same geometry metric.
+
+⚠️ **Do not let 4340 quietly become the default.** The real forge runs 316L. 4340 exists here to
+test the solver, and every result produced under it must say so.
+
 ## 8. Extrapolation beyond the fit domain — what we do, and what we should
 
 **Added 2026-08-14.** Every constitutive fit here is valid on a box in (T, ε̇, ε). The forge does
@@ -509,20 +574,60 @@ phonon drag at very high rate ([Modification of the MTS model for high strain-ra
 Ti-6Al-4V](https://consensus.app/papers/details/ff83fa3c42585e9fbe0b74f3672042d2/), Allen et al.
 2023). **Every model has a domain; the goal is to know where it is, not to find one without.**
 
+### 8.3.1 🎯 MEASURED 2026-08-14 — and it re-ranks §8.4
+
+`clamp_probe.py` (repo root) evaluates every clamp against the measured envelope. **The result
+inverts the emphasis this section had when it was written.**
+
+| axis | blows inside the **fit** | blows inside the **clamp** | does the clamp bind? |
+|---|---|---|---|
+| temperature | 29 of 47 | 29 of 47 | 🚨 **YES — 18 of 47 below `T_fit_min`** |
+| **strain rate** | **0 of 47** | **47 of 47** | ❌ **never** |
+| plastic strain (per-blow) | — | 40 of 47 | yes, 7 above the table end |
+
+**The distinction §8.2 blurred, and it matters: *being extrapolated* and *being clamped* are
+different failures.**
+
+- **Rate is 100% extrapolated and 0% clamped.** Every blow is outside Song's fitted rate window,
+  but every blow is also comfortably inside `[1e-4, 1e3]`, so the clamp never fires. Widening or
+  tightening `rate_max` changes **nothing** about today's numbers. It is a guard that does not
+  guard — a latent risk, not an active distortion.
+- **Temperature is the axis that is actively distorting results, and via its FLOOR.** 18 of 47
+  blows sit below `T_fit_min`; **zero** reach even Song's 1000 °C ceiling. And the floor errs in
+  the unsafe direction: at the measured minimum (888.4 K / 615 °C), clamped gives **391.6 MPa
+  against an extrapolated 673.6** — **ratio 0.58, understating strength by 42%.**
+
+🚩 **A consequence for the 2026-08-07 `T_fit_max` change.** Raising the ceiling 1273.15 → 1473.15 K
+corrected a real 2.33× error (`clamp_probe.py` reproduces it exactly: 181.1 vs 77.8 MPa). But on
+**this** 47-blow envelope **no blow reaches even the old ceiling**, so that fix moves none of these
+evaluations. It was motivated by a billet "at real forging heat (1150–1260 °C)" while the camera
+reads 615–967 °C. ⚠️ **That is a ~200–300 °C disagreement the ±50 K emissivity band cannot
+close**, and it is the same surface-versus-bulk question §4.11 of the coupling doc could not
+separate. **Open — do not resolve it by picking whichever number suits the argument.**
+
+⇒ **Revised priority: the temperature floor is the clamp costing us accuracy today.** The rate
+work is still worth doing, but for a different reason than stated below — not because the clamp
+binds, but because the *fit* does not cover the regime at all.
+
 ### 8.4 What to do here, in order
 
 1. **Instrument the clamps** (~20 lines, no physics). Report per hit the fraction of
    particle-evaluations that saturated each of the three clamps, and the min/max of each input
    seen. **We are currently blind to our own extrapolation.** Everything below is guesswork until
    this exists, and it is the cheapest item in this document.
-2. **Make the physical rate the default for Arrhenius arms**, not opt-in. This converts a
-   10⁴-fold rate extrapolation into a 19-fold one — the single largest reduction available, and
-   it is a default change, not new physics. Use the **measured session median 0.373 /s** (§7.1),
-   or 0.41 which is within 9%.
-3. **Widen the strain-rate guard to something that binds.** `rate_max = 1e3` cannot catch a
-   fictional 656 /s. Set it near the physical envelope (the measured max is 1.47 /s) and make
-   exceeding it **abort or warn**, matching the abort-on-mismatch contract the arm runner already
-   uses. A guard that never fires is not a guard.
+2. 🚨 **Deal with the temperature FLOOR — re-ranked to second by §8.3.1's measurement.** It
+   binds on 18 of 47 blows and understates strength by up to 42%, which is the unsafe direction.
+   The `T_fit_max` precedent applies directly: extrapolate the sinh form downward and corroborate
+   the extrapolated point against an independent source that measured *below* 800 °C. Until then,
+   every result touching those 18 blows carries a soft-material bias.
+3. **Make the physical rate the default for Arrhenius arms**, not opt-in — the fictional 656 /s
+   is 3×10⁴ outside the fit. ⚠️ Note this is **not** about the clamp, which never fires
+   (§8.3.1); it is about what the law is *evaluated at*. Use the measured median **0.373 /s**
+   (§7.1), or 0.41 which is within 9%.
+4. **Make the rate guard actually guard.** `rate_max = 1e3` sits 5 orders above the fit and
+   catches nothing — the sim's 656 /s slips under it. Set it near the physical envelope
+   (measured max 1.47 /s) and make exceeding it **abort or warn**, matching the arm runner's
+   existing contract. Low urgency for today's numbers, high value as a tripwire.
 4. **Corroborate the rate extrapolation out-of-band**, the same way `T_fit_max` was corroborated.
    Ryan & McQueen 1990 covers 900–1200 °C in torsion and reaches higher rates than Song; it is
    already cited here and may bracket the 0.1–1.5 /s band directly.
