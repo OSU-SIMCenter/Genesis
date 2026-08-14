@@ -1017,10 +1017,13 @@ amplifies, or the loop's own first overshoot. The data supports both. **What is 
 that the loop amplifies and sustains it, and that the stall is fully accounted for.** Do not
 upgrade "amplifies" to "causes" without a gain sweep.
 
-🚩 **This confounds D1a.** N-invariance assumes velocity scales cleanly by `N`. It does not: on
-82% of hits the effective die velocity is set by an unstable feedback loop on a force imbalance,
-not by `pressing_speed`. **Sweeping N while this holds measures the controller, not the
-similarity transform.** §8.0's "D1a ✅ RUNNABLE NOW" is withdrawn — see the revised entry there.
+🚩 **This confounds D1a — at the shipped gain.** N-invariance assumes velocity scales cleanly
+by `N`. At `force_balance_gain = 1.5e-4` it does not: on 82% of hits the effective die velocity is
+set by an unstable feedback loop on a force imbalance, not by `pressing_speed`, so sweeping N
+would measure the controller rather than the similarity transform.
+✅ **Resolved below.** The gain sweep shows the confound disappears at **5e-5 and lower** — dies
+track to ~3 kN, velocity symmetric to 0.04%. **D1a is runnable today behind one flag**; §8.0 is
+updated accordingly. Read the sweep subsection before acting on this paragraph.
 
 #### ✅ The gain sweep, run 2026-08-14 — and it splits the finding in two
 
@@ -1437,7 +1440,7 @@ Ranked by impact on the coupled-physics goal.
 
 | # | Defect | Location | Impact | Owner |
 |---|---|---|---|---|
-| **0** | **Die-balance loop goes one-sided above 57.7 kN imbalance** (added 2026-08-14; numbered 0 rather than renumbering the rest, but it ranks **first** on impact) | `strike_controller.py` PRESSING branch; `options.py:793` | **14 of 17 hits** drive one die to zero velocity while the other exceeds nominal press speed. Contaminates every force number, sets where the `Max Force` stop trips, and **confounds D1a** — velocity does not scale cleanly with `N` (§4.7.4) | this workstream |
+| **0** | **Die-balance loop goes one-sided above 57.7 kN imbalance** (added 2026-08-14; numbered 0 rather than renumbering the rest, but it ranks **first** on impact) | `strike_controller.py` PRESSING branch; `options.py:793` | **14 of 17 hits** drive one die to zero velocity while the other exceeds nominal press speed. Contaminates the die-imbalance figure (48× at the shipped gain) and ~29% of peak force. ⚠️ It does **not** cause the >200 kN spike or the `Max Force` stop — both survive a 30× gain reduction. **D1a is runnable at gain 5e-5** (§4.7.4 sweep) | this workstream |
 | 1 | **FLIP gather on the temperature field** | `base_mpm_solver.py:239, :723` | Blocks coupling entirely — particle temperature unusable for flow stress | B-3's component |
 | 2 | **S_T decoupled from N** (237,014 vs 1,773) | `options.py:616` | 134× too much heat transfer per blow | B-3 / shared |
 | 3 | **Strain rate not divided by N** | `materials.py:283` | Flow stress and plastic heating evaluated at ~1800× the real rate unless the prescribed override is on | this workstream |

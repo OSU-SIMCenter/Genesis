@@ -120,6 +120,7 @@ Checked live 2026-08-14.
 # writes through \\wsl.localhost zero-pad to 4096-byte boundaries (silent corruption).
 ~/.local/bin/cursor-agent -p \
   --trust \
+  --force \
   --model 'cursor-grok-4.6-xhigh' \
   --workspace /home/timothy/GitHub/Genesis/aims-genesis/thermal-st-invariance \
   --output-format json \
@@ -134,6 +135,11 @@ Checked live 2026-08-14.
   `-xhigh` (each with a `-fast` twin).
 - **`-p` has full write + shell access by default.** Read-only is opt-in via `--mode ask` or
   `--mode plan`. Use `--mode ask` for anything that should not touch the tree.
+- **`--force` is in the recipe because the successful pilot used it.** In headless there is
+  nobody to confirm a tool call, so without it web and some shell calls get rejected mid-run.
+  ⚠️ It also means the agent can write anywhere in the workspace — **state the no-touch
+  directories explicitly in the brief and verify with `git status` afterwards.** The pilot
+  respected them; that was checked, not assumed.
 - 🚨 **The whole dispatch must live in a shell script file. Never inline the prompt.**
   Passing it through PowerShell → `wsl.exe` → `bash -lc` **strips the double quotes**, so
   `cursor-agent` receives only the **first token** of the prompt and the remaining words become
@@ -159,7 +165,7 @@ dead ids. **Re-derive rather than trust this table**: transcript `customTitle` +
 | workstream | owner | scope | state |
 |---|---|---|---|
 | **W-A · Instrumentation & coupling** | Claude, unassigned | clamp telemetry, A1 KE/IE monitor, A2 energy audit, A3 temperature telemetry, A6 coupled path | open |
-| **W-B · Scaling validation** | Claude, unassigned | **D1a N-sweep at gain 5e-5**, physical-rate default, `rate_max` guard | **briefed — best Tier-2 pilot** |
+| **W-B · Scaling validation** | Claude, unassigned | **D1a N-sweep at gain 5e-5**, physical-rate default, `rate_max` guard | open — **D1a still unrun** |
 | **W-C · Materials & extrapolation** | Claude, unassigned | 4340 restoration + consistency test, Q/n creep check, out-of-band rate corroboration | open |
 | Contact / toolchain | A-8 `81414d01` | contact engine, force-stop stability | active, `[ahead 3]` unpushed |
 | Billet geometry / IC | A-7-billet `40379be1` | IC comparison, cloud-derived closure | active |
@@ -183,8 +189,15 @@ reading everything it did.
 
 ## 6. Pilot, and how it gets judged
 
-**W-B runs first, alone**, because it is the best-specified work we have: its acceptance criteria
-were written into the coupling doc's §9.4 *before* any of this and are numeric.
+⚠️ **Correction, recorded rather than quietly fixed.** This section originally said *"W-B runs
+first, alone"*. **It did not.** The pilot that actually ran built `clamp_probe.py`, which is
+**W-A instrumentation serving W-C's extrapolation analysis** — chosen because it needed no GPU,
+touched no shared source, and had cheaply re-derivable output. **W-B's D1a sweep is still unrun.**
+Anyone reading "pilot passed" as "D1a is validated" would be wrong.
+
+The original rationale still holds for whichever task goes next: prefer the best-specified work,
+and W-B's acceptance criteria were written into the coupling doc's §9.4 *before* any of this and
+are numeric.
 
 Judge the pilot on one question: **did the Tier-2 output survive Claude-tier verification without
 a Claude session having to redo the work?** If yes, scale to W-A and W-C. If no, we have learned

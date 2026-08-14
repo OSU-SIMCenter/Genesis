@@ -485,8 +485,11 @@ the wrong default, and what the alternatives actually are.
 | **strain rate** | `[1e-4, 1e3] /s` | **2e-4 … 2e-2 /s** | **0.136–1.472 /s — 0 of 47 blows in domain** |
 | plastic strain | `[0.05, 0.45]` | tabulated at 9 nodes, 0.05 spacing | exceeds 0.45 in later hits |
 
-🚨 **The rate axis is the real extrapolation problem, and it is the one nobody has been treating
-as one.** The temperature question gets the attention because the clamp is visible and was once
+🚨 **The rate axis is the most extrapolated one, and it is the one nobody has been treating as
+one.** ⚠️ **But read §8.3.1 before setting priorities from this paragraph.** Measurement since
+showed that *being extrapolated* and *being clamped* are different failures: rate is 100%
+extrapolated and **0% clamped**, while the **temperature floor** binds on 18 of 47 blows and is
+the one actively distorting results today. The temperature question gets the attention because the clamp is visible and was once
 wrong by 2.3×. But on rate, **the entire operating regime is out of domain** — the session median
 is 19× above the top of the fit — and the guard is set at `1e3`, which is **5 orders of magnitude
 above the fitted maximum** and therefore never binds on anything physical. It is not a guard.
@@ -628,11 +631,11 @@ binds, but because the *fit* does not cover the regime at all.
    catches nothing — the sim's 656 /s slips under it. Set it near the physical envelope
    (measured max 1.47 /s) and make exceeding it **abort or warn**, matching the arm runner's
    existing contract. Low urgency for today's numbers, high value as a tripwire.
-4. **Corroborate the rate extrapolation out-of-band**, the same way `T_fit_max` was corroborated.
+5. **Corroborate the rate extrapolation out-of-band**, the same way `T_fit_max` was corroborated.
    Ryan & McQueen 1990 covers 900–1200 °C in torsion and reaches higher rates than Song; it is
    already cited here and may bracket the 0.1–1.5 /s band directly.
-5. **Check `Q` and `n` against creep theory** before trusting the extrapolated temperature band.
-6. **Only then** consider MTS or a physical+data hybrid. Both are real work and neither is
+6. **Check `Q` and `n` against creep theory** before trusting the extrapolated temperature band.
+7. **Only then** consider MTS or a physical+data hybrid. Both are real work and neither is
    justified while the clamps are uninstrumented and the rate default is wrong.
 
 ⚠️ **What this section does not claim.** No extrapolation method here has been tested in this
@@ -755,7 +758,7 @@ is **we do not know, and we cannot know until we measure it.**
    `(J, F_tmp, U, S, V, Jp, temp)` carries no rate information. Wiring it needs
    the velocity gradient (or `delta_gamma/dt`) plumbed through the dispatch in
    `base_mpm_solver.py`.
-7. **One lead worth chasing.** A 2025 MDPI paper, "Experimental and Numerical Study
+9. **One lead worth chasing.** A 2025 MDPI paper, "Experimental and Numerical Study
    of Behavior of Additively Manufactured 316L Steel Under Challenging Conditions",
    reports hot compression at **900 / 1000 / 1100 / 1250 °C × 0.1 / 1 / 10 / 100 s⁻¹**
    — precisely the grid this card extrapolates into. Its values appear to be in
