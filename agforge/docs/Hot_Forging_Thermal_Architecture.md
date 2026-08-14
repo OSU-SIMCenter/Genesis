@@ -1,5 +1,14 @@
 # Hot Forging Thermal Architecture
 
+> ⚠️ **UNMAINTAINED — verify against source before trusting anything here.** Checked 2026-08-14:
+> this file has not been updated since the 316L material change or the coupling/scaling work, and
+> at least one of its statements was found to be factually wrong (see the Roadmap's Bug 3). It
+> still describes the billet as **AISI 4340** in places; the billet is **316L**. Living references
+> are `docs/THERMOMECHANICAL_COUPLING_AND_SCALING.md` (coupling, scaling, metrics),
+> `docs/316L_MECHANICAL_PROPERTIES.md` (the material card and its validity limits), and
+> `agforge/docs/Contact_Method_Research_And_Plan.md` (contact).
+
+
 ## Overview
 Simulating hot forging processes using the Material Point Method (MPM) presents significant computational challenges due to the stark difference between mechanical and thermal timescales. Real-world forging takes seconds, while explicit MPM mechanical stability (CFL condition) dictates microsecond or nanosecond timesteps. Simulating the full physical time is computationally infeasible.
 

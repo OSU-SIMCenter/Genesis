@@ -1,5 +1,14 @@
 # Genesis / AgilityForge Thermal Physics Roadmap
 
+> ⚠️ **UNMAINTAINED — verify against source before trusting anything here.** Checked 2026-08-14:
+> this file has not been updated since the 316L material change or the coupling/scaling work, and
+> at least one of its statements was found to be factually wrong (see the Roadmap's Bug 3). It
+> still describes the billet as **AISI 4340** in places; the billet is **316L**. Living references
+> are `docs/THERMOMECHANICAL_COUPLING_AND_SCALING.md` (coupling, scaling, metrics),
+> `docs/316L_MECHANICAL_PROPERTIES.md` (the material card and its validity limits), and
+> `agforge/docs/Contact_Method_Research_And_Plan.md` (contact).
+
+
 This document outlines the known missing physical phenomena and architectural improvements required to upgrade the hot forging thermal simulation from its current state to a mathematically rigorous metallurgical digital twin.
 
 ## 1. Electromagnetics: Induction Edge-Effect Crowding
@@ -79,10 +88,21 @@ The following are mathematical or architectural flaws in features that *are* imp
 - **Fix:** Replace the binary `is_surface` flag with an integer counter `n_exposed_faces` that accumulates how many neighbors are empty, then scale the cooling coefficient by `n_exposed_faces`.
 - **Note:** Practical impact is low for cylindrical billets; the exponential decay formulation further dampens the error.
 
-### Bug 3: Johnson-Cook Missing Strain Hardening and Strain-Rate Sensitivity (Incomplete Feature)
-**Severity: MEDIUM** | **Location:** `genesis/engine/materials/MPM/elasto_plastic.py` (`update_F_S_Jp`, lines 82-87)
+### Bug 3: ~~Johnson-Cook Missing Strain Hardening~~ — HALF FIXED; rate sensitivity still absent
+**Severity: MEDIUM** | **Location:** `agforge/materials.py`, `JohnsonCookPlasticity._update_F_S_Jp_jc`
 
-- **The Problem:** The full Johnson-Cook constitutive model is $\sigma_y = (A + B\varepsilon_p^n)(1 + C \ln \dot{\varepsilon}^*)(1 - T^{*m})$. The current implementation only applies the thermal softening term $(1 - T^{*m})$ to a static base yield stress. The strain-hardening term $(B\varepsilon_p^n)$ and the strain-rate sensitivity term $(C \ln \dot{\varepsilon}^*)$ are completely absent.
+> 🚩 **Corrected 2026-08-14 — this entry was wrong and had been for weeks.** Strain hardening
+> **is** implemented: the kernel computes `sigma_y_static = A + B * eps_p**n` with `B = 195 MPa`,
+> `n = 0.417`, where `Jp` carries accumulated equivalent plastic strain. Only the **rate**
+> term remains absent, and `materials.py` marks `C` inert in-source: *"Currently INERT - the
+> kernel below never reads it."* The location given below is also stale — the model moved to
+> `agforge/materials.py`.
+>
+> Note the thermal term is `T_ref = 1273.15 K`, i.e. the **forging** temperature, not room
+> temperature, because `A`/`B` are already the 1000 °C values — so `T*` is 0 there by design and
+> there is **no softening below `T_ref`**. Do not "fix" that; it prevents double-softening.
+
+- **Original text, kept for the record:** The full Johnson-Cook constitutive model is $\sigma_y = (A + B\varepsilon_p^n)(1 + C \ln \dot{\varepsilon}^*)(1 - T^{*m})$. The current implementation only applies the thermal softening term $(1 - T^{*m})$ to a static base yield stress. The strain-hardening term $(B\varepsilon_p^n)$ and the strain-rate sensitivity term $(C \ln \dot{\varepsilon}^*)$ are completely absent.
 - **Expected Behavior:** Hitting metal at 10 m/s should require drastically more force than pressing at 0.1 m/s. Repeated strikes should progressively work-harden the material.
 - **Fix:** Track cumulative `plastic_strain` (already stored on particles) and compute `strain_rate` from `delta_gamma / dt`. Use these to compute the full three-term Johnson-Cook yield stress.
 - **Note:** This is more of an intentionally simplified model than a strict bug. The `plastic_strain` field is already tracked on particles (line 363) — the data is there, it just isn't fed back into the yield calculation.
@@ -114,7 +134,17 @@ The following are mathematical or architectural flaws in features that *are* imp
 - **Expected Behavior:** Position updates should not implicitly reset thermal state unless explicitly requested.
 - **Fix:** Either remove the thermal reset from `_kernel_set_particles_pos` (add a separate `_kernel_reset_particles_thermal` for explicit resets), or add a boolean flag `reset_thermal=True` to the Python-side `set_particles_pos()` API so callers can opt out.
 
-### Bug 8: Wasted Thermal Kernel Work When Heating Is Disabled
+### Bug 8: Wasted Thermal Kernel Work When Heating Is Disabled — still open, and it has a second consequence
+
+> 🚩 **2026-08-14:** this is not only wasted work. The snapshot/restore runs once per **macro
+> step**, which is **8 substeps** (`options.py`, `substeps = 8`), and the thermal kernels run
+> every substep. So temperature evolves freely across 8 substeps — and the constitutive law reads
+> it — before being reset. At the shipped `S_T` that is ~1.66 s of thermal time per macro step.
+> A "frozen" press is therefore isothermal **at step boundaries**, not within them. This is why
+> `enable_thermal=False` and `thermal_enabled=False` are not equivalent and score differently
+> (coupling doc §4.4). `enable_thermal=False` additionally skips **plastic heating** entirely —
+> the `p2g_post_constitutive` block is inside `if qd.static(self._enable_thermal)`.
+
 **Severity: LOW** | **Location:** `agforge/strike_controller.py` (lines 490-492) & `genesis/engine/couplers/legacy_coupler.py`
 
 - **The Problem:** When `thermal_enabled` is `False` in the strike controller, the code snapshots particle temperatures before the physics step and restores them afterward. However, the engine's Taichi kernels for thermal normalization, air cooling, contact cooling, and grid diffusion still execute every substep — all that GPU work is silently thrown away by the Python-level overwrite.

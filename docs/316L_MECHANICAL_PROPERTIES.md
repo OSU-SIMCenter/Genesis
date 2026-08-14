@@ -404,10 +404,163 @@ noting that Gupta tested at 323–623 K, presenting them as an answer about the 
 regime. The deep-research run caught it. The regime caveat is the whole ballgame
 here, so a confident-looking citation is not sufficient — check the test window.
 
+## 8. Extrapolation beyond the fit domain — what we do, and what we should
+
+**Added 2026-08-14.** Every constitutive fit here is valid on a box in (T, ε̇, ε). The forge does
+not stay in that box. This section states what happens at the walls, why the current answer is
+the wrong default, and what the alternatives actually are.
+
+### 8.1 What the code does today: it clamps, on three axes independently
+
+`ArrheniusPlasticity._flow_stress_pa` clamps **all three inputs** before evaluating:
+
+| axis | clamp | Song2020 fit domain | where the real process sits |
+|---|---|---|---|
+| temperature | `[1073.15, 1473.15] K` = 800–1200 °C | 800–**1000** °C | 615–967 °C measured (§ coupling doc 3.4) |
+| **strain rate** | `[1e-4, 1e3] /s` | **2e-4 … 2e-2 /s** | **0.136–1.472 /s — 0 of 47 blows in domain** |
+| plastic strain | `[0.05, 0.45]` | tabulated at 9 nodes, 0.05 spacing | exceeds 0.45 in later hits |
+
+🚨 **The rate axis is the real extrapolation problem, and it is the one nobody has been treating
+as one.** The temperature question gets the attention because the clamp is visible and was once
+wrong by 2.3×. But on rate, **the entire operating regime is out of domain** — the session median
+is 19× above the top of the fit — and the guard is set at `1e3`, which is **5 orders of magnitude
+above the fitted maximum** and therefore never binds on anything physical. It is not a guard.
+
+⚠️ Worse, the *simulated* rate is ~656 /s (N = 1,773 time compression), which is **3×10⁴ above
+the fit** and still slips under `rate_max`. `arrhenius_process_strain_rate = 0.41` exists to
+substitute the physical rate and is **opt-in**; when it is off, the law is evaluated four decades
+outside its domain with no diagnostic. That is defect 3 in the coupling doc's inventory.
+
+### 8.2 Why clamping is the wrong default
+
+Clamping is not a neutral fallback. It makes three specific claims, all false:
+
+1. **Zero sensitivity beyond the wall.** A clamped input means ∂σ/∂T = 0 and ∂σ/∂ε̇ = 0 outside
+   the box. For a *rate- and temperature-coupled* return map that is a strong physical assertion —
+   the material abruptly stops responding to the very variables the coupling exists to model.
+2. **A kink at the wall.** The result is C⁰ but not C¹. In an explicit solver, a derivative
+   discontinuity in the yield surface is a localisation seed: every particle sitting on the clamp
+   responds identically and stops differentiating.
+3. **Direction-dependent error, and one direction is dangerous.** Clamping *below* `T_fit_min`
+   returns the 800 °C flow stress for a colder billet, which **understates** strength — the
+   unsafe direction. Clamping *above* overstates it. This project has already paid for this once:
+   clamping at 1000 °C when the billet was at forging heat gave **181.1 MPa against 77.8**, a
+   **2.3× error entirely from the clamp** (see the `T_fit_max` note in `materials.py`).
+4. **It is silent.** Nothing reports how much of the billet was on a clamp. A run in which 90% of
+   particle-evaluations saturated the rate clamp is indistinguishable, in the output, from one
+   that never touched it.
+
+### 8.3 What the literature actually recommends
+
+**The sinh form extrapolates better than Johnson-Cook — which is an argument for extrapolating
+it, not clamping it.** A direct FEA-oriented comparison of JC against Arrhenius-type hyperbolic
+sine found the A-type model more accurate in flow-stress prediction **"even outside of the fit
+domain"** ([Evaluation on prediction abilities of constitutive models considering FEA
+application](https://journal.hep.com.cn/jocsu/EN/10.1007/s11771-018-3822-8), 2018). This is
+exactly what was done successfully for `T_fit_max`: extrapolate the *form*, then check the
+extrapolated point against an independent in-domain source (Ryan & McQueen 1990, type 316 torsion
+measured over 900–1200 °C). **That method — extrapolate, then corroborate out-of-band — is the
+one to generalise, and it has not been applied to the rate axis at all.**
+
+**Physics gives a validity check on the parameters themselves.** In the sinh law `Q` is an
+apparent activation energy and `n` a stress exponent; the standard check is to compare them with
+the values creep theory expects — lattice self-diffusion in austenite (~270–280 kJ/mol) and
+n ≈ 5 for dislocation-climb creep. This is the recommended practice in the hot-working review
+literature ([A review of hot deformation behavior and constitutive models to predict flow stress
+of high-entropy alloys](https://consensus.app/papers/details/daad9ae3c02556478b1e853857f6d157/),
+Savaedi et al. 2022). 🚩 **Our tabulated `Q` runs 426–477 kJ/mol — well above the self-diffusion
+value.** That is not unusual for solute-bearing austenitic steels, but a high `Q` means very
+strong temperature sensitivity, so **extrapolation error on the T axis compounds fast**. Worth an
+explicit check before leaning further on the extrapolated band.
+
+**For extrapolating strain specifically, DRX kinetics beat curve-fitting.** Incomplete flow
+curves are routinely extended to higher strain using an Avrami description of dynamic
+recrystallisation rather than by extending the fit ([Extrapolation of flow curves at hot working
+conditions](https://consensus.app/papers/details/1b605a817f515a7ab5178e6b5902dba6/), Mirzadeh
+et al. 2010). This is directly applicable to our ε > 0.45 clamp.
+
+**On blending models — the literature is clear that naive patching is not the answer, and that
+pure data-driven models must not extrapolate.** An ANN predicts interpolated *and* extrapolated
+strains at R² > 0.98, but **both ANN and strain-compensated Sellars fail under new deformation
+conditions**; a *hybrid* of the two generalises more widely ([Application of Constitutive Models
+and Machine Learning Models to Predict the Elevated Temperature Flow Behavior of TiAl
+Alloy](https://consensus.app/papers/details/4b12542bad1857fa8ceee418df1b6d9a/), Zhao et al.
+2023). The working recipe is to feed the *physical* model's prediction and characteristic stress
+points in as **inputs** to the network rather than replacing it: a pure network is "rather
+uncertain outside the training data range", while the integrated model predicts accurately
+([Development of Constitutive Models for Extrapolative Prediction of Nb–Ti Micro Alloyed
+Steel](https://consensus.app/papers/details/f237239e1dfe527eb3db8ea713473839/), Wu et al. 2017).
+⚠️ **A bare neural network is the worst possible choice for this project specifically** — it
+fails silently and confidently outside its training box, which is the exact failure mode this
+codebase keeps getting caught by.
+
+**If the range genuinely has to widen, change the model class rather than patch the fit.** The
+Mechanical Threshold Stress model is an internal-state-variable formulation built on
+thermal-activation kinetics precisely to span wide temperature and rate ranges; a JC-vs-MTS
+comparison under strongly varying thermal history found MTS gave more realistic plastic-strain
+evolution ([Physics-based and phenomenological plasticity models for thermomechanical simulation
+in laser powder bed fusion additive
+manufacturing](https://consensus.app/papers/details/d106b0d8c1dd5a269268993301ee5d0c/),
+Promoppatum et al. 2021), and MTS parameters have been published for AISI 4340 — the steel this
+project used before 316L ([The Mechanical Threshold Stress model for various tempers of AISI 4340
+steel](https://consensus.app/papers/details/fa267079fe2a5ae299b498c36fcce9a1/), Banerjee 2005).
+⚠️ MTS has its own wall: it breaks where the mechanism turns over from thermal activation to
+phonon drag at very high rate ([Modification of the MTS model for high strain-rate behavior of
+Ti-6Al-4V](https://consensus.app/papers/details/ff83fa3c42585e9fbe0b74f3672042d2/), Allen et al.
+2023). **Every model has a domain; the goal is to know where it is, not to find one without.**
+
+### 8.4 What to do here, in order
+
+1. **Instrument the clamps** (~20 lines, no physics). Report per hit the fraction of
+   particle-evaluations that saturated each of the three clamps, and the min/max of each input
+   seen. **We are currently blind to our own extrapolation.** Everything below is guesswork until
+   this exists, and it is the cheapest item in this document.
+2. **Make the physical rate the default for Arrhenius arms**, not opt-in. This converts a
+   10⁴-fold rate extrapolation into a 19-fold one — the single largest reduction available, and
+   it is a default change, not new physics. Use the **measured session median 0.373 /s** (§7.1),
+   or 0.41 which is within 9%.
+3. **Widen the strain-rate guard to something that binds.** `rate_max = 1e3` cannot catch a
+   fictional 656 /s. Set it near the physical envelope (the measured max is 1.47 /s) and make
+   exceeding it **abort or warn**, matching the abort-on-mismatch contract the arm runner already
+   uses. A guard that never fires is not a guard.
+4. **Corroborate the rate extrapolation out-of-band**, the same way `T_fit_max` was corroborated.
+   Ryan & McQueen 1990 covers 900–1200 °C in torsion and reaches higher rates than Song; it is
+   already cited here and may bracket the 0.1–1.5 /s band directly.
+5. **Check `Q` and `n` against creep theory** before trusting the extrapolated temperature band.
+6. **Only then** consider MTS or a physical+data hybrid. Both are real work and neither is
+   justified while the clamps are uninstrumented and the rate default is wrong.
+
+⚠️ **What this section does not claim.** No extrapolation method here has been tested in this
+codebase. The ranking is from the literature and from the one in-project precedent that worked
+(`T_fit_max`). Item 1 exists because the honest answer to "how much does clamping cost us today"
+is **we do not know, and we cannot know until we measure it.**
+
 ## 7. Open items
 
-1. **Pick the nominal strain rate** — recommended default **1 s⁻¹**, sensitivity
-   bound 10 s⁻¹.
+1. ✅ **RESOLVED 2026-08-14 — measured, all 47 blows. The recommendation below (1 s⁻¹) is
+   superseded and was 2.7× too high.** The mcap this item says is missing has been local since
+   07-23 and extracted since 08-13 (`outputs/t4_press_blows.npz`); `blow_rates.py` derives the
+   rate from the die-gap trace for every blow. True strain rate `ln(h0/h1)/dt`:
+
+   | | min | p25 | **median** | p75 | max |
+   |---|---|---|---|---|---|
+   | rate [1/s] | 0.136 | 0.268 | **0.373** | 0.554 | 1.472 |
+   | ram [mm/s] | 4.42 | 7.19 | 11.70 | 15.68 | 22.65 |
+
+   🎯 **The hardcoded `arrhenius_process_strain_rate = 0.41` is right** — within **9%** of the
+   session median. It was derived from blow 1 alone, which was luck rather than method, but the
+   number stands. The 1 s⁻¹ recommended here is **2.7× the median** and should not be adopted.
+
+   🎯 **And blow #1 is the 57th percentile on rate** — essentially median — while it is the
+   **96th percentile on temperature**. ⇒ **the first-event bias is property-specific, not a
+   blanket property of blow 1.** Check it per quantity; do not assume it transfers.
+
+   🚨 **0 of 47 blows fall inside the Song2020 fit domain** (2e-4 … 2e-2 /s). The median sits
+   **19× above its top**. Rate extrapolation is not an edge case here — it is the entire
+   operating regime. See §8.
+
+   ~~Original item follows.~~ **Pick the nominal strain rate** — recommended default **1 s⁻¹**,
+   sensitivity bound 10 s⁻¹.
 
    It is *derivable, not a lookup*: **ε̇ ≈ v / h**, ram velocity over billet
    height. The telemetry already exists — `hmr/press/state` in the mcap carries

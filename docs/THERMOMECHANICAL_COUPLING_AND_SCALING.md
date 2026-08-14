@@ -1022,10 +1022,50 @@ upgrade "amplifies" to "causes" without a gain sweep.
 not by `pressing_speed`. **Sweeping N while this holds measures the controller, not the
 similarity transform.** §8.0's "D1a ✅ RUNNABLE NOW" is withdrawn — see the revised entry there.
 
-**Cheapest next step** is a gain sweep, not a physics change: `force_balance_gain` is a plain
-config value and `benchmark_force_balance.py` already exists to vary it. If a lower gain removes
-the sign-alternating growth, the instability is control and D1a becomes runnable; if it does not,
-the initiating jump is physical and that is a different and larger finding.
+#### ✅ The gain sweep, run 2026-08-14 — and it splits the finding in two
+
+Four arms, same config and hit as the five A5 replicates, only `force_balance_gain` differing
+(`material_arms.py --force-balance-gain`; the pre-existing `benchmark_force_balance.py` is
+**broken** — it calls `args.visualize`, which its parser never defines):
+
+| gain | &#124;dF&#124;_stall | peak force | peak &#124;dF&#124; | die stalled | stop |
+|---|---|---|---|---|---|
+| **1.5e-4** (shipped) | 57,735 | **192,577 N** | **154,511 N** | **YES** | Max Force, ε=0.2130, 49 steps |
+| 5.0e-5 | 100,000 | 149,071 N | 4,929 N | no | Max Force, ε=0.2102, 47 steps |
+| 1.5e-5 | 182,574 | 148,736 N | 3,129 N | no | Max Force, ε=0.2102, 47 steps |
+| 5.0e-6 | 316,228 | 148,715 N | 3,246 N | no | Max Force, ε=0.2102, 47 steps |
+
+🎯 **The shipped gain is the outlier, and everything below it agrees.** Three independent gains
+spanning 10× converge on the same answer — peak force within **0.24%**, identical stop, identical
+strain to four decimals, identical step count. The stall vanishes exactly where the closed form
+says it should.
+
+**This splits §4.7.4 into two findings that were being confused, and corrects the framing above:**
+
+| quantity | verdict |
+|---|---|
+| 5× die asymmetry | ✅ **control artifact** — peak imbalance falls **154,511 → ~3,200 N (48×)** |
+| ~29% of peak force | ✅ **control artifact** — 192,577 → 148,7xx N |
+| the terminal spike past 200 kN | ❌ **NOT control** — survives at 1/30th gain, with the dies tracking to 0.04% |
+| the `Max Force` stop and ε≈0.21 closure | ❌ **NOT control** — unchanged across the whole sweep |
+
+⇒ **The loop amplifies; it does not initiate.** The "amplifies, not causes" hedge recorded above
+was the right call and is now measured rather than assumed. §4.7.1's terminal spike remains
+unexplained and is *not* the balance loop — it is still the open item.
+
+⚠️ Peak force here is the **largest logged** value, and PRESSING telemetry logs every 3rd step.
+The true peak necessarily exceeded 200 kN in all four arms — that is what stopped the press. So
+"149 kN" is a floor on the low-gain peak, not the peak. The **cross-arm comparison** is sound
+because all four are sampled identically; the absolute value is not.
+
+🎯 **D1a is unblocked, and cheaply.** At `force_balance_gain ≤ 5e-5` the dies track to ~3 kN and
+the velocity command is symmetric to 0.04%, so `pressing_speed` again means what the similarity
+transform assumes. **Run the N sweep at 5e-5, not at the shipped 1.5e-4.** That is a one-flag
+change, needs no physics work, and does not depend on any sibling workstream.
+
+⚠️ This does **not** license lowering the shipped default. Doing so changes every existing force
+number and the balance loop exists for a reason; it is a config change with cross-workstream
+reach. What it licenses is running *D1a* at a gain where the confound is absent.
 
 ### 4.8 The material card is in-domain at the measured temperature
 
@@ -1421,7 +1461,7 @@ behind another session. What is genuinely blocked is narrower than it looks:
 ```
 A1-A5  Instrumentation ────────────┐        ours, no dependencies
 B      Scaling unification ────────┤        ours, no dependencies
-                                   ├──► D1a  mechanical N-invariance   ⚠️ CONFOUNDED (§4.7.4)
+                                   ├──► D1a  mechanical N-invariance   ✅ RUNNABLE at gain 5e-5
                                    │
 A6     Coupled path (§2.4) ────────┤        ours, no dependencies -- but MISSING TODAY
                                    │
@@ -1439,14 +1479,13 @@ workstream.
 evolving temperature (§2.4). Fixing the gather makes particle temperature *usable*; A6 is what
 makes it *used*. If only one of the two lands, coupled forging still does not run.
 
-⇒ **Do A + B first.** ⚠️ **D1a is no longer cleanly runnable — corrected 2026-08-14.** §4.7.4
-measured the die-balance loop driving one die to zero velocity on **14 of 17 hits**, so the
-effective die velocity is set by a feedback loop on force imbalance rather than by
-`pressing_speed`. An N sweep run today would measure that loop, not the similarity transform.
-**Fix or bound the balance instability first** — a `force_balance_gain` sweep is the cheap probe,
-and `benchmark_force_balance.py` already exists for it. The original argument still stands once
-D1a is clean: if geometry drifts with N that reorders everything, and it costs little to learn
-early.
+⇒ **Do A + B + D1a first — but run D1a at `--force-balance-gain 5e-5`.** §4.7.4 measured the
+die-balance loop driving one die to zero velocity on **14 of 17 hits** at the shipped gain, which
+would have made an N sweep measure the controller rather than the similarity transform. The gain
+sweep of 2026-08-14 shows that confound disappears at 5e-5 and below: dies track to ~3 kN,
+velocity symmetric to 0.04%, and three gains spanning 10× give the same closure. So D1a is
+runnable today behind one flag. The original argument stands: if geometry drifts with N that
+reorders everything, and it costs little to learn early.
 
 ⚠️ Phase B's `S_T = N` change is the one item that reaches outside this workstream: the
 induction calibration is tuned against the current default. Coordinate before landing it, or
