@@ -949,6 +949,84 @@ would move an already-active stop from one point on an artifact to an earlier on
 argument stands: the trace cannot calibrate the threshold. What changes is the urgency — the
 threshold is not dormant, it is load-bearing today.
 
+#### 4.7.4 🚨 The die-balance controller goes one-sided on 82% of hits
+
+**Measured 2026-08-14.** §4.7.1 called the terminal force spike "a numerical artifact." That was
+right but not specific enough. **It is a *control* artifact, and it has a closed-form trigger.**
+
+During PRESSING the controller applies two corrections to the commanded die velocity:
+
+```python
+SAFETY_THRESHOLD = 20000.0                                  # strike_controller.py
+adaptive_speed = pressing_speed * (SAFETY_THRESHOLD / |dF|) # only when |dF| > 20 kN
+correction     = dF * force_balance_gain                    # options.py:793, 1.5e-4
+v_L, v_R       = clamp(adaptive_speed -/+ correction, min=0)
+```
+
+**The base speed decays as 1/|dF| while the correction grows as |dF|.** They cross, and past the
+crossing `correction` exceeds `adaptive_speed`, so one die clamps to **zero** while the other is
+driven **faster than the nominal press speed**. Closed form:
+
+```
+|dF|_stall = sqrt(pressing_speed · SAFETY_THRESHOLD / force_balance_gain)
+           = sqrt(25 · 20000 / 1.5e-4)  =  57,735 N
+```
+
+The last logged step of hit 1, identical in all five A5 replicates to four significant figures:
+
+```
+PRESSING[48]: F=[38127.539,192467.453] dF=-154339.9062, v=[26.3906,0.0000]
+```
+
+38.1 kN on one die against 192.5 kN on the other, and the lightly-loaded die is commanded to
+**26.39 m/s — above the nominal 25** — while the heavily-loaded one is commanded to **zero**. The
+arithmetic reproduces exactly: `adaptive = 25 · 20000/154340 = 3.240`,
+`correction = 154340 · 1.5e-4 = 23.151`, `v_L = 3.240 + 23.151 = 26.391`,
+`v_R = 3.240 − 23.151 = −19.911 → 0`. **This is the "5× die asymmetry" of §4.7.1, fully
+explained.**
+
+**And it is not an edge case.** `press_balance_scan.py` over the complete 17-hit run:
+
+| | count | mean max &#124;dF&#124; |
+|---|---|---|
+| hits driving a die to **zero velocity** | **14 of 17** | — |
+| hits exceeding the closed-form threshold | **14 of 17** | — |
+| stopping on `Max Force` | 9 | **137,712 N** |
+| stopping on `Target Strain` | 8 | 74,722 N |
+
+🎯 **The threshold predicts stalling on 17 of 17 hits** — every hit above 57,735 N stalled, every
+hit below it did not. The three that never stall (1, 5, 8) are exactly the three whose peak
+imbalance stays under it (1,959 / 5,187 / 23,471 N). **The model is exact, not approximate.**
+
+⇒ **A one-sided press is the sim's normal operating mode, not its failure mode.** And it ranks
+with the stop reason — `Max Force` hits carry ~1.8× the imbalance of `Target Strain` hits — so
+the force stop of §4.7.2 and this instability are one phenomenon at two severities. It also
+completes the §4.7.3 chain: narrower contact → higher force → higher imbalance → stall →
+truncation.
+
+**The loop is already unstable before the safety modulation engages.** Tracing hit 1 backwards,
+`dF` runs 48 → 182 → 238 N (stable, dies agreeing to 0.3%), then jumps to −14,832 at step 42,
++13,557 at 45, −154,340 at 48 — **sign-alternating and growing**, which is overcorrection. At
+step 42 `|dF|` is still below the 20 kN safety threshold, so the modulation is not yet active;
+the correction alone produces `v = [27.22, 22.78]`, and the next interval reverses it. The
+modulation then makes it worse by collapsing the base speed while the correction keeps climbing.
+
+⚠️ **What is NOT established: whether the controller *initiates* it.** The jump from 238 N to
+14,832 N in one logging interval could be a physical/numerical contact event that the loop then
+amplifies, or the loop's own first overshoot. The data supports both. **What is established is
+that the loop amplifies and sustains it, and that the stall is fully accounted for.** Do not
+upgrade "amplifies" to "causes" without a gain sweep.
+
+🚩 **This confounds D1a.** N-invariance assumes velocity scales cleanly by `N`. It does not: on
+82% of hits the effective die velocity is set by an unstable feedback loop on a force imbalance,
+not by `pressing_speed`. **Sweeping N while this holds measures the controller, not the
+similarity transform.** §8.0's "D1a ✅ RUNNABLE NOW" is withdrawn — see the revised entry there.
+
+**Cheapest next step** is a gain sweep, not a physics change: `force_balance_gain` is a plain
+config value and `benchmark_force_balance.py` already exists to vary it. If a lower gain removes
+the sign-alternating growth, the instability is control and D1a becomes runnable; if it does not,
+the initiating jump is physical and that is a different and larger finding.
+
 ### 4.8 The material card is in-domain at the measured temperature
 
 The billet was **measured at ~960 °C at blow #1** (06-15 mcap; session `12b6fa7e` — see §11 for
@@ -1319,6 +1397,7 @@ Ranked by impact on the coupled-physics goal.
 
 | # | Defect | Location | Impact | Owner |
 |---|---|---|---|---|
+| **0** | **Die-balance loop goes one-sided above 57.7 kN imbalance** (added 2026-08-14; numbered 0 rather than renumbering the rest, but it ranks **first** on impact) | `strike_controller.py` PRESSING branch; `options.py:793` | **14 of 17 hits** drive one die to zero velocity while the other exceeds nominal press speed. Contaminates every force number, sets where the `Max Force` stop trips, and **confounds D1a** — velocity does not scale cleanly with `N` (§4.7.4) | this workstream |
 | 1 | **FLIP gather on the temperature field** | `base_mpm_solver.py:239, :723` | Blocks coupling entirely — particle temperature unusable for flow stress | B-3's component |
 | 2 | **S_T decoupled from N** (237,014 vs 1,773) | `options.py:616` | 134× too much heat transfer per blow | B-3 / shared |
 | 3 | **Strain rate not divided by N** | `materials.py:283` | Flow stress and plastic heating evaluated at ~1800× the real rate unless the prescribed override is on | this workstream |
@@ -1342,7 +1421,7 @@ behind another session. What is genuinely blocked is narrower than it looks:
 ```
 A1-A5  Instrumentation ────────────┐        ours, no dependencies
 B      Scaling unification ────────┤        ours, no dependencies
-                                   ├──► D1a  mechanical N-invariance   ✅ RUNNABLE NOW
+                                   ├──► D1a  mechanical N-invariance   ⚠️ CONFOUNDED (§4.7.4)
                                    │
 A6     Coupled path (§2.4) ────────┤        ours, no dependencies -- but MISSING TODAY
                                    │
@@ -1360,9 +1439,14 @@ workstream.
 evolving temperature (§2.4). Fixing the gather makes particle temperature *usable*; A6 is what
 makes it *used*. If only one of the two lands, coupled forging still does not run.
 
-⇒ **Do A + B + D1a first.** If D1a fails — if geometry drifts with N — that is a finding large
-enough to reorder everything, and it costs nothing to learn early. If it passes, the scaling
-foundation is sound and the coupled work has somewhere solid to land.
+⇒ **Do A + B first.** ⚠️ **D1a is no longer cleanly runnable — corrected 2026-08-14.** §4.7.4
+measured the die-balance loop driving one die to zero velocity on **14 of 17 hits**, so the
+effective die velocity is set by a feedback loop on force imbalance rather than by
+`pressing_speed`. An N sweep run today would measure that loop, not the similarity transform.
+**Fix or bound the balance instability first** — a `force_balance_gain` sweep is the cheap probe,
+and `benchmark_force_balance.py` already exists for it. The original argument still stands once
+D1a is clean: if geometry drifts with N that reorders everything, and it costs little to learn
+early.
 
 ⚠️ Phase B's `S_T = N` change is the one item that reaches outside this workstream: the
 induction calibration is tuned against the current default. Coordinate before landing it, or
@@ -1737,6 +1821,7 @@ Hashes via `git log --oneline -- docs/THERMOMECHANICAL_COUPLING_AND_SCALING.md`.
 
 | Date | Rev | Change |
 |---|---|---|
+| 2026-08-14 | 16 | 🚨 **§4.7.4: the die-balance controller goes one-sided on 82% of hits.** The base speed decays as `1/|dF|` while the correction grows as `|dF|`, so past `|dF|_stall = sqrt(pressing_speed·20000/gain) = 57,735 N` one die clamps to **zero** and the other exceeds nominal press speed. **The threshold predicts stalling on 17 of 17 hits.** 14 of 17 stall; `Max Force` hits carry 1.8× the imbalance of `Target Strain` hits, so §4.7.2's stop and this instability are one phenomenon at two severities. Explains §4.7.1's 5× die asymmetry exactly (arithmetic reproduces to 4 s.f. across all five A5 replicates). 🚩 **Withdraws "D1a ✅ RUNNABLE NOW"** — velocity does not scale cleanly with `N` while this holds. Adds `press_balance_scan.py` and defect 0. ⚠️ Whether the loop *initiates* the divergence or only amplifies it is **not** established. |
 | 2026-08-13 | 15 | 🚩 **Re-pointed ~10 drifted source citations** invalidated by B-3's `d2d7c701` (+12 lines in `options.py`) and `bc850e82` (+10 in `strike_controller.py`) — including `strike_controller.py:661 → :671`, the line §3.5.1's force-limit finding cites. The code was unchanged; only the pointers were wrong. Header now warns that line numbers drift in this shared worktree. 🎯 **§4.7.3 corrects §4.7.2's framing, my error:** "the two sim numbers cannot both be right" was too strong. The stop reason changes *per hit within one run* (`~/profile_g0_17.log`, complete 17 hits: **9 Max Force, 8 Target Strain**), so both workstreams can be right — and hit 1, which every §4.7.2 number comes from, is one of the hits that is *not* force-limited: first-event bias running the other way. 🎯 **The mechanism is contact width** — every hit at `W_contact` ≤ 55.2 mm saturates and the shortfall grows as contact narrows (0.078 → 0.092 → 0.136), decoupled from commanded reduction (hit 13 asks the most at 60.8 mm and lands within 0.007; hit 14 asks less at 49.6 mm and misses by 0.136). The stop preferentially truncates the narrow-contact passes. Sim saturates 53% of hits vs 19% of real blows, unmatched denominators. Also records that `max_force` is now environment-overridable in `nsf-demo` and no longer one constant across worktrees. |
 | 2026-08-13 | 14 (`aad39ba2`) | ✅ **A5 done: noise floor at n = 5** — σ = 0.00024, range 0.00060, five replicates in separate processes (§4.5). The inherited 0.0002 was right as ~1σ but had been used as a *detection threshold*; acceptance criterion 7 raised 0.0002 → **0.0007 (3σ)**. No prior verdict changes: JC vs clamped-Arrhenius is 0.8σ (confirmed indistinguishable), `m3` 15.9σ, thermal-off 91.7σ. `dev_p95`/`dev_max` were identical across all five — more reproducible than IoU. |
 | 2026-08-13 | 13 (`6f3cfa4c`) | 🚨 **§4.7.2: the press already terminates on `Max Force`, not on target strain** — `HOLDING (Max Force, strain=0.2130, steps=49)`, identical in three runs. The adapter intends position control against `hit.rho`; the force stop was meant as a backstop. ⇒ in this configuration hit-1 closure is set by where a numerical artifact crosses 200 kN. **Must be reconciled with workstream A**, who measure the sim landing on its command to within 0.2 mm — both cannot hold for one run. |
