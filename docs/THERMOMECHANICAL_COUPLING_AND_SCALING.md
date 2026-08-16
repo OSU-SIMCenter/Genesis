@@ -999,10 +999,15 @@ hit below it did not. The three that never stall (1, 5, 8) are exactly the three
 imbalance stays under it (1,959 / 5,187 / 23,471 N). **The model is exact, not approximate.**
 
 ⇒ **A one-sided press is the sim's normal operating mode, not its failure mode.** And it ranks
-with the stop reason — `Max Force` hits carry ~1.8× the imbalance of `Target Strain` hits — so
-the force stop of §4.7.2 and this instability are one phenomenon at two severities. It also
+with the stop reason — `Max Force` hits carry ~1.8× the imbalance of `Target Strain` hits — which
 completes the §4.7.3 chain: narrower contact → higher force → higher imbalance → stall →
 truncation.
+
+⚠️ **Corrected 2026-08-16.** This paragraph used to conclude that the force stop and this
+instability are *"one phenomenon at two severities."* **That is too strong** — §4.7.5 measures the
+stall occurring on 59% of hits in a run where the stop never binds at all. The imbalance predicts
+**which** hits trip the stop; it is not *caused by* the stop, and it does not need the stop to
+occur. The two are correlated, not identical.
 
 **The loop is already unstable before the safety modulation engages.** Tracing hit 1 backwards,
 `dF` runs 48 → 182 → 238 N (stable, dies agreeing to 0.3%), then jumps to −14,832 at step 42,
@@ -1069,6 +1074,54 @@ change, needs no physics work, and does not depend on any sibling workstream.
 ⚠️ This does **not** license lowering the shipped default. Doing so changes every existing force
 number and the balance loop exists for a reason; it is a config change with cross-workstream
 reach. What it licenses is running *D1a* at a gain where the confound is absent.
+
+#### 4.7.5 🎯 Cross-branch validation — 245 hits, and it holds on workstream A's own runs
+
+**Measured 2026-08-16.** §4.7.4's closed form was derived from a single 17-hit run on this branch.
+Before handing it to workstream A as consultation, the unstated premise had to be checked: **do
+their arms actually reach the 57,735 N stall threshold at all?** There was real reason to doubt
+it — the release branch (`agforge/v2/forge-common`) runs `E = 200e9 × 0.25 = 50 GPa`, **2.4×
+softer** than this branch's 121.5 GPa. Softer material, lower forces, plausibly never crossing.
+
+**First: the control law transfers.** All three inputs to the closed form are identical on the
+release branch — `force_balance_gain = 1.5e-4`, `SAFETY_THRESHOLD` default 20 kN, and
+`pressing_speed` default 25.0 m/s. So `|dF|_stall = 57,735 N` applies there unchanged.
+
+**Then: `press_balance_scan.py` against workstream A's own run logs.**
+
+| run | hits driving a die to **zero velocity** | threshold prediction | `Max Force` mean &#124;dF&#124; | `Target Strain` mean &#124;dF&#124; |
+|---|---|---|---|---|
+| `~/meshic_stopon.log` | **77 of 119** | **119 / 119 correct** | 131,096 N (n=53) | 61,415 N (n=66) |
+| `~/meshic.log` | **64 of 109** | **109 / 109 correct** | — | 127,264 N (n=107) |
+
+🎯 **The closed form now holds across 245 hits, on two branches, at two different material cards.**
+It was derived from 17. The `Max Force` / `Target Strain` imbalance ratio also replicates — 2.1×
+here against 1.8× in §4.7.4.
+
+🚨 **And the stall does not need the force stop.** In `meshic.log` *every* hit terminates on
+`Target Strain` — the stop is not binding anywhere in the run — and **64 of 109 hits still drive a
+die to zero velocity.** That is what refutes the "one phenomenon at two severities" reading
+corrected in §4.7.4: this is an independent pathology that the force stop merely co-occurs with.
+
+🚩 **Extreme imbalance coincides with failure.** `meshic.log` records **6 `failed_at_hit` events**,
+and two hits never reach `HOLDING` at all — those two carry a mean peak imbalance of
+**816,018 N**, fourteen times the stall threshold. ⚠️ **Correlated, not shown to cause.** But it is
+a candidate mechanism for run failures that have been attributed to the force stop, and it is
+cheap for workstream A to test.
+
+**What this does NOT establish:** whether lowering the gain **reorders the contact-arm ranking**.
+That still needs a gain-varied arm comparison and belongs to workstream A. What changed is that
+the instability's *presence* in their runs is now measured rather than assumed.
+
+⚠️ **Provenance caveat.** These two logs were found on disk, not produced here. Their arm configs
+and dates were not verified, and the `E = 50 GPa` figure was read from release-branch source
+rather than confirmed against these specific runs. The *closed-form agreement* is
+config-independent and stands regardless; the attribution to particular arms does not.
+
+⚠️ **A second lever, noted not tested.** The release branch makes the imbalance threshold
+env-overridable (`_AGF_IMBALANCE_THRESHOLD`), so `|dF|_stall` can be raised there without touching
+the gain — `|dF|_stall = sqrt(pressing_speed · SAFETY_THRESHOLD / gain)` rises as `sqrt(threshold)`.
+Untested, and arguably a cleaner knob to hand workstream A than changing a control gain.
 
 ### 4.8 The material card is in-domain at the measured temperature
 
@@ -1863,7 +1916,8 @@ Hashes via `git log --oneline -- docs/THERMOMECHANICAL_COUPLING_AND_SCALING.md`.
 
 | Date | Rev | Change |
 |---|---|---|
-| 2026-08-14 | 16 | 🚨 **§4.7.4: the die-balance controller goes one-sided on 82% of hits.** The base speed decays as `1/|dF|` while the correction grows as `|dF|`, so past `|dF|_stall = sqrt(pressing_speed·20000/gain) = 57,735 N` one die clamps to **zero** and the other exceeds nominal press speed. **The threshold predicts stalling on 17 of 17 hits.** 14 of 17 stall; `Max Force` hits carry 1.8× the imbalance of `Target Strain` hits, so §4.7.2's stop and this instability are one phenomenon at two severities. Explains §4.7.1's 5× die asymmetry exactly (arithmetic reproduces to 4 s.f. across all five A5 replicates). 🚩 **Withdraws "D1a ✅ RUNNABLE NOW"** — velocity does not scale cleanly with `N` while this holds. Adds `press_balance_scan.py` and defect 0. ⚠️ Whether the loop *initiates* the divergence or only amplifies it is **not** established. |
+| 2026-08-16 | 17 | 🎯 **§4.7.5: the die-balance closed form validated across 245 hits on two branches.** Ran `press_balance_scan.py` against workstream A's own logs: `meshic_stopon` 77 of 119 hits stall, `meshic` 64 of 109 — and the 57,735 N threshold predicts **228 of 228** correctly across both. All three control-law inputs are identical on the release branch, so it transfers despite a 2.4× softer material card. 🚨 **The stall does not require the force stop** — 59% of hits stall in a run where every hit terminates on `Target Strain` — which **corrects §4.7.4's "one phenomenon at two severities"** to correlation rather than identity. 🚩 Two hits that never reach `HOLDING` carry 816 kN mean imbalance, 14× threshold, alongside 6 `failed_at_hit` events — a candidate failure mechanism, correlated not causal. ⚠️ Log provenance unverified; ⚠️ whether the arm *ranking* reorders remains untested and is workstream A's. |
+| 2026-08-14 | 16 | 🚨 **§4.7.4: the die-balance controller goes one-sided on 82% of hits.** The base speed decays as `1/|dF|` while the correction grows as `|dF|`, so past `|dF|_stall = sqrt(pressing_speed·20000/gain) = 57,735 N` one die clamps to **zero** and the other exceeds nominal press speed. **The threshold predicts stalling on 17 of 17 hits.** 14 of 17 stall; `Max Force` hits carry 1.8× the imbalance of `Target Strain` hits. ⚠️ **This rev concluded §4.7.2's stop and this instability are "one phenomenon at two severities" — corrected in rev 17, they are correlated but the stall does not require the stop.** Explains §4.7.1's 5× die asymmetry exactly (arithmetic reproduces to 4 s.f. across all five A5 replicates). 🚩 **Withdraws "D1a ✅ RUNNABLE NOW"** — velocity does not scale cleanly with `N` while this holds. Adds `press_balance_scan.py` and defect 0. ⚠️ Whether the loop *initiates* the divergence or only amplifies it is **not** established. |
 | 2026-08-13 | 15 | 🚩 **Re-pointed ~10 drifted source citations** invalidated by B-3's `d2d7c701` (+12 lines in `options.py`) and `bc850e82` (+10 in `strike_controller.py`) — including `strike_controller.py:661 → :671`, the line §3.5.1's force-limit finding cites. The code was unchanged; only the pointers were wrong. Header now warns that line numbers drift in this shared worktree. 🎯 **§4.7.3 corrects §4.7.2's framing, my error:** "the two sim numbers cannot both be right" was too strong. The stop reason changes *per hit within one run* (`~/profile_g0_17.log`, complete 17 hits: **9 Max Force, 8 Target Strain**), so both workstreams can be right — and hit 1, which every §4.7.2 number comes from, is one of the hits that is *not* force-limited: first-event bias running the other way. 🎯 **The mechanism is contact width** — every hit at `W_contact` ≤ 55.2 mm saturates and the shortfall grows as contact narrows (0.078 → 0.092 → 0.136), decoupled from commanded reduction (hit 13 asks the most at 60.8 mm and lands within 0.007; hit 14 asks less at 49.6 mm and misses by 0.136). The stop preferentially truncates the narrow-contact passes. Sim saturates 53% of hits vs 19% of real blows, unmatched denominators. Also records that `max_force` is now environment-overridable in `nsf-demo` and no longer one constant across worktrees. |
 | 2026-08-13 | 14 (`aad39ba2`) | ✅ **A5 done: noise floor at n = 5** — σ = 0.00024, range 0.00060, five replicates in separate processes (§4.5). The inherited 0.0002 was right as ~1σ but had been used as a *detection threshold*; acceptance criterion 7 raised 0.0002 → **0.0007 (3σ)**. No prior verdict changes: JC vs clamped-Arrhenius is 0.8σ (confirmed indistinguishable), `m3` 15.9σ, thermal-off 91.7σ. `dev_p95`/`dev_max` were identical across all five — more reproducible than IoU. |
 | 2026-08-13 | 13 (`6f3cfa4c`) | 🚨 **§4.7.2: the press already terminates on `Max Force`, not on target strain** — `HOLDING (Max Force, strain=0.2130, steps=49)`, identical in three runs. The adapter intends position control against `hit.rho`; the force stop was meant as a backstop. ⇒ in this configuration hit-1 closure is set by where a numerical artifact crosses 200 kN. **Must be reconciled with workstream A**, who measure the sim landing on its command to within 0.2 mm — both cannot hold for one run. |
