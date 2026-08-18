@@ -40,6 +40,14 @@ class MaterialOptions(Options):
     jc_n: float = 0.26
     jc_C: float = 0.014
     jc_eps0: float = 1.0
+    # These three were hardcoded at the JohnsonCookPlasticity call site in environment.py, which
+    # silently overrode anything set here. Defaults below are exactly what that call site passed,
+    # so behaviour is unchanged -- they exist so a card whose reference temperature is its
+    # CALIBRATION temperature (a 316L card calibrated at 1000 C has jc_T_ref = 1273.15, not room
+    # temperature) can actually be applied.
+    jc_T_ref: float = 293.15
+    jc_T_melt: float = 1793.0
+    jc_m: float = 1.03
 
 class EnvOptions(Options):
     """Parameters related to the RL environment and task."""
@@ -364,7 +372,12 @@ class AgilityForgeOptions(Options):
             #   AGF_ENABLE_CPIC=0 <cmd>
             enable_CPIC=bool(int(os.environ.get("AGF_ENABLE_CPIC", "1"))),
             enable_thermal=True,
-            default_initial_temperature=293.0,
+            # AGF_BILLET_TEMP_K. NOTE this is a MECHANICAL setting, not only a thermal one:
+            # the flow stress is temperature-coupled through the Johnson-Cook melting term in
+            # materials.py, so with jc_T_ref at its 293.15 default any temperature above ~293 K
+            # softens the material. The real billet is ~960 C at blow 1 (measured), i.e. 1233 K,
+            # against the 293.0 K default this has always run at. Default unchanged.
+            default_initial_temperature=float(os.environ.get("AGF_BILLET_TEMP_K", 293.0)),
             thermal_time_scale=thermal_time_scale,
             # Fixed-end (truncated-domain) BC: the held end conducts into the unsimulated
             # rod (Robin BC on the cut plane) instead of being exposed to air.
@@ -450,7 +463,11 @@ class StrikeOptions(Options):
     # for p3_pg2p_pos, and trip-count correlates -0.994 with elongation shortfall across
     # arms -- so arms may be partly ranked by how often they trip it. Set high to test.
     max_force: float = float(os.environ.get("AGF_MAX_FORCE", 200000.0)) # 20 tons (200kN)
-    pressing_timeout: float = 30.0 # seconds (Increased to avoid timeout)
+    # AGF_PRESSING_TIMEOUT. This is WALL-CLOCK, not sim time, so it binds harder as the press
+    # is slowed or the grid refined. It already fired once at 25 m/s, and it becomes the BINDING
+    # stop as soon as AGF_MAX_FORCE removes the force stop -- swapping one arm-biased truncation
+    # for another. Raise it whenever max_force is raised. Default unchanged at 30 s.
+    pressing_timeout: float = float(os.environ.get("AGF_PRESSING_TIMEOUT", 30.0)) # seconds
     approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     release_timeout: float = 10.0 # seconds
     hold_steps: int = 15 # Number of steps to hold position after reaching target before releasing

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 import enum
 import zlib
@@ -7,6 +8,15 @@ import torch
 import numpy as np
 import genesis as gs
 import contextlib
+
+# Feed-rate throttle knee. Above this force imbalance the PRESSING speed is scaled by
+# threshold/|dF| and a jaw can be clamped to zero velocity (see the PRESSING branch).
+# Measured 2026-08-14 across all 19 contact arms: it fires on 31% of pressing frames and ranges
+# 8% (p5_penalty) to 50% (h5b_gridonly_ftmp), commanding one die to a dead stop in 16% of frames.
+# So it is an arm-dependent kinematic effect, not a neutral safety net, and raising max_force does
+# NOT remove it. Set very high to disable it for a controlled comparison.
+#   AGF_FORCE_IMBALANCE_THRESHOLD=1e12 <cmd>
+_AGF_IMBALANCE_THRESHOLD = float(os.environ.get("AGF_FORCE_IMBALANCE_THRESHOLD", 20000.0))
 
 from agforge.reconstruction import SurfaceReconstructor
 from agforge.physics_mesh import InductionPhysicsMesher
@@ -683,6 +693,10 @@ class StrikeController:
                             else:
                                 stop_reason = "Unknown"
                             strain_val = current_strain_tensor.item()
+                        # Carried into the diagnostics row so a run can prove what stopped each
+                        # hit. "Max Force" fires on 39% of hits at 25 m/s and is arm-dependent,
+                        # so any comparison across arms needs this on the record, not in stdout.
+                        self._diag_stop_reason = stop_reason
                         gs.logger.info(f"Strike -> HOLDING ({stop_reason}, strain={strain_val:.4f}, steps={self.strike_step_count}, time={elapsed_time:.2f}s)")
                         self.strike_state = StrikeState.HOLDING
                         self.hold_steps_remaining = self.env.cfg.strike.hold_steps
@@ -696,7 +710,7 @@ class StrikeController:
                     # --- ADVANCED PROTECTION: Feed Rate Modulation ---
                     # If force imbalance exceeds threshold, slow down the main pressing speed
                     # to allow the balance controller to catch up without fighting forward momentum.
-                    SAFETY_THRESHOLD = 20000.0 # 20kN (~10% of max force)
+                    SAFETY_THRESHOLD = _AGF_IMBALANCE_THRESHOLD # default 20kN (~10% of max force)
                     adaptive_speed = pressing_speed
                     
                     imbalance_abs = torch.abs(imbalance)
@@ -1366,6 +1380,7 @@ class StrikeController:
         d = a["detF_last"]
         row = {
             "strike": self._diag_strike_idx,
+            "stop_reason": getattr(self, "_diag_stop_reason", None),
             "n_frames": a["n_frames"],
             "peak_frame": a["peak_frame"],
             "force_L_peak": a["fL_peak"] if a["fL_peak"] > -1e29 else None,
