@@ -16,11 +16,12 @@ import contextlib
 # So it is an arm-dependent kinematic effect, not a neutral safety net, and raising max_force does
 # NOT remove it. Set very high to disable it for a controlled comparison.
 #   AGF_FORCE_IMBALANCE_THRESHOLD=1e12 <cmd>
-_AGF_IMBALANCE_THRESHOLD = float(os.environ.get("AGF_FORCE_IMBALANCE_THRESHOLD", 20000.0))
+_AGF_IMBALANCE_THRESHOLD = env_float("AGF_FORCE_IMBALANCE_THRESHOLD", 20000.0)
 
 from agforge.reconstruction import SurfaceReconstructor
 from agforge.physics_mesh import InductionPhysicsMesher
 from agforge.recorder import AgForgeRecorder
+from agforge.env_knobs import env_float
 
 class StrikeState(enum.Enum):
     IDLE = 0

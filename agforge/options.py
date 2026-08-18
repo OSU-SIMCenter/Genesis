@@ -11,6 +11,7 @@ ureg = UnitRegistry()
 
 import os
 import sys
+from agforge.env_knobs import env_bool, env_float
 
 # Determine path for generated assets relative to the application/script
 if getattr(sys, 'frozen', False):
@@ -225,7 +226,7 @@ class RobotOptions(Options):
         # contact tip is ~13.5 mm, so at 7 cells/diameter (dx = 5.71 mm on a 40 mm bar)
         # the contact patch spans only ~2.4 cells. Overridable for resolution sweeps:
         #   AGF_CELLS_PER_DIAMETER=10 <cmd>
-        _cpd = float(os.environ.get("AGF_CELLS_PER_DIAMETER", 7))
+        _cpd = env_float("AGF_CELLS_PER_DIAMETER", 7)
         self.base_grid_density = int(_cpd / self.cylinder_diameter)
         dx = 1.0 / self.base_grid_density
         mpm_solver_padding = 3 * dx
@@ -242,8 +243,7 @@ class RobotOptions(Options):
         # for the full real replay. 1.3 leaves ~47 mm of headroom against the 34.4 mm needed
         # (minimum that fits is 1.083). Costs x grid cells only: 28 -> ~33.
         #   AGF_MPM_X_PAD_LOWER=1.3 <cmd>
-        mpm_x_padding_lower = self.cylinder_height * float(
-            os.environ.get("AGF_MPM_X_PAD_LOWER", "0.85"))
+        mpm_x_padding_lower = self.cylinder_height * env_float("AGF_MPM_X_PAD_LOWER", 0.85)
         mpm_x_padding_upper = self.cylinder_height * 0.52
         mpm_yz_padding = self.cylinder_radius * 1.6
         mpm_lower_offset = np.array([mpm_x_padding_lower, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
@@ -353,7 +353,7 @@ class AgilityForgeOptions(Options):
         # unlike base_grid_density, which moves grid, dt and particle count together.
         # (`substeps` below scales macro_dt / control-loop rate, NOT the integration step.)
         #   AGF_CFL_SAFETY=0.45 <cmd>
-        cfl_safety = float(os.environ.get("AGF_CFL_SAFETY", 0.90))  # NB: 0.90 = 10% margin,
+        cfl_safety = env_float("AGF_CFL_SAFETY", 0.90)  # NB: 0.90 = 10% margin,
                                                   # the original '5% safety margin' comment was wrong
         substeps = 8                              # Fixed substep count for real-time teleop
         substep_dt = dt_cfl * cfl_safety          # Safe substep timestep
@@ -402,7 +402,7 @@ class AgilityForgeOptions(Options):
         # Pin this to hold the control problem fixed while refining dt:
         #   AGF_ROBOT_TIME_TO_SECONDS=48611.1 <cmd>
         _rtu = 0.1 * self.sim.substeps / self.sim.dt
-        _rtu = float(os.environ.get("AGF_ROBOT_TIME_TO_SECONDS", _rtu))
+        _rtu = env_float("AGF_ROBOT_TIME_TO_SECONDS", _rtu)
         self.robot = RobotOptions(robot_time_to_seconds=_rtu,
                                   cylinder_diameter=self.stock_diameter,
                                   cylinder_height=self.stock_length,
@@ -412,7 +412,7 @@ class AgilityForgeOptions(Options):
             # PPC = divisor³ : 2.0 -> 8 PPC, 3.0 -> 27 PPC. Pinned to dx by default, which
             # is why a grid sweep alone cannot separate resolution from particle density.
             #   AGF_PPC_DIVISOR=3.0 <cmd>
-            particle_size=dx / float(os.environ.get("AGF_PPC_DIVISOR", 2.0)),
+            particle_size=dx / env_float("AGF_PPC_DIVISOR", 2.0),
             lower_bound=self.robot.mpm_lower_bound,
             upper_bound=self.robot.mpm_upper_bound,
             # CPIC resolves rigid contact INSIDE g2p (base_mpm_solver.g2p): it corrects
@@ -421,14 +421,14 @@ class AgilityForgeOptions(Options):
             # 'particle' contact mode uses -- which is why the coupler forbids both at once.
             # Toggle to isolate that pathway's effect on volume conservation:
             #   AGF_ENABLE_CPIC=0 <cmd>
-            enable_CPIC=bool(int(os.environ.get("AGF_ENABLE_CPIC", "1"))),
+            enable_CPIC=env_bool("AGF_ENABLE_CPIC", True),
             enable_thermal=True,
             # AGF_BILLET_TEMP_K. NOTE this is a MECHANICAL setting, not only a thermal one:
             # the flow stress is temperature-coupled through the Johnson-Cook melting term in
             # materials.py, so with jc_T_ref at its 293.15 default any temperature above ~293 K
             # softens the material. The real billet is ~960 C at blow 1 (measured), i.e. 1233 K,
             # against the 293.0 K default this has always run at. Default unchanged.
-            default_initial_temperature=float(os.environ.get("AGF_BILLET_TEMP_K", 293.0)),
+            default_initial_temperature=env_float("AGF_BILLET_TEMP_K", 293.0),
             thermal_time_scale=thermal_time_scale,
             # Fixed-end (truncated-domain) BC: the held end conducts into the unsimulated
             # rod (Robin BC on the cut plane) instead of being exposed to air.
@@ -499,7 +499,7 @@ class StrikeOptions(Options):
     # Real presses run 0.02-0.5 m/s; 25.0 is a teleop-era literal (not CFL-derived --
     # approach_speed is, this is not). At 25.0 the two jaws close at 50 m/s against a
     # 100 m/s max_particle_velocity abort, i.e. only 2x headroom.
-    pressing_speed: float = float(os.environ.get("AGF_PRESSING_SPEED", 25.0)) # m/s
+    pressing_speed: float = env_float("AGF_PRESSING_SPEED", 25.0) # m/s
     
     # Force Balance Control
     # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).
@@ -511,7 +511,7 @@ class StrikeOptions(Options):
     # LOWERING this is the preferred lever for anything a third party runs, because it KEEPS
     # the speed-modulation guard; RAISING AGF_FORCE_IMBALANCE_THRESHOLD removes that guard
     # entirely and is a diagnostic lever only. Default unchanged at 1.5e-4.
-    force_balance_gain: float = float(os.environ.get("AGF_FORCE_BALANCE_GAIN", 1.5e-4))
+    force_balance_gain: float = env_float("AGF_FORCE_BALANCE_GAIN", 1.5e-4)
     
     # Safety Limits
     max_force_imbalance: float = 20000.0 # 20 kN% compression
@@ -520,12 +520,12 @@ class StrikeOptions(Options):
     # Measured 2026-08-13: this stop FIRES on 7 of 17 hits for g1_grid_prod and 14 of 17
     # for p3_pg2p_pos, and trip-count correlates -0.994 with elongation shortfall across
     # arms -- so arms may be partly ranked by how often they trip it. Set high to test.
-    max_force: float = float(os.environ.get("AGF_MAX_FORCE", 200000.0)) # 20 tons (200kN)
+    max_force: float = env_float("AGF_MAX_FORCE", 200000.0) # 20 tons (200kN)
     # AGF_PRESSING_TIMEOUT. This is WALL-CLOCK, not sim time, so it binds harder as the press
     # is slowed or the grid refined. It already fired once at 25 m/s, and it becomes the BINDING
     # stop as soon as AGF_MAX_FORCE removes the force stop -- swapping one arm-biased truncation
     # for another. Raise it whenever max_force is raised. Default unchanged at 30 s.
-    pressing_timeout: float = float(os.environ.get("AGF_PRESSING_TIMEOUT", 30.0)) # seconds
+    pressing_timeout: float = env_float("AGF_PRESSING_TIMEOUT", 30.0) # seconds
     approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     release_timeout: float = 10.0 # seconds
     hold_steps: int = 15 # Number of steps to hold position after reaching target before releasing
@@ -541,7 +541,7 @@ class SafetyOptions(Options):
     # NB this is a heuristic tripwire, not the numerical limit: the CFL velocity bound is
     # dx/substep_dt ~= 2778 m/s and the material sound speed is 2500 m/s, so 100 m/s is 4%
     # of sonic despite the 'Supersonic catch' label.
-    max_particle_velocity: float = float(os.environ.get("AGF_MAX_PARTICLE_VELOCITY", 100.0)) # m/s
+    max_particle_velocity: float = env_float("AGF_MAX_PARTICLE_VELOCITY", 100.0) # m/s
     max_temperature: float = 4000.0      # Thermal runaway threshold
     min_temperature: float = 0.0         # Thermal collapse threshold
     
@@ -659,7 +659,7 @@ class TeleopOptions(AgilityForgeOptions):
         #   AGF_APPROACH_CFL_RATIO=0.05 <cmd>
         # 0.35 * (dx/dt) = ~243 m/s per jaw, against a 100 m/s max_particle_velocity abort.
         # Derived for GRID stability; per-particle contact samplers see the raw jaw velocity.
-        target_cfl_ratio = float(os.environ.get("AGF_APPROACH_CFL_RATIO", 0.35))
+        target_cfl_ratio = env_float("AGF_APPROACH_CFL_RATIO", 0.35)
         dx = 1.0 / self.robot.base_grid_density
         dt = self.sim.dt
         

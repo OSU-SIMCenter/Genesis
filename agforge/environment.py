@@ -11,6 +11,7 @@ from agforge.options import (
 )
 from agforge.materials import JohnsonCookPlasticity
 from agforge.profiling_util import teleop_profile
+from agforge.env_knobs import env_bool, env_float
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -55,7 +56,7 @@ def _billet_morph(robot_cfg):
     if not os.path.isfile(mesh_path):
         raise FileNotFoundError("AGF_BILLET_MESH=%s does not exist" % mesh_path)
     # The scan is in millimetres; Genesis works in metres.
-    scale = float(os.environ.get("AGF_BILLET_MESH_SCALE", "0.001"))
+    scale = env_float("AGF_BILLET_MESH_SCALE", 0.001)
     # The prepared mesh already lies along +x, which is where euler=(0,90,0) puts the
     # cylinder's axis, so no rotation is applied by default.
     euler = tuple(float(v) for v in
@@ -312,22 +313,19 @@ class AgilityForgeEnv:
         # NB particle/fluidlab require AGF_ENABLE_CPIC=0 -- both resolve contact in g2p.
         coupler_options = gs.options.LegacyCouplerOptions(
             rigid_mpm_contact_mode=os.environ.get("AGF_CONTACT_MODE", "grid"),
-            rigid_mpm_contact_per_node=bool(int(os.environ.get("AGF_CONTACT_PER_NODE", "0"))),
-            rigid_mpm_contact_c_injection=bool(int(os.environ.get("AGF_CONTACT_C_INJECTION", "0"))),
+            rigid_mpm_contact_per_node=env_bool("AGF_CONTACT_PER_NODE", False),
+            rigid_mpm_contact_c_injection=env_bool("AGF_CONTACT_C_INJECTION", False),
             #   AGF_CONTACT_FTMP_PROJ=1 <cmd>
-            rigid_mpm_contact_ftmp_projection=bool(
-                int(os.environ.get("AGF_CONTACT_FTMP_PROJ", "0"))),
+            rigid_mpm_contact_ftmp_projection=env_bool("AGF_CONTACT_FTMP_PROJ", False),
             # Compile all contact paths and gate them on runtime fields so an arm sweep can
             # share one scene build. Must match base_mpm_solver._pc_switchable, which reads the
             # same variable; the coupler raises at build time if the two disagree.
             #   AGF_CONTACT_RUNTIME_SWITCH=1 <cmd>
-            rigid_mpm_contact_runtime_switchable=bool(
-                int(os.environ.get("AGF_CONTACT_RUNTIME_SWITCH", "0"))),
+            rigid_mpm_contact_runtime_switchable=env_bool("AGF_CONTACT_RUNTIME_SWITCH", False),
             #   AGF_DIAG_PENETRATION=1 <cmd>
-            rigid_mpm_penetration_probe=bool(
-                int(os.environ.get("AGF_DIAG_PENETRATION", "0"))),
-            rigid_mpm_penalty_stiffness=float(os.environ.get("AGF_PENALTY_K", "5e7")),
-            rigid_mpm_penalty_damping=float(os.environ.get("AGF_PENALTY_DAMPING", "1.0")),
+            rigid_mpm_penetration_probe=env_bool("AGF_DIAG_PENETRATION", False),
+            rigid_mpm_penalty_stiffness=env_float("AGF_PENALTY_K", 5e7),
+            rigid_mpm_penalty_damping=env_float("AGF_PENALTY_DAMPING", 1.0),
         )
 
         self.scene = gs.Scene(
