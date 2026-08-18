@@ -453,7 +453,14 @@ class StrikeOptions(Options):
     # Force Balance Control
     # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).
     # User selected 1.5e-4 for maximum benchmark results.
-    force_balance_gain: float = 1.5e-4 
+    # AGF_FORCE_BALANCE_GAIN. How hard the die-balance loop corrects. Together with the
+    # imbalance threshold it sets where a die stalls outright:
+    #     |dF|_stall = sqrt(pressing_speed * AGF_FORCE_IMBALANCE_THRESHOLD / this)
+    # = 57,735 N at the shipped values (verified 100.00% over 5,302 pressing frames).
+    # LOWERING this is the preferred lever for anything a third party runs, because it KEEPS
+    # the speed-modulation guard; RAISING AGF_FORCE_IMBALANCE_THRESHOLD removes that guard
+    # entirely and is a diagnostic lever only. Default unchanged at 1.5e-4.
+    force_balance_gain: float = float(os.environ.get("AGF_FORCE_BALANCE_GAIN", 1.5e-4))
     
     # Safety Limits
     max_force_imbalance: float = 20000.0 # 20 kN% compression
