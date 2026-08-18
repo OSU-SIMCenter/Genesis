@@ -28,26 +28,67 @@ def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> 
 
 class MaterialOptions(Options):
     """Parameters for the elasto-plastic material."""
-    E: float = 200.e9 * 0.25
-    nu: float = 0.28
-    rho: float = 8000.
-    von_mises_yield_stress: float = 190.e6 * 0.1
+    # 316L card sourced by workstream B (agforge/v2/thermal-st-invariance), cherry-picked
+    # 2026-08-14. E / nu / rho / cfl_use_pwave and the Johnson-Cook block below move
+    # ATOMICALLY -- see the notes on cfl_use_pwave and jc_T_ref for the two ways a partial
+    # application fails silently.
+    E: float = 121.5e9
+    #: Sourced: fitted as nu = E/(2G) - 1 across BAM2023 own E and G, replacing 0.329, an
+    #: interpolation invented for this repo. REQUIRES cfl_use_pwave -- nu does not appear in
+    #: the bar-wave branch, so raising it raises the P-wave speed WITHOUT shrinking substep_dt.
+    #: B measured nu 0.382 with cfl_use_pwave=False reaching 2.8e11 N; with it, stable 207 kN.
+    nu: float = 0.383
+    #: Derive substep_dt from the P-wave speed rather than the thin-rod bar wave sqrt(E/rho).
+    #: The P-wave is the fastest elastic wave in a bulk solid, so it is the criterion that
+    #: actually governs stability; sqrt(E/rho) understates it by 38% at this card, 4070 vs
+    #: 5620 m/s. This is a correctness fix, not a tuning knob -- the old substep_dt ignored nu
+    #: entirely. Cost: about 2.25x more substeps against our previous card.
+    cfl_use_pwave: bool = True
+    #: NIST2021 SRM 1155a, D(T) = 8052 - 0.564 T, at 1273.15 K. Was 8000, a room-temperature
+    #: figure.
+    rho: float = 7334.
+    #: Only read when use_johnson_cook is False, i.e. dead on this path. Set to the 316L peak
+    #: flow stress at the operating point so the two paths no longer disagree by about 11x.
+    von_mises_yield_stress: float = 213.4e6
 
-    # Johnson-Cook Parameters (Hot Steel ~1200C)
+    # Johnson-Cook parameters for 316L, calibrated by workstream B AT THE OPERATING POINT
+    # (1000 C, 1 /s). This block previously descended, essentially unchanged, from the
+    # canonical Johnson & Cook (1983) set for AISI 4340 -- only A and B had ever been
+    # hand-scaled, leaving n, C, m and T_melt as 4340 values. The billet is 316L.
+    #
+    # A and B are ALREADY the 1000 C values. They are NOT room-temperature values waiting to
+    # be softened, and must never be applied under a room-temperature jc_T_ref: at the
+    # measured median blow of 823.6 C that yields softening 0.42-0.46, a silent 2.2-2.4x
+    # under-strength error. jc_T_ref / jc_T_melt / jc_m below are part of the same atomic unit.
+    #
+    # jc_C IS DEAD CODE: materials.py computes sigma_y_static = A + B*eps_p^n and applies only
+    # thermal softening; the docstring (1 + C ln eps_dot) term is not implemented and self.C is
+    # never referenced. Carried at its sourced value so it is right if that term is ever added.
     use_johnson_cook: bool = True
-    jc_A: float = 40.e6   # ~40 MPa (Very Hot)
-    jc_B: float = 100.e6  # Reduced hardening
-    jc_n: float = 0.26
-    jc_C: float = 0.014
+    jc_A: float = 100.3e6
+    jc_B: float = 195.0e6
+    jc_n: float = 0.417
+    jc_C: float = 0.120
     jc_eps0: float = 1.0
     # These three were hardcoded at the JohnsonCookPlasticity call site in environment.py, which
     # silently overrode anything set here. Defaults below are exactly what that call site passed,
     # so behaviour is unchanged -- they exist so a card whose reference temperature is its
     # CALIBRATION temperature (a 316L card calibrated at 1000 C has jc_T_ref = 1273.15, not room
     # temperature) can actually be applied.
-    jc_T_ref: float = 293.15
-    jc_T_melt: float = 1793.0
-    jc_m: float = 1.03
+    #: The card CALIBRATION temperature, not room temperature. Must land together with
+    #: jc_A / jc_B above -- see the note there.
+    #: CONSEQUENCE, measured: all 47 real blows run 615-967 C, i.e. ALL BELOW this reference,
+    #: so T_star clamps to 0, thermal softening pins at exactly 1.0000, and its derivative is
+    #: exactly zero. The card is therefore INERT in temperature across the whole real operating
+    #: window and reduces to sigma_y = A + B*eps_p^n. For a contact-method ranking that is
+    #: useful, since material stops being a confound, but it is structural absence rather than
+    #: isothermal by design -- and the billet is systematically SOFT, because A and B are
+    #: 1000 C values while the median blow is 823.6 C.
+    jc_T_ref: float = 1273.15
+    #: Solidus, Pichler et al. (liquidus 1708 K). Written as a literal rather than through the
+    #: ACTIVE_MATERIAL registry indirection, which is in flux as of 2026-08-14.
+    jc_T_melt: float = 1675.0
+    jc_m: float = 1.0
 
 class EnvOptions(Options):
     """Parameters related to the RL environment and task."""
@@ -294,7 +335,17 @@ class AgilityForgeOptions(Options):
                                   cylinder_diameter=self.stock_diameter,
                                   cylinder_height=self.stock_length)
         dx = 1.0 / temp_robot.base_grid_density
-        c = math.sqrt(self.mat.E / self.mat.rho)
+        if getattr(self.mat, "cfl_use_pwave", False):
+            # The fastest elastic wave in a bulk solid, which is the criterion that actually
+            # governs stability. Ported from workstream B together with nu = 0.383, which is
+            # unstable without it.
+            mu_lame = self.mat.E / (2.0 * (1.0 + self.mat.nu))
+            k_bulk = self.mat.E / (3.0 * (1.0 - 2.0 * self.mat.nu))
+            c = math.sqrt((k_bulk + 4.0 * mu_lame / 3.0) / self.mat.rho)
+        else:
+            # Historical thin-rod bar wave. Understates the true limit, and nu does not appear
+            # in it at all -- which is why raising nu was unsafe until this branch existed.
+            c = math.sqrt(self.mat.E / self.mat.rho)
         dt_cfl = dx / c  # Theoretical max substep_dt
 
         # THE temporal-refinement knob. substep_dt is what actually integrates, so halving
