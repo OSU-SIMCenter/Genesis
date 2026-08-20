@@ -1026,9 +1026,11 @@ upgrade "amplifies" to "causes" without a gain sweep.
 by `N`. At `force_balance_gain = 1.5e-4` it does not: on 82% of hits the effective die velocity is
 set by an unstable feedback loop on a force imbalance, not by `pressing_speed`, so sweeping N
 would measure the controller rather than the similarity transform.
-✅ **Resolved below.** The gain sweep shows the confound disappears at **5e-5 and lower** — dies
-track to ~3 kN, velocity symmetric to 0.04%. **D1a is runnable today behind one flag**; §8.0 is
-updated accordingly. Read the sweep subsection before acting on this paragraph.
+✅ **Resolved below — but at `1.5e-5`, not `5e-5`.** The gain sweep shows the confound disappears
+as the gain falls: dies track to ~3 kN, velocity symmetric to 0.04%.
+🚩 **CORRECTED 2026-08-20 — the value first recorded here was `5e-5` and it is NOT sufficient.**
+Two independent reasons are given below. Read the sweep subsection *and* the correction after it
+before acting on this paragraph.
 
 #### ✅ The gain sweep, run 2026-08-14 — and it splits the finding in two
 
@@ -1066,10 +1068,100 @@ The true peak necessarily exceeded 200 kN in all four arms — that is what stop
 "149 kN" is a floor on the low-gain peak, not the peak. The **cross-arm comparison** is sound
 because all four are sampled identically; the absolute value is not.
 
-🎯 **D1a is unblocked, and cheaply.** At `force_balance_gain ≤ 5e-5` the dies track to ~3 kN and
-the velocity command is symmetric to 0.04%, so `pressing_speed` again means what the similarity
-transform assumes. **Run the N sweep at 5e-5, not at the shipped 1.5e-4.** That is a one-flag
-change, needs no physics work, and does not depend on any sibling workstream.
+🎯 **D1a is unblocked, and cheaply.** At a low enough `force_balance_gain` the dies track to
+~3 kN and the velocity command is symmetric to 0.04%, so `pressing_speed` again means what the
+similarity transform assumes. That is a one-flag change, needs no physics work, and does not
+depend on any sibling workstream.
+
+🚩 **CORRECTED 2026-08-20 — the gain is `1.5e-5`, not the `5e-5` first recorded here.**
+
+**(a) Cross-arm.** The 2026-08-14 sweep varied only the gain on ONE contact configuration, so it
+measured that config's dies tracking. It never measured spread ACROSS contact arms. Per-arm `|dF|`
+telemetry over 19 arms leaves **31.9 pp** of cross-arm stall exposure at `5e-5` and **4.2 pp** at
+`1.5e-5`.
+
+**(b) The stall bound is itself not N-invariant — and D1a sweeps exactly that variable.**
+Re-verified at source by symbol (`grep -n "SAFETY_THRESHOLD" strike_controller.py`, then the
+`scale_factor` and `correction` lines immediately below it): the base speed is scaled by
+`THRESHOLD/|dF|` while the correction is `|dF| · gain`, so they cross at
+
+```
+|dF|_stall = sqrt(pressing_speed · THRESHOLD / gain)          THRESHOLD = 20 kN
+```
+
+which carries a **`sqrt(pressing_speed)`** factor. An N sweep *lowers* `pressing_speed`, and so
+lowers the stall bound on every slow arm it runs:
+
+| press speed | N | @ 1.5e-4 | @ 5e-5 | @ 1.5e-5 |
+|---|---|---|---|---|
+| 25.0 | 1773 | 57,735 | 100,000 | 182,574 |
+| 12.5 | 887 | 40,825 | 70,711 | 129,099 |
+| 6.25 | 443 | 28,868 | 50,000 | 91,287 |
+| 3.125 | 222 | 20,412 | **35,355** | 64,550 |
+
+🚨 **At `5e-5` the slowest arm sits at 35,355 N — BELOW the 57,735 N bound of the shipped gain
+this very section calls defective.** At `1.5e-5` the slowest arm stays above it. So `1.5e-5` is
+not a preference; it is the **floor** at which the whole sweep is no worse than shipped-nominal.
+
+#### 🚨 D1a — RUN 2026-08-20 by re-scoring sweeps already on disk. **CRITERION 1 FAILS.**
+
+Answered at zero GPU cost. Press-speed sweeps already existed on disk from the contact workstream
+(old-scheme workstream A, session `a9cc09a6`, branch `agforge/v2/forge-common`, worktree
+`nsf-demo` — **not** the new-scheme W-A). They were re-scored with *this project's own scorer and
+metric* — `agforge/analysis/geom_batch.py`'s `summarize()`, `real_mesh(hit, "after")`,
+`r = psize(len(P))/2`, vox 2.0 — so the numbers are directly comparable to every other geometry
+number in this document. 134 arm-scorings, 33 s CPU.
+
+**Criterion 1 (§9.4): IoU spread across the N sweep < 0.001.**
+Old card (pre-`6ee71236`), full **8× range** (25 → 3.125 m/s, N 1773 → 222), n=1:
+
+| hit | `g1_grid_prod` spread | ×criterion | `p5_penalty` spread | ×criterion |
+|---|---|---|---|---|
+| 1 | 0.0087 | 9× | 0.0058 | 6× |
+| 5 | 0.0173 | 17× | 0.0022 | 2× |
+| 10 | 0.0370 | 37× | 0.0069 | 7× |
+| **17** | **0.0678** | **68×** | **0.0282** | **28×** |
+
+🚨 **No hit and no arm is under 0.001.** The smallest spread measured anywhere is 0.0022 — still
+2.2× the threshold. `g1_grid_prod` is monotonic in speed at hits 1, 10 and 17, and its spread
+**grows monotonically with hit number** (0.0087 → 0.0678): the signature of an error that
+accumulates through the sequence, not a fixed offset.
+⇒ **Risk 1 of §10.1 has occurred.** Geometry drifts with N; the mechanical time scaling as
+implemented is **not** N-invariant, and it fails worst exactly where the sequence matters most.
+
+**Confounds excluded by measurement, not by argument:**
+- **Stop reason.** All six batches are **100% `Target Strain`** — 34/34 per old-card batch,
+  221/221 and 204/204 on the new card. Zero `Max Force`, zero `Timeout`. Every arm reached the
+  commanded position ⇒ this is **not** the §4.7.3 truncation artifact.
+- **Approach speed.** `run_meta.json` records `approach_cfl_ratio = 0.05` in **every** batch, so
+  defect 7's approach impact is held fixed across the sweep.
+- **Resolution / particles / billet IC.** `run_meta.json` is byte-identical across all batches
+  (8,358 particles, `cells_per_diameter` 10, same `billet_hit01_before_d8000.obj`).
+- **Single-variable-ness.** On the branch these ran on, `pressing_speed` appears only in its own
+  definition and one comment — it does **not** feed `mech_accel` or `S_T`.
+  ⚠️ **That is NOT true on this branch**, where `pressing_speed` drives `mech_accel` and
+  `thermal_mode='mechanical'` sets `S_T = pressing_speed / real_die_speed`. **A native re-run
+  here would not be single-variable.** Pin the thermal clock explicitly if you re-run.
+
+**The card change does not rescue it.** The sourced-316L card (post-`6ee71236`) was scored over the
+2× step it covers (25 → 12.5 m/s, n=2, 6 arms): speed deltas are **3–41× criterion 1** at hit 17
+and **2–33×** at hit 10 — the same verdict on both cards.
+⚠️ **But at hit 17 the new card's own replicate scatter exceeds the speed effect for 4 of 6 arms**
+(r1-vs-r2 up to **0.0964**, against A5's published σ = 0.00024 — ~400× worse). The clean new-card
+evidence is at hits 5–10, where signal/noise runs 3–35×. **Run-to-run reproducibility at hit 17 on
+the new card is its own open defect**, and it is a different question from N-invariance.
+
+⚠️ **Not established.** Thermal was left at the runs' default rather than forced off, so this is
+not strictly the "mechanical only" form of D1a. The internal control is that `p5_penalty` stays
+near-flat while `g1_grid_prod` drifts hard under *identical* thermal conditions ⇒ the drift is
+contact/discretisation-mechanical, not a thermal-time-per-hit artifact. **Criterion 4 (KE/IE)
+remains unmeasurable** — no monitor exists anywhere in `agforge` (defect 8), so criterion 1 has
+failed *without* its companion validity check ever having run.
+
+📄 Raw scores: 134 rows in `d1a_scores.jsonl`, W-B session scratchpad (**temporary**). Regenerate
+in ~35 s with `score_speed.py` from `forge_common/main/outputs/batch_speed_*` and `batch_spdmx_*`
+(**durable**). ⚠️ `batch_spdmx_6p25` is an **empty** directory — that job was killed; and
+`batch_speed_ALL` is an *approach*-speed study (`-243ms`/`-35ms` tags), not a press-speed one.
 
 ⚠️ This does **not** license lowering the shipped default. Doing so changes every existing force
 number and the balance loop exists for a reason; it is a config change with cross-workstream
@@ -1493,7 +1585,7 @@ Ranked by impact on the coupled-physics goal.
 
 | # | Defect | Location | Impact | Owner |
 |---|---|---|---|---|
-| **0** | **Die-balance loop goes one-sided above 57.7 kN imbalance** (added 2026-08-14; numbered 0 rather than renumbering the rest, but it ranks **first** on impact) | `strike_controller.py` PRESSING branch; `options.py:793` | **14 of 17 hits** drive one die to zero velocity while the other exceeds nominal press speed. Contaminates the die-imbalance figure (48× at the shipped gain) and ~29% of peak force. ⚠️ It does **not** cause the >200 kN spike or the `Max Force` stop — both survive a 30× gain reduction. **D1a is runnable at gain 5e-5** (§4.7.4 sweep) | this workstream |
+| **0** | **Die-balance loop goes one-sided above 57.7 kN imbalance** (added 2026-08-14; numbered 0 rather than renumbering the rest, but it ranks **first** on impact) | `strike_controller.py` PRESSING branch (`grep -n "SAFETY_THRESHOLD"`); `options.py` (`force_balance_gain`) | **14 of 17 hits** drive one die to zero velocity while the other exceeds nominal press speed. Contaminates the die-imbalance figure (48× at the shipped gain) and ~29% of peak force. ⚠️ It does **not** cause the >200 kN spike or the `Max Force` stop — both survive a 30× gain reduction. 🚩 **Run D1a at gain `1.5e-5`, NOT `5e-5`** — the stall bound carries a `sqrt(pressing_speed)` factor, so an N sweep lowers it (§4.7.4 correction, 2026-08-20) | this workstream |
 | 1 | **FLIP gather on the temperature field** | `base_mpm_solver.py:239, :723` | Blocks coupling entirely — particle temperature unusable for flow stress | B-3's component |
 | 2 | **S_T decoupled from N** (237,014 vs 1,773) | `options.py:616` | 134× too much heat transfer per blow | B-3 / shared |
 | 3 | **Strain rate not divided by N** | `materials.py:283` | Flow stress and plastic heating evaluated at ~1800× the real rate unless the prescribed override is on | this workstream |
@@ -1517,7 +1609,7 @@ behind another session. What is genuinely blocked is narrower than it looks:
 ```
 A1-A5  Instrumentation ────────────┐        ours, no dependencies
 B      Scaling unification ────────┤        ours, no dependencies
-                                   ├──► D1a  mechanical N-invariance   ✅ RUNNABLE at gain 5e-5
+                                   ├──► D1a  mechanical N-invariance   🚨 RUN 08-20 — CRITERION 1 FAILS
                                    │
 A6     Coupled path (§2.4) ────────┤        ours, no dependencies -- but MISSING TODAY
                                    │
@@ -1535,13 +1627,17 @@ workstream.
 evolving temperature (§2.4). Fixing the gather makes particle temperature *usable*; A6 is what
 makes it *used*. If only one of the two lands, coupled forging still does not run.
 
-⇒ **Do A + B + D1a first — but run D1a at `--force-balance-gain 5e-5`.** §4.7.4 measured the
-die-balance loop driving one die to zero velocity on **14 of 17 hits** at the shipped gain, which
-would have made an N sweep measure the controller rather than the similarity transform. The gain
-sweep of 2026-08-14 shows that confound disappears at 5e-5 and below: dies track to ~3 kN,
-velocity symmetric to 0.04%, and three gains spanning 10× give the same closure. So D1a is
-runnable today behind one flag. The original argument stands: if geometry drifts with N that
-reorders everything, and it costs little to learn early.
+⇒ 🚨 **D1a HAS NOW BEEN RUN (2026-08-20) AND CRITERION 1 FAILS** — see §4.7.4. Geometry drifts
+with N on both material cards, the drift accumulates with hit number (spread 0.0087 → 0.0678 from
+hit 1 to hit 17), and no hit or arm comes within 2.2× of the 0.001 threshold. **This reorders the
+plan below**: A + B are no longer a prologue to D1a, they are what is needed to *diagnose a
+failure already observed*. Criterion 4 (KE/IE, defect 8) is the first thing to build, because it
+is the companion check that says whether the cause is inertial.
+
+⚠️ **If you re-run D1a natively on this branch, use `--force-balance-gain 1.5e-5`, not `5e-5`**
+(§4.7.4 correction: the stall bound carries a `sqrt(pressing_speed)` factor, so the sweep lowers
+it), and pin the thermal clock — on this branch `pressing_speed` also drives `mech_accel` and
+`S_T`, so the sweep is not single-variable here.
 
 ⚠️ Phase B's `S_T = N` change is the one item that reaches outside this workstream: the
 induction calibration is tuned against the current default. Coordinate before landing it, or
@@ -1635,9 +1731,13 @@ If S_T = N and `rate = ε̇_sim/N` are correct, **the physical answer must not d
 Geometry and temperature history must collapse onto one curve. Any systematic drift means the
 scaling is wrong.
 
-- **D1a — mechanical only (thermal off): runnable immediately.** Validates the mechanical time
-  scaling independently of the gather. If geometry drifts with N, every force and material
-  result to date is contaminated.
+- **D1a — mechanical only (thermal off).** 🚨 **RUN 2026-08-20 — IT FAILS** (§4.7.4).
+  Validates the mechanical time scaling independently of the gather. The conditional here —
+  *"if geometry drifts with N, every force and material result to date is contaminated"* — is
+  no longer a conditional. Geometry **does** drift with N, on both material cards, and the
+  drift accumulates with hit number. ⚠️ The runs re-scored were at the batch default rather
+  than with thermal forced off, so the strict "thermal off" form of D1a is still unrun; the
+  internal control for that is in §4.7.4.
 - **D1b — fully coupled:** after Phase C.
 
 **Sweep design.** KE/IE scales as **N²**, so the sweep deliberately brackets the point where
