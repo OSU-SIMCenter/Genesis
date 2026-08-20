@@ -212,6 +212,60 @@ def elastic_energy(F, mu, lam, particle_volume_real):
     return float(np.sum(w) * float(particle_volume_real))
 
 
+def elastic_energy_split(F, mu, lam, particle_volume_real, sigma_y=None):
+    """Elastic energy separated into deviatoric and volumetric parts.
+
+    Built to decide between the two live explanations for elastic energy being
+    ~2.5x higher at a slower press when the flow rule is rate-independent:
+
+      LOCALIZATION (model behaving correctly).  After the von Mises return a
+        yielded particle sits exactly on the surface, ||eps_hat|| =
+        sigma_y/(2 mu), so its deviatoric energy is pinned.  Spreading yield
+        over MORE particles raises the deviatoric total without raising any
+        single particle's contribution.  Signature: deviatoric grows, and the
+        count of particles at or near the yield surface grows with it.
+
+      A PRESSURE PROBLEM (numerical).  kappa = lam + 2 mu/3 is ~1.7e11 Pa here,
+        so a volumetric strain of a few parts per thousand carries large energy.
+        Signature: the volumetric term dominates the difference, and trace(eps)
+        moves, while the deviatoric part and the yield-surface population barely
+        change.
+
+    These point at opposite conclusions and the totals alone cannot separate
+    them, which is why the split is recorded rather than just the sum.
+    """
+    f = _as_np(F).reshape(-1, 3, 3)
+    if f.shape[0] == 0:
+        return {"n": 0}
+    sv = np.clip(np.linalg.svd(f, compute_uv=False), 1e-6, None)
+    eps = np.log(sv)
+    tr = eps.sum(axis=1)
+    eps_hat = eps - (tr / 3.0)[:, None]
+    hat_norm = np.sqrt(np.einsum("ij,ij->i", eps_hat, eps_hat))
+    kappa = float(lam) + 2.0 * float(mu) / 3.0
+    V = float(particle_volume_real)
+
+    dev = float(np.sum(float(mu) * hat_norm ** 2) * V)
+    vol = float(np.sum(0.5 * kappa * tr * tr) * V)
+    out = {
+        "E_dev_J": dev,
+        "E_vol_J": vol,
+        "dev_frac": dev / (dev + vol) if (dev + vol) else 0.0,
+        "trace_eps_mean": float(tr.mean()),
+        "trace_eps_absmax": float(np.abs(tr).max()),
+        "hat_norm_mean": float(hat_norm.mean()),
+        "hat_norm_max": float(hat_norm.max()),
+    }
+    if sigma_y:
+        # How many particles sit at the yield surface. This is the population
+        # the localization explanation predicts should grow.
+        at_yield = float(sigma_y) / (2.0 * float(mu))
+        out["yield_hat_norm"] = at_yield
+        out["n_at_yield_99pct"] = int((hat_norm > 0.99 * at_yield).sum())
+        out["frac_at_yield_99pct"] = float((hat_norm > 0.99 * at_yield).mean())
+    return out
+
+
 def lame_from_E_nu(E, nu):
     """(mu, lambda) from Young's modulus and Poisson ratio."""
     E = float(E); nu = float(nu)
@@ -484,6 +538,15 @@ class EnergyMonitor:
         # class default rather than a live instance, since a Johnson-Cook run
         # has no ArrheniusPlasticity object to ask -- the window is a property
         # of the fit, not of the run.
+        # Reference flow stress, only for counting how many particles sit at the
+        # yield surface. Taken at an eps_p of 0.2, mid-range for one blow.
+        self.sigma_y_ref = None
+        try:
+            m = getattr(entity, "material", None)
+            self.sigma_y_ref = float(m.A) + float(m.B) * (0.2 ** float(m.n))
+        except Exception:
+            pass
+
         self.T_fit_min, self.T_fit_max = 1073.15, 1473.15
         try:
             from agforge.materials import ArrheniusPlasticity as _A
@@ -726,6 +789,13 @@ class EnergyMonitor:
             if Fm is not None:
                 rec["E_elastic_J"] = elastic_energy(
                     Fm, self.mu, self.lam, self.particle_volume_real)
+                # Deviatoric/volumetric split, to separate localization from a
+                # pressure problem. sigma_y is approximated from the card at the
+                # current mean plastic strain; it only sets the yield-population
+                # counter, not either energy.
+                rec["elastic_split"] = elastic_energy_split(
+                    Fm, self.mu, self.lam, self.particle_volume_real,
+                    sigma_y=self.sigma_y_ref)
             else:
                 rec["E_elastic_J"] = None
         else:
