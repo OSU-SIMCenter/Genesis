@@ -129,9 +129,26 @@ THREE THINGS A USER OF THIS HARNESS NEEDS TO KNOW BEFORE TRUSTING A NUMBER
    construction, so plasticity cannot change trace(epsilon) at all -- every
    part of it is elastic and must recover.  Real residual stress is also
    self-equilibrated with a mean near zero; this mean is net compressive, so
-   the elastic volume has genuinely shrunk against its own reference.  It
-   scales with substep count (4x the substeps, ~2x the residual), consistent
-   with drift in the multiplicative per-substep update of F.
+   the elastic volume has genuinely shrunk against its own reference.
+
+   It scales with substep count: 4.00x the PRESSING steps (45 -> 180) gives
+   1.94x the residual (-1.143e-03 -> -2.217e-03).
+
+   ⚠️ THE MECHANISM STATED IN a42907b8 IS WRONG, and the scaling is how.  That
+   commit says "drift in the multiplicative per-substep update of F".  But the
+   integration error in F_{n+1} = (I + dt*C) F_n is O(dt^2) per step, so over N
+   steps at dt = T/N it totals ~T^2/N and FALLS as 1/N.  Four times the
+   substeps should give four times LESS drift; the measurement shows twice
+   MORE.  Wrong direction, so that is not the mechanism.
+
+   What fits: 1.94 for a 4x step increase is essentially sqrt(N) = 2.0, the
+   signature of random-walk accumulation over PER-STEP operations whose error
+   does not shrink with dt -- the P2G/G2P round trip being the obvious
+   candidate, since each substep does a full particle-grid-particle transfer
+   and MPM transfers are not exactly volume-preserving.
+   That is TWO POINTS.  Treat sqrt(N) as a lead, not a result.  What is solid
+   is only that the drift RISES with step count, which rules out integration
+   error of the F update.
 
    Unlike the stability result above, this one HAS independent replication:
    two separate runs per speed agree on final elastic energy to 1.4% at 25 m/s
