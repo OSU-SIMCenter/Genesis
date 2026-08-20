@@ -1367,6 +1367,15 @@ follow-up.** A replicate of `p5_penalty` at 25.0 m/s under the **identical** sup
 **completed 17/17**, where the first run had `failed_at_hit_16`. Same arm, same speed, same flags,
 opposite outcome ⇒ **the supersonic failures are STOCHASTIC, and every cell above is n = 1.**
 Peak imbalance also swung run to run (65 kN vs 138 kN for the same p5 config).
+⚠️ **One caveat on that pair, found in the offboard hunt: ARM ORDER also differed.** p5 ran
+**second** (after `g1_grid_prod` completed 17 hits) in the failing run and **first** in the passing
+one, and the driver builds the scene **once** and reuses it (`setup=0.1s` for every later arm).
+The contamination route is largely closed — `init_stock` calls `reset_simulation()` on each later
+arm and the driver *verifies* the fresh bar for finiteness and extent after every reset, aborting
+as `aborted_dirty_reset` otherwise, which neither run triggered. But that check confirms **a clean
+bar, not a bitwise-identical initial state**. ⇒ *stochastic* remains the best explanation;
+**order-dependence is not fully excluded**, and the replicate that settles it should hold arm
+order fixed.
 
 Tallying every run at either setting: **controller OFF fails 4 of 6; archived controller ON fails
 0 of 4.** Fisher exact, one-tailed, **p = 0.071** — suggestive, **not** conclusive. The honest
@@ -1409,8 +1418,15 @@ mechanism for p5's fragility that owes nothing to the controller.
 | `p5_penalty` | 1 | 0.0021 | 2× | 0.0051 | 5× | 0.4× |
 | `p5_penalty` | 5 | 0.0300 | 30× | 0.0007 | 1× | 43× worse |
 
-🎯 **At hit 1 the spread collapses to 0.0002 and PASSES criterion 1** ⇒ at hit 1 the controller
-was the dominant contributor. ⚠️ But hit 1 is the saturated regime where a stock-volume ceiling
+🚩 **EVERY NUMBER IN THIS TABLE IS n = 1, AND THE PROCESS IS NON-DETERMINISTIC.** The
+stochasticity established below for *stability* applies with equal force to the *geometry* here —
+that lesson was originally applied to only one of the two tables, which was inconsistent. This
+project has measured hit-17 IoU replicate scatter as high as **0.0964**, which is larger than
+several of the spreads tabulated above. **Treat every clean-run spread as a single sample**, and
+in particular do not quote "passes criterion 1" as established from one run.
+
+🎯 **At hit 1 the spread collapses to 0.0002 and PASSES criterion 1** (n=1) ⇒ at hit 1 the
+controller was plausibly the dominant contributor. ⚠️ But hit 1 is the saturated regime where a stock-volume ceiling
 already makes configurations indistinguishable (§4.9), so this is the weakest possible place to
 demonstrate invariance.
 🚩 **From hit 5 on the spread is 2.5–43× LARGER with the controller removed.** So the
