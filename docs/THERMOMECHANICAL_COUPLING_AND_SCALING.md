@@ -1126,8 +1126,21 @@ Old card (pre-`6ee71236`), full **8× range** (25 → 3.125 m/s, N 1773 → 222)
 2.2× the threshold. `g1_grid_prod` is monotonic in speed at hits 1, 10 and 17, and its spread
 **grows monotonically with hit number** (0.0087 → 0.0678): the signature of an error that
 accumulates through the sequence, not a fixed offset.
-⇒ **Risk 1 of §10.1 has occurred.** Geometry drifts with N; the mechanical time scaling as
-implemented is **not** N-invariant, and it fails worst exactly where the sequence matters most.
+⇒ **Risk 1 of §10.1 has occurred, in its measurable form.**
+🚩 **State this precisely — the stronger version is the kind of claim this project has been
+burned by.** What was measured is **"no convergence over 25 → 3.125 m/s per jaw"**, NOT "no valid
+press speed exists". Nobody has run anywhere near physical: the slowest point is **N = 222** by
+this repo's own definition (`real_die_speed = 0.0141` m/s per jaw), or **539× real** on a
+closing-speed convention against 0.0116 m/s. ⚠️ **Those two conventions differ by ~2.4× and both
+are in circulation — say which you mean.** Either way the sweep sits **two to three orders of
+magnitude above physical**, so a converged regime may well exist below it, unreached.
+
+📘 **This sweep IS the documented standard procedure, not an improvisation.** Load-rate
+scaling for quasi-static problems is standard practice with a published criterion — Abaqus:
+*"the kinetic energy of the deforming material should not exceed a small fraction (typically 5% to
+10%) of its internal energy"*, and *"it may be necessary to run a series of analyses at varying
+loading rates to determine an acceptable loading rate."* We ran the series. **What is missing is
+the KE/IE metric needed to interpret it** — that is criterion 4 / defect 8, owned by W-A.
 
 **Confounds excluded by measurement, not by argument:**
 - **Stop reason.** All six batches are **100% `Target Strain`** — 34/34 per old-card batch,
@@ -1162,6 +1175,65 @@ failed *without* its companion validity check ever having run.
 in ~35 s with `score_speed.py` from `forge_common/main/outputs/batch_speed_*` and `batch_spdmx_*`
 (**durable**). ⚠️ `batch_spdmx_6p25` is an **empty** directory — that job was killed; and
 `batch_speed_ALL` is an *approach*-speed study (`-243ms`/`-35ms` tags), not a press-speed one.
+
+#### 🚨 The die-balance controller IS inside this sweep — measured, not suspected
+
+The stall bound carries a `sqrt(pressing_speed)` factor, so an N sweep lowers it. That predicts
+**more** stalling at slow speed. `stall_audit.py` tests it against the sweep's own log
+(`~/speed_sweep.log`), and because the log records `v=[vL,vR]` the stall is **observed** — a die
+commanded to exactly zero — not inferred from the bound:
+
+| press speed | stall bound | `g1_grid_prod` stall | hits hit | `p5_penalty` stall | hits hit |
+|---|---|---|---|---|---|
+| 25.0 | 57,735 | 1.3% | 4/17 | 0.6% | 1/17 |
+| 12.5 | 40,825 | 3.7% | 11/17 | 0.6% | 2/17 |
+| 6.25 | 28,868 | 8.1% | 16/17 | 2.6% | 3/17 |
+| **3.125** | **20,412** | **13.7%** | **17/17** | **4.4%** | 4/17 |
+
+🎯 **Observed stalling rises monotonically as speed falls, 10× for the grid arm, and by the
+slowest point every single hit is affected.** So the four points do **not** hold controller
+aggressiveness fixed, and the sweep varies two things at once.
+
+🎯 **Closed form explains why, and it is a regime change rather than a trend.** The
+modulation threshold is fixed at 20 kN while the stall bound is `sqrt(v · 20000/gain)`, so the
+band between "protection engages" and "controller stalls" is `sqrt(v / (20000·gain))` — **2.89× at
+25 m/s but 1.02× at 3.125 m/s**. At the slow end the band has collapsed: *any* hit that engages
+the protection at all is immediately in stall. The data show exactly that convergence — at
+3.125 m/s the engaged / predicted / observed columns read 14.0% / 13.9% / 13.7%, against
+23.2% / 5.9% / 1.3% at 25 m/s.
+
+⚠️ **This does NOT explain the failure away — it inflates it.** The controlled comparison:
+**`p5_penalty` between 25 and 12.5 m/s has identical observed stall (0.6% and 0.6%) and its IoU
+still moves 0.0089 = 9× criterion 1.** `g1_grid_prod` over the same, least-contaminated step moves
+0.0061 = 6×. ⇒ **a criterion-1 failure is present at constant controller exposure**; what the
+controller contaminates is the *magnitude* over the full 8× range.
+✅ **Corroboration from clean data:** the new-card runs show **0.0% observed stall on all 12 arms**
+at 12.5 m/s, yet still violate criterion 1 by 3–41× at hit 17. ⚠️ The new-card 25.0 log did not
+survive, so its stall exposure is unaudited and that corroboration is one-sided.
+
+#### ⚠️ Richardson extrapolation: **not interpretable on this data**
+
+Speeds halve uniformly (r = 2), so successive-difference ratios give the order directly. They do
+not give a consistent one — of eight arm-hit series, **one converges, three diverge, and four are
+non-monotonic**:
+
+| arm | hit | d1 | d2 | d3 | d2/d3 | verdict |
+|---|---|---|---|---|---|---|
+| `g1_grid_prod` | 10 | 0.0215 | 0.0114 | 0.0042 | 2.74 | converging, p ≈ 1.45 |
+| `g1_grid_prod` | **17** | 0.0061 | 0.0164 | 0.0453 | **0.36** | **diverging — differences growing ~2.8× per halving** |
+| `g1_grid_prod` | 1 | 0.0033 | 0.0012 | 0.0042 | 0.29 | diverging |
+| `p5_penalty` | all four | — | — | — | sign flips | non-monotonic, Richardson inapplicable |
+
+🚩 **There is no computable target speed from this data**, and at hit 17 — the hit the
+criterion is about — the differences are *growing*, not shrinking.
+⚠️ **But this analysis is downstream of the controller confound above and should not be trusted
+yet.** The stall exposure rises fastest exactly where `d3` lives (8.1% → 13.7% between 6.25 and
+3.125 m/s), so the apparent divergence has a candidate cause that is not the physics.
+⇒ **Re-run the sweep at fixed `--force-balance-gain 1.5e-5` before doing Richardson again.** That
+holds the controller constant across points and is the only version of this analysis worth acting
+on. Until then the honest statement is "not converged in the range tested", with the order
+**unknown** rather than negative.
+📄 `stall_audit.py`, `richardson.py` at repo root.
 
 ⚠️ This does **not** license lowering the shipped default. Doing so changes every existing force
 number and the balance loop exists for a reason; it is a config change with cross-workstream
@@ -1627,12 +1699,16 @@ workstream.
 evolving temperature (§2.4). Fixing the gather makes particle temperature *usable*; A6 is what
 makes it *used*. If only one of the two lands, coupled forging still does not run.
 
-⇒ 🚨 **D1a HAS NOW BEEN RUN (2026-08-20) AND CRITERION 1 FAILS** — see §4.7.4. Geometry drifts
-with N on both material cards, the drift accumulates with hit number (spread 0.0087 → 0.0678 from
-hit 1 to hit 17), and no hit or arm comes within 2.2× of the 0.001 threshold. **This reorders the
-plan below**: A + B are no longer a prologue to D1a, they are what is needed to *diagnose a
-failure already observed*. Criterion 4 (KE/IE, defect 8) is the first thing to build, because it
-is the companion check that says whether the cause is inertial.
+⇒ 🚨 **D1a HAS NOW BEEN RUN (2026-08-20) AND CRITERION 1 FAILS IN THE RANGE TESTED** — see
+§4.7.4. Geometry does not converge over 25 → 3.125 m/s per jaw on either material card, the drift
+accumulates with hit number (spread 0.0087 → 0.0678 from hit 1 to hit 17), and no hit or arm comes
+within 2.2× of the 0.001 threshold. ⚠️ **Read that as "not converged in the range tested", not as
+"no valid press speed exists"** — the slowest point is still two to three orders of magnitude
+above physical, and the die-balance controller is not held fixed across the four points (§4.7.4).
+**This reorders the plan below**: A + B are no longer a prologue to D1a, they are what is needed
+to *diagnose a failure already observed*. Criterion 4 (KE/IE, defect 8) is the first thing to
+build — it is the published criterion for exactly this procedure, and without it the sweep cannot
+be interpreted.
 
 ⚠️ **If you re-run D1a natively on this branch, use `--force-balance-gain 1.5e-5`, not `5e-5`**
 (§4.7.4 correction: the stall bound carries a `sqrt(pressing_speed)` factor, so the sweep lowers
