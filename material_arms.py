@@ -98,16 +98,46 @@ def main():
     # 100 m/s stability intercept). The contact workstream found 35 m/s takes their
     # arms to 17/17.
     ap.add_argument("--approach-speed", type=float, default=None)
-    # Die-balance loop gain (options.py:793, default 1.5e-4). The loop drives one die
-    # to zero velocity above |dF|_stall = sqrt(pressing_speed*20000/gain) = 57.7 kN at
-    # the shipped values, which happens on 14 of 17 hits -- see doc 4.7.4. Lowering the
-    # gain raises that threshold as 1/sqrt(gain); whether it also removes the underlying
-    # sign-alternating divergence is the open question this knob exists to answer.
+    # Die-balance loop gain (options.py, `force_balance_gain`, default 1.5e-4 -- grep the
+    # symbol, line numbers on this branch rot). The loop drives one die to zero velocity
+    # above |dF|_stall = sqrt(pressing_speed*20000/gain) = 57.7 kN at the shipped values,
+    # which happens on 14 of 17 hits -- see doc 4.7.4.
+    # MEASURED SINCE: the bound carries a sqrt(pressing_speed), so an N sweep LOWERS it;
+    # observed stalling runs 1.3 -> 13.7% of frames as speed falls 25 -> 3.125 m/s. Use
+    # 1.5e-5, not 5e-5: at 5e-5 the slowest arm's bound (35,355 N) is BELOW the shipped
+    # gain's bound at nominal speed. It does NOT remove the drift -- p5_penalty at
+    # identical 0.6% stall still moves 9x criterion 1 -- so this holds the contaminant
+    # fixed rather than fixing the underlying problem.
     ap.add_argument("--force-balance-gain", type=float, default=None)
     # N = pressing_speed / real_die_speed. Sweeping this is D1a (mechanical
-    # N-invariance). CONFOUNDED while the balance loop is unstable -- an N sweep run
-    # today measures the controller, not the similarity transform. Fix the gain first.
+    # N-invariance), and it has now been RUN -- criterion 1 fails over 25 -> 3.125 m/s
+    # per jaw on both material cards (doc 4.7.4). Set --force-balance-gain 1.5e-5 and
+    # --max-force high, or the sweep measures the controller and the stop rather than
+    # the similarity transform.
+    # NOTE this sweep cannot separate press speed from step count: press frames scale as
+    # 1/v to within 4% (375/733/1411/2753 for g1), so the two are collinear by
+    # construction. Breaking that degeneracy needs the CFL axis, not this one.
     ap.add_argument("--pressing-speed", type=float, default=None)
+    # Raise (or effectively disable) the Max Force stop -- the SECOND D1a blocker.
+    # Without it every hit terminates wherever the force profile crosses max_force, and
+    # that crossing point moves with press speed, so a speed sweep compares hits that
+    # stopped at DIFFERENT strains and measures the stop rather than the thing swept.
+    # Workstream A confirmed the artifact live on the sourced-316L card: the same hit
+    # stopped at strain 0.2160 / 0.2243 / 0.2140 at 25 / 12.5 / 6.25 m/s against a
+    # 0.2484 target, all on Max Force -- and the truncation INVERTS the sign of the
+    # trend. The archived batch_speed_* sweeps predate that card and are clean (34/34
+    # Target Strain per batch, mean strain matched to 1.5% across speeds), but anything
+    # re-run on the new card needs this set high. Mirrors energy_probe.py's flag.
+    ap.add_argument("--max-force", type=float, default=None)
+    # Modulation threshold for the die-balance loop (StrikeOptions.max_force_imbalance,
+    # default 20 kN). Raising it far above any reachable |dF| disables BOTH the feed-rate
+    # modulation and the stall, which is stronger than lowering the gain: 0% stall does NOT
+    # mean the controller is inactive. Measured at 25 m/s, the loop modulates die velocity
+    # on 23.2% of frames while stalling on only 1.3% -- 18x more engagement than stall --
+    # and modulation exposure FALLS as press speed falls (23.2 -> 14.0%) while stall RISES
+    # (1.3 -> 13.7%). Because the two move in opposite directions, no pair of speed points
+    # holds both fixed, and only switching the loop off separates it from the drift.
+    ap.add_argument("--force-imbalance-threshold", type=float, default=None)
     args = ap.parse_args()
 
     use_arr, billet_k, t_fit_max = ARMS[args.arm]
@@ -143,6 +173,10 @@ def main():
             self.strike.force_balance_gain = float(args.force_balance_gain)
         if args.pressing_speed is not None:
             self.strike.pressing_speed = float(args.pressing_speed)
+        if args.max_force is not None:
+            self.strike.max_force = float(args.max_force)
+        if args.force_imbalance_threshold is not None:
+            self.strike.max_force_imbalance = float(args.force_imbalance_threshold)
         if args.no_thermal:
             self.mpm.enable_thermal = False
 
@@ -247,9 +281,33 @@ def main():
                              % (args.pressing_speed, press_used))
         print("[verify] pressing_speed = %.4f m/s" % press_used)
 
+    max_force_used = float(state.env.cfg.strike.max_force)
+    if args.max_force is not None:
+        if abs(max_force_used - args.max_force) > 1e-6 * abs(args.max_force):
+            raise SystemExit("MAX FORCE MISMATCH: asked %.6e N, cfg reads %.6e"
+                             % (args.max_force, max_force_used))
+        print("[verify] max_force = %.4e N" % max_force_used)
+    else:
+        print("[verify] max_force = %.4e N (DEFAULT -- the force stop is ACTIVE; if this "
+              "run is part of a speed sweep the comparison is truncation-biased)"
+              % max_force_used)
+
+    imb_used = float(state.env.cfg.strike.max_force_imbalance)
+    if args.force_imbalance_threshold is not None:
+        if abs(imb_used - args.force_imbalance_threshold) > 1e-6 * abs(
+                args.force_imbalance_threshold):
+            raise SystemExit("IMBALANCE THRESHOLD MISMATCH: asked %.6e N, cfg reads %.6e"
+                             % (args.force_imbalance_threshold, imb_used))
+        print("[verify] max_force_imbalance = %.4e N" % imb_used)
+
     N_used = press_used / real_die_speed if real_die_speed else float("nan")
-    stall_dF = (press_used * 20000.0 / gain_used) ** 0.5 if gain_used > 0 else float("inf")
-    print("[verify] N = %.1f, |dF|_stall = %.0f N" % (N_used, stall_dF))
+    # Uses the CONFIGURED modulation threshold, not a hardcoded 20 kN. With
+    # --force-imbalance-threshold raised to disable the loop, a hardcoded 20000 here
+    # reports 182 kN when the real bound is ~1.3e9 N -- i.e. it would lie exactly on the
+    # run that disables the controller, which is the run this number matters most on.
+    stall_dF = (press_used * imb_used / gain_used) ** 0.5 if gain_used > 0 else float("inf")
+    print("[verify] N = %.1f, |dF|_stall = %.0f N (threshold %.4g N)"
+          % (N_used, stall_dF, imb_used))
 
     # --- thermal FLIP/PIC override, with read-back (runtime field, no recompile) ---
     flip_used = None
@@ -297,7 +355,9 @@ def main():
                 "force_balance_gain": gain_used,
                 "pressing_speed": press_used,
                 "N": N_used,
-                "stall_dF_N": stall_dF}
+                "stall_dF_N": stall_dF,
+                "max_force": max_force_used,
+                "max_force_imbalance": imb_used}
     print("[verify] OK -- %s" % json.dumps(observed))
 
     status, n_done, err = "completed", 0, None

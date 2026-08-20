@@ -1202,6 +1202,39 @@ the protection at all is immediately in stall. The data show exactly that conver
 3.125 m/s the engaged / predicted / observed columns read 14.0% / 13.9% / 13.7%, against
 23.2% / 5.9% / 1.3% at 25 m/s.
 
+🚩 **CANONICAL WORDING — "the controller hypothesis is refuted" is circulating and is too
+strong.** Two different claims are in play and both measurements are right:
+**stall exposure VARIES WITH SPEED** (measured here: 1.3% → 13.7%, monotonic, every hit touched at
+3.125 m/s) and **stall does NOT explain the BETWEEN-ARM ranking of drift** (workstream A:
+`p4_pg2p_vel` drifts −9.35 mm and `p5_penalty` −0.67 mm, 14× apart at the *same* 0% stall).
+⇒ **Stall is a speed-coupled contaminant that inflates the low-speed end. It is not the cause of
+the drift and it does not explain the between-method ranking.** Neither result refutes the other.
+
+🚩 **BUT "0% stall" DOES NOT MEAN "the controller was not acting", and that weakens the
+control below — including mine.** The loop has two effects and stalling is the rarer one. At
+25 m/s the measured columns are **engaged 23.2% / predicted-over-bound 5.9% / stalled 1.3%**: the
+feed rate is modulated on **18× more frames than it stalls on**.
+
+| press speed | `g1` modulated | `g1` stalled | `p5` modulated | `p5` stalled |
+|---|---|---|---|---|
+| 25.0 | **23.2%** | 1.3% | **11.7%** | 0.6% |
+| 12.5 | 19.8% | 3.7% | 5.5% | 0.6% |
+| 6.25 | 15.7% | 8.1% | 4.1% | 2.6% |
+| 3.125 | **14.0%** | **13.7%** | **4.4%** | **4.4%** |
+
+⚠️ **Modulation FALLS as speed falls while stall RISES**, so **no pair of speed points holds both
+fixed** — my `p5` 25→12.5 control (stall 0.6% vs 0.6%) has modulation 11.7% vs 5.5%, a 2.1×
+difference. It controls for *stall*, not for *the controller*. Workstream A's `p4`-vs-`p5`
+comparison at "identical 0% stalling" has the same limitation.
+🎯 One argument survives that: **the drift grows while modulation shrinks**, so a
+modulation-driven mechanism predicts the wrong sign. That is evidence, not a control.
+✅ **The decisive test is now runnable and nobody had proposed it:** set the modulation threshold
+above any reachable `|dF|` so **both** modulation and stall vanish, and re-run one speed pair.
+Drift persists ⇒ the controller is exonerated. Drift collapses ⇒ it never was.
+`material_arms.py --force-imbalance-threshold 1e12 --max-force 1e9` (both added 2026-08-20;
+`max_force_imbalance` had been a declared-but-never-read config field while
+`strike_controller.py` hardcoded the same 20 kN literal).
+
 ⚠️ **This does NOT explain the failure away — it inflates it.** The controlled comparison:
 **`p5_penalty` between 25 and 12.5 m/s has identical observed stall (0.6% and 0.6%) and its IoU
 still moves 0.0089 = 9× criterion 1.** `g1_grid_prod` over the same, least-contaminated step moves
@@ -1234,6 +1267,86 @@ holds the controller constant across points and is the only version of this anal
 on. Until then the honest statement is "not converged in the range tested", with the order
 **unknown** rather than negative.
 📄 `stall_audit.py`, `richardson.py` at repo root.
+
+#### ✅ The speed points ARE compared at equal deformation — checked, not assumed
+
+Workstream A found that a **force-truncated** sweep inverts the sign of the trend, because the
+fast run stops earlier than the slow one and the two are then compared at different deformation.
+Confirmed live on the sourced-316L card: one hit stopped at strain **0.2160 / 0.2243 / 0.2140** at
+25 / 12.5 / 6.25 m/s against a 0.2484 target, all on `Max Force`. **That artifact requires unequal
+final strain**, so it was checked here directly (`strain_check.py`):
+
+| press speed | mean final strain | vs fastest | `g1_grid_prod` | `p5_penalty` | stops |
+|---|---|---|---|---|---|
+| 25.0 | 0.2520 | — | 0.3216 | 0.1825 | Target Strain |
+| 12.5 | 0.2490 | −0.0030 | 0.3201 | 0.1779 | Target Strain |
+| 6.25 | 0.2483 | −0.0037 | 0.3181 | 0.1784 | Target Strain |
+| 3.125 | 0.2500 | −0.0020 | 0.3211 | 0.1789 | Target Strain |
+
+✅ **Strain is matched to 1.5% and is NON-monotonic in speed, while IoU moves 11.8% monotonically**
+⇒ deformation cannot be driving the geometry drift, and the truncation artifact is absent from
+these batches. 🚨 **But it applies to anything re-run on `6ee71236`**, where the stop fires by
+default — use `--max-force` (added to `material_arms.py` 2026-08-20 with abort-on-mismatch
+read-back; the un-set path now prints an explicit truncation-bias warning).
+
+#### 🚨 Inertia is NOT the cause — and slowing the press cannot fix it
+
+Workstream A's KE/IE monitor (criterion 4, defect 8) is built and answers it. **At equal strain:
+25.0 m/s → KE/IE 0.0601; 6.25 m/s → 0.0724. A 4× slower press is 20% WORSE**, both inside the
+5–10% quasi-static band, and the 10×-first-mode rule passes on real billet dimensions
+(59.20 × 40.32 × 39.55 mm).
+⇒ **The assumption underneath this whole sweep — that slower is more quasi-static and therefore
+more correct — is false on both axes.** It fails on geometry here (differences *growing* at the
+slow end, ratio 0.36 at hit 17) and on energy there. Those two point the same way and are
+mutually corroborating.
+🎯 **Remaining candidates are energetic, not inertial** (workstream A's): plastic work growing
+**+17 J after the material comes to rest**, identically at all speeds; and stored elastic energy
+nearly doubling as the press slows (**73.9 → 116.4 → 146.0 J**) despite *lower* strain — a route
+to speed-dependent springback.
+⚠️ **A degeneracy this sweep cannot break:** press frames scale as `1/v` to within 4%
+(375 / 733 / 1411 / 2753 for `g1_grid_prod`), so **press speed and accumulated step count are
+collinear by construction here.** A time-proportional energy leak and a genuine speed dependence
+are indistinguishable on this axis. **The CFL sweep is the only axis that separates them** — it
+varies steps at fixed speed.
+
+#### ✅ The degeneracy, broken: refining the timestep moves geometry the OPPOSITE way
+
+`batch_cfl090` / `batch_cfl045` / `batch_cfl0225` vary the timestep at **fixed press speed**, so
+they separate "more steps" from "slower press". Scored with the same scorer, all three batches
+**100% `Target Strain`** (34/34 each), matched `cells_per_diameter` 10 and `psize` 2.0:
+
+| arm | hit | CFL 0.90 | CFL 0.45 | CFL 0.225 | spread | ×criterion | direction |
+|---|---|---|---|---|---|---|---|
+| `g1_grid_prod` | 10 | 0.6154 | 0.6558 | 0.6038 | 0.0520 | 52× | non-monotonic |
+| `g1_grid_prod` | **17** | 0.5217 | 0.5970 | 0.5868 | **0.0753** | **75×** | net **UP** with steps |
+| `p5_penalty` | 10 | 0.5961 | 0.6789 | 0.6832 | 0.0871 | 87× | UP |
+| `p5_penalty` | **17** | 0.4944 | 0.6096 | 0.6239 | **0.1294** | **129×** | monotonic **UP** |
+
+🎯 **Refining the timestep moves IoU UP — toward the real scan. Slowing the press moves it DOWN.
+Opposite signs ⇒ a per-step accumulation cannot explain the speed drift**, and the two axes are
+not the same mechanism. That kills the tidiest available hypothesis.
+🎯 **And the timestep axis is the LARGER effect at hit 17** — `p5_penalty` moves **0.1294** across
+a 4× CFL range against **0.0282** across an 8× speed range, 4.6×. The arm that looked *converged*
+on the speed axis is the least converged on the timestep axis.
+⚠️ **Cross-axis MAGNITUDES are card-confounded.** The CFL batches ran 2026-08-18 15:05–15:45,
+*after* `6ee71236` (14:55:56) ⇒ **sourced-316L card**; the speed batches are 08-14 ⇒ **old card**.
+The direction comparison is the robust part; the 4.6× ratio is not.
+⚠️ **The CFL axis carries its own known confound**: changing `cfl_safety` also changes the
+controller unless `AGF_ROBOT_TIME_TO_SECONDS` is pinned, and the CFL logs do not set it.
+📄 `cfl_score.py`.
+
+#### 🎯 Why chasing lower press speeds was never going to work
+
+The cleanest statement of the whole result, and it is an argument rather than a measurement:
+**our material is rate-INDEPENDENT** — `jc_C` is dead code (§7 / `316L_MECHANICAL_PROPERTIES.md`),
+so the flow rule has no strain-rate term at all. **A rate-independent material in a genuinely
+quasi-static regime MUST give speed-independent results.** Workstream A's KE/IE says we are
+nominally quasi-static (6–7%, inside the 5–10% band). The results move anyway, by 68× the
+criterion.
+⇒ **The drift is a NUMERICAL COUPLING, not physics.** No press speed fixes it, which is why the
+sweep diverges instead of converging, and why the remaining candidates are energetic rather than
+inertial: plastic work growing **+17 J after the material comes to rest**, and stored elastic
+energy nearly doubling as the press slows despite *lower* strain.
 
 ⚠️ This does **not** license lowering the shipped default. Doing so changes every existing force
 number and the balance loop exists for a reason; it is a config change with cross-workstream

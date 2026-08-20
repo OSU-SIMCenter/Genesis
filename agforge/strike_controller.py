@@ -704,7 +704,15 @@ class StrikeController:
                     # --- ADVANCED PROTECTION: Feed Rate Modulation ---
                     # If force imbalance exceeds threshold, slow down the main pressing speed
                     # to allow the balance controller to catch up without fighting forward momentum.
-                    SAFETY_THRESHOLD = 20000.0 # 20kN (~10% of max force)
+                    # Was a hardcoded 20000.0 while StrikeOptions.max_force_imbalance --
+                    # the config field for exactly this -- sat declared and never read.
+                    # Reading it changes nothing by default (both are 20 kN) but makes the
+                    # modulation threshold settable, which is what the decisive controller
+                    # test needs: raise it far above any reachable |dF| and BOTH the speed
+                    # modulation and the zero-velocity stall disappear, so a speed pair can
+                    # be re-run with the balance loop effectively absent. Drift that survives
+                    # that is not the controller's.
+                    SAFETY_THRESHOLD = float(self.env.cfg.strike.max_force_imbalance)
                     adaptive_speed = pressing_speed
                     
                     imbalance_abs = torch.abs(imbalance)
