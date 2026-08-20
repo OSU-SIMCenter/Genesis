@@ -1356,12 +1356,48 @@ stall and 0.0% modulation in all four cells**, peak imbalance 91 kN against 413 
 | 3.125 | `failed_at_hit_12` (11 banked) | `failed_at_hit_8` (7 banked) |
 
 Every failure is `SimulationStabilityError: Supersonic Velocity (>100 m/s)`. In the archived runs
-**all four cells completed 17/17**. ⇒ **the die-balance loop is load-bearing for STABILITY, not
-merely a measurement confound** — its own source calls it "ADVANCED PROTECTION" and that is
-literal. 🎯 **And failure arrives EARLIER at the slower speed** (g1 17→11 hits, p5 15→7), which is
-again the opposite of the quasi-static intuition.
+**all four cells completed 17/17**. 🎯 **And failure arrives EARLIER at the slower speed**
+(g1 17→11 hits, p5 15→7), the opposite of the quasi-static intuition.
 ⚠️ **Which of the three removals destabilises is NOT established** — gain, modulation threshold
-and force stop were lifted together. Separating them is one run each.
+and force stop were lifted together.
+
+🚩 **RETRACTED IN PART, 2026-08-20 (later). This section first read "⇒ the die-balance loop
+is load-bearing for STABILITY". That is now downgraded from a finding to an association, by my own
+follow-up.** A replicate of `p5_penalty` at 25.0 m/s under the **identical** suppressed config
+**completed 17/17**, where the first run had `failed_at_hit_16`. Same arm, same speed, same flags,
+opposite outcome ⇒ **the supersonic failures are STOCHASTIC, and every cell above is n = 1.**
+Peak imbalance also swung run to run (65 kN vs 138 kN for the same p5 config).
+
+Tallying every run at either setting: **controller OFF fails 4 of 6; archived controller ON fails
+0 of 4.** Fisher exact, one-tailed, **p = 0.071** — suggestive, **not** conclusive. The honest
+statement is *"removing the controller is associated with instability, on small samples of a
+stochastic process"*, not *"it destabilises the sim"*. ⚠️ This project already knows its runs are
+non-deterministic (hit-17 IoU replicate scatter reaches 0.0964); stability outcomes are evidently
+non-deterministic too, and **nobody had been treating them that way.** Any future claim here needs
+replicates, not another single run.
+
+#### ⚠️ `f4_penalty_hyb`: the missing-floor hypothesis is NOT supported
+
+`p5_penalty` runs with **no non-penetration floor** — by design, not by accident
+(`batch_arms.py`: "contact modes are one mutually-exclusive scalar, so selecting any particle mode
+switched grid contact off entirely and left nothing preventing deep penetration"). Lifting the
+force stop lets it press deeper, so *deep penetration with nothing to stop it* was a candidate for
+the failure that is **not** one of the three lifted knobs. `f4_penalty_hyb` is exactly
+`p5 + grid_floor`, so it tests that directly.
+
+**Result: `f4_penalty_hyb` failed at hit 14 — EARLIER than the p5 run beside it, which completed
+17/17.** Adding the floor did not rescue it. ⇒ **the missing floor does not explain the failure.**
+⚠️ But because the same run showed p5's outcome is stochastic, this does not cleanly *refute* the
+hypothesis either — a 13-hit and a 17-hit outcome are within the observed run-to-run range.
+**The test that was supposed to be decisive is not, and the reason is the stochasticity it
+uncovered.** Characterising the failure rate at n ≥ 5 has to come before any attribution.
+📄 `batch_f4test_25p0`, `~/f4_test.log`.
+
+✅ Corroboration from an independent direction (workstream A, fixed press speed, CFL varied):
+`p5_penalty` fails at CFL 0.90 and survives at 0.45 while `p4_pg2p_vel` survives both — the
+textbook signature of an **explicit penalty formulation whose stable timestep is bounded by
+stiffness**, i.e. `AGF_PENALTY_K = 5e7` is effectively setting p5's usable CFL. That is a
+mechanism for p5's fragility that owes nothing to the controller.
 
 **Criterion 1, where both speeds have clouds** (IoU spread across the 8× step):
 
@@ -1399,6 +1435,26 @@ stall, **0.0089 = 9× criterion**), hit 1 of this run (**passes**), and workstre
 series at gain 1.5e-5 (−0.03% → −11.69% over 17 hits). **The next experiment is not another speed
 sweep** — it is separating which suppressed knob causes the supersonic failure, because until an
 arm can complete 17 hits with the controller out there is no clean late-hit geometry to measure.
+
+#### 🚨 OPEN CONFOUND: the D1a arms are **not timestep-converged** at the CFL they ran at
+
+Nobody had checked this. Richardson on the CFL axis at hit 17, **fixed press speed 25 m/s**, using
+the batches already scored (`batch_cfl090/045/0225`):
+
+| arm | CFL 0.90 | 0.45 | 0.225 | d1/d2 | extrapolated limit | reading at CFL 0.90 |
+|---|---|---|---|---|---|---|
+| `p5_penalty` | 0.4944 | 0.6096 | 0.6239 | **8.06** (p = 3.01) | **0.6259** | **21.0% BELOW converged** |
+| `g1_grid_prod` | 0.5217 | 0.5970 | 0.5868 | −7.38 | — | non-monotonic, **undetermined** |
+
+🚨 **`p5` reads 21% low at the timestep the D1a sweep used**, and `g1` moves 0.0753 between
+CFL 0.90 and 0.45 — 75× criterion 1 — with no valid extrapolation. ⇒ **absolute IoU values in the
+D1a result are unreliable**, and comparing arms at a single shared CFL rewards whichever method
+converges fastest rather than whichever is most accurate.
+⚠️ **Do NOT over-read this into "the spread is resolution error."** A timestep bias at fixed CFL is
+a *common offset* across speed points; it contaminates the press-speed **spread** only if it
+interacts with speed, which is untested. And §4.7.4's cross-axis result cuts against the simplest
+such route: refining dt moves IoU **up** while slowing the press moves it **down**, opposite signs.
+⇒ live confound for absolute values, **unresolved** for the spread.
 
 #### 🎯 Why chasing lower press speeds was never going to work
 
