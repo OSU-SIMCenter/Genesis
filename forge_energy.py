@@ -74,16 +74,30 @@ THREE THINGS A USER OF THIS HARNESS NEEDS TO KNOW BEFORE TRUSTING A NUMBER
 
    This module's headline comparison lowered force_balance_gain to 1.5e-5 to
    take the controller out of the kinetic energy, and that was the right
-   experiment: it overturned a wrong conclusion (see below).  But workstream B
-   then ran the fully-suppressed case and the SIM ITSELF DESTABILISES -- three
-   of four cells died with SimulationStabilityError, Supersonic Velocity
-   >100 m/s, where all four completed 17/17 in the archive.  The loop's own
-   source calls it "ADVANCED PROTECTION" and that is literal, not decorative.
+   experiment: it overturned a wrong conclusion (see below).  Workstream B then
+   ran the FULLY suppressed case and saw three of four cells die with
+   SimulationStabilityError, Supersonic Velocity >100 m/s, where all four
+   completed 17/17 in the archive.
 
-   The distinction that appears to matter is QUIET versus ABSENT.  A-9 held the
+   State that carefully, because they have since downgraded it themselves and
+   the strong version is wrong.  A replicate of one failing cell completed
+   17/17 under identical flags, so the stability OUTCOME IS STOCHASTIC and every
+   cell in that table is n = 1.  Pooled, controller-off fails four of six and
+   controller-on zero of four: Fisher exact one-tailed p = 0.071.  Suggestive,
+   not conclusive.  The honest form is "removing the controller is ASSOCIATED
+   with instability on small samples of a stochastic process", not "it
+   destabilises the sim".
+
+   The practical distinction still looks like QUIET versus ABSENT.  A-9 held the
    controller quiet (gain 1.5e-5, <=0.96% exposure) and completed 12/12 where
    fully-suppressed cells died.  So: lower the gain to make the controller
-   quiet, do not assume that "quieter" extrapolates to "removed".
+   quiet, and do not assume "quieter" extrapolates to "removed" -- but treat
+   that as a working preference, not a measured law.
+
+   The general lesson is bigger than the controller.  This project already knew
+   its GEOMETRY was non-deterministic (hit-17 replicate scatter reaches 0.0964).
+   Nobody had been treating STABILITY outcomes the same way, and they need to
+   be: a single failed run is not evidence a configuration is unstable.
 
 2. ONE INSTRUMENTED AXIS CANNOT TELL TWO CAUSES APART.
 
@@ -100,7 +114,34 @@ THREE THINGS A USER OF THIS HARNESS NEEDS TO KNOW BEFORE TRUSTING A NUMBER
    of it: KE, plastic work and elastic energy separate cases that a single
    length cannot.
 
-3. THE OPEN ANOMALY THIS HARNESS FOUND AND HAS NOT EXPLAINED.
+3. THE ANOMALY THIS HARNESS FOUND, AND WHAT IT TURNED OUT TO BE.
+
+   RESOLVED: the elastic difference below is VOLUMETRIC, and the volume does
+   not return.  Phase-matched at first HOLDING, the deviatoric term moves 0.92x
+   and the yield-surface population 1.11x, while the volumetric term moves
+   2.61x and carries 100% of the gap.  Following tr(eps) through a strike
+   cycle, both speeds start at exactly 0.0 and NEITHER returns after unload:
+   -1.1431e-03 and -2.2174e-03 with the dies released, holding 171.5 J and
+   546.8 J of supposedly recoverable elastic energy.
+
+   That is a conservation defect, not residual stress.  The von Mises return in
+   materials.py subtracts a multiple of eps_hat, which is traceless by
+   construction, so plasticity cannot change trace(epsilon) at all -- every
+   part of it is elastic and must recover.  Real residual stress is also
+   self-equilibrated with a mean near zero; this mean is net compressive, so
+   the elastic volume has genuinely shrunk against its own reference.  It
+   scales with substep count (4x the substeps, ~2x the residual), consistent
+   with drift in the multiplicative per-substep update of F.
+
+   Unlike the stability result above, this one HAS independent replication:
+   two separate runs per speed agree on final elastic energy to 1.4% at 25 m/s
+   and 4.6% at 6.25 m/s, and KE/IE reproduces to the fourth significant figure.
+   Still one hit, and still not localised to a specific kernel.
+
+   The original framing is kept below because the two candidates it names are
+   how the question got settled.
+
+   ORIGINALLY OPEN:
 
    At MATCHED strain (0.2496) with stalling suppressed, 25.0 vs 6.25 m/s:
 
