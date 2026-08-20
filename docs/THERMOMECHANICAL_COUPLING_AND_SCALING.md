@@ -1472,6 +1472,44 @@ interacts with speed, which is untested. And §4.7.4's cross-axis result cuts ag
 such route: refining dt moves IoU **up** while slowing the press moves it **down**, opposite signs.
 ⇒ live confound for absolute values, **unresolved** for the spread.
 
+#### 📄 `MATERIAL_AND_CONFIG.txt` — the provenance record that already exists, and what it changes
+
+Found at offboard, **not mentioned anywhere in the relay chain**: workstream A wrote a
+`MATERIAL_AND_CONFIG.txt` into **7 batches** (`batch_cfl090/045/0225`, `batch_gain_1p5em4/5`,
+`batch_cherrysmoke`, `batch_patchsmoke`) recording card, per-batch knobs and the full environment
+"verified from /proc on the live processes". **This is the provenance fix, already implemented —
+just not on the batches most people read.** ⚠️ My own runs write `controller_meta.json` instead;
+**two conventions now exist for the same job** and should be merged rather than left to diverge.
+
+✅ **It resolves two things this document had assumed:**
+- `batch_cfl090/045/0225` ran at **`AGF_CFL_SAFETY` 0.90 / 0.45 / 0.225, gain 1.5e-5, speed 25.0,
+  NEW card** — so the timestep-convergence analysis really did hold press speed fixed
+  (independently corroborated: peak die velocity 25.30 m/s in both logs).
+- 🎯 **and those batches already ran with the controller partly suppressed** (gain 1.5e-5,
+  `AGF_MAX_FORCE=1e9`). The 21%-below-converged result is therefore *not* contaminated by the
+  balance loop — better than claimed, not worse.
+
+🚨 **Four things it exposes:**
+1. **`batch_speed_*` is on its explicit DO-NOT-COMPARE list.** The card gap is quantified there:
+   σ_y at ε_p = 0.2 is **200 MPa new vs 106 MPa old**, ~1.9× in flow stress. §4.7.4's clean-vs-
+   archived comparison crosses that line. It is still worth having — and the **measured** IoU
+   effect at 25 m/s is only 0.0013–0.0050 — but state it as *"a 1.9× flow-stress change moves
+   IoU ≲0.005 at these hits"*, which is consistent with §4.9's finding that material is nearly
+   invisible while geometry is displacement-controlled. **Do not restate it as "the cards are
+   similar."**
+2. ⚠️ **`AGF_PRESSING_TIMEOUT` — I omitted it.** A's recipe sets 3600+, noting it is **WALL-CLOCK
+   and binds once `max_force` is off**; the default is 30 s. My clean re-run did not set it. It
+   did **not** bind (all 50 completed hits stopped on `Target Strain`, zero `Timeout`), so the
+   result stands — but the reconstruction differed from A's recipe in that one respect, and a
+   slower or larger run would hit it.
+3. 🎯 **`batch_gain_1p5em4` and `batch_gain_1p5em5` exist** — a **matched gain pair** at CFL 0.45,
+   speed 25.0, old card, differing *only* in `force_balance_gain`. Nobody in the relay chain
+   mentioned them. That is the cleanest available isolation of the controller from everything
+   else, and it costs zero GPU to score.
+4. The file records `AGF_MPM_X_PAD_LOWER=1.3` and `AGF_DIAG_PENETRATION=1`, neither of which my
+   reconstruction set and neither of which appears in `run_meta.json`. ⇒ the count of env vars
+   needed to reproduce a batch, and absent from its own metadata, is now **at least seven**.
+
 #### 🎯 Why chasing lower press speeds was never going to work
 
 The cleanest statement of the whole result, and it is an argument rather than a measurement:
