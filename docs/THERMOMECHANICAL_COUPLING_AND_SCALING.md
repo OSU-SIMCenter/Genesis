@@ -1335,6 +1335,71 @@ The direction comparison is the robust part; the 4.6× ratio is not.
 controller unless `AGF_ROBOT_TIME_TO_SECONDS` is pinned, and the CFL logs do not set it.
 📄 `cfl_score.py`.
 
+#### 🚨 D1a RE-RUN WITH THE CONTROLLER SUPPRESSED (2026-08-20). It does **not** rescue
+criterion 1 — and it **destabilises the sim**
+
+The archived sweep ran with an active stall whose observed exposure grows 1.3 → 13.7% as the
+press slows, the same artifact that made workstream A's KE/IE table read backwards. So the two
+ends of the ladder were re-run with the controller out: `AGF_FORCE_BALANCE_GAIN=1.5e-5`,
+`AGF_FORCE_IMBALANCE_THRESHOLD=1e12`, `AGF_MAX_FORCE=1e9`, everything else matched
+(`run_meta.json` **byte-identical** to the archived batch). 16 min. `d1a_clean.sh`.
+
+✅ **Suppression verified, not assumed** — `stall_audit.py` on the run's own log reads **0.0%
+stall and 0.0% modulation in all four cells**, peak imbalance 91 kN against 413 kN archived. All
+50 completed hits stopped on `Target Strain`.
+
+🚨 **THE HEADLINE IS A STABILITY RESULT: 3 of 4 runs went supersonic.**
+
+| speed | `g1_grid_prod` | `p5_penalty` |
+|---|---|---|
+| 25.0 | **completed 17/17** | `failed_at_hit_16` (15 banked) |
+| 3.125 | `failed_at_hit_12` (11 banked) | `failed_at_hit_8` (7 banked) |
+
+Every failure is `SimulationStabilityError: Supersonic Velocity (>100 m/s)`. In the archived runs
+**all four cells completed 17/17**. ⇒ **the die-balance loop is load-bearing for STABILITY, not
+merely a measurement confound** — its own source calls it "ADVANCED PROTECTION" and that is
+literal. 🎯 **And failure arrives EARLIER at the slower speed** (g1 17→11 hits, p5 15→7), which is
+again the opposite of the quasi-static intuition.
+⚠️ **Which of the three removals destabilises is NOT established** — gain, modulation threshold
+and force stop were lifted together. Separating them is one run each.
+
+**Criterion 1, where both speeds have clouds** (IoU spread across the 8× step):
+
+| arm | hit | clean spread | ×crit | archived spread | ×crit | clean ÷ archived |
+|---|---|---|---|---|---|---|
+| `g1_grid_prod` | **1** | **0.0002** | **0×** | 0.0087 | 9× | **0.02× — PASSES** |
+| `g1_grid_prod` | 5 | 0.0611 | 61× | 0.0135 | 13× | 4.5× worse |
+| `g1_grid_prod` | 10 | 0.0905 | 91× | 0.0370 | 37× | 2.5× worse |
+| `p5_penalty` | 1 | 0.0021 | 2× | 0.0051 | 5× | 0.4× |
+| `p5_penalty` | 5 | 0.0300 | 30× | 0.0007 | 1× | 43× worse |
+
+🎯 **At hit 1 the spread collapses to 0.0002 and PASSES criterion 1** ⇒ at hit 1 the controller
+was the dominant contributor. ⚠️ But hit 1 is the saturated regime where a stock-volume ceiling
+already makes configurations indistinguishable (§4.9), so this is the weakest possible place to
+demonstrate invariance.
+🚩 **From hit 5 on the spread is 2.5–43× LARGER with the controller removed.** So the
+expectation that suppression would collapse the spread the way it collapsed W-A's KE/IE is
+**falsified beyond hit 1**, and *"the archived 0.0678 is an upper bound inflated by stall"* is
+**not supported** — the uncontaminated number at hit 10 is bigger, not smaller.
+⚠️ **BUT those later hits are confounded by the developing instability.** g1 at 3.125 is scored at
+hit 10 while dying at hit 12; p5 at 3.125 is scored at hit 5 while dying at hit 8. Geometry a few
+hits from a supersonic failure is not a clean measurement of anything. **This run therefore does
+NOT resolve D1a beyond hit 1** — it replaces a controller confound with a stability confound.
+
+✅ **Incidental control — the card change is bounded.** At 25.0 m/s, clean vs archived differ by
+only **0.0013–0.0050** across both arms and all scored hits, while at 3.125 they differ by
+**0.0280–0.0501** from hit 5 on. Since the card is common to both speeds, **the card contributes
+≲0.005 and the large differences are the controller's low-speed footprint** (or the instability
+it was holding off). That also means removing 23.2% modulation at 25 m/s barely moved the
+geometry, which is further evidence modulation is not the driver.
+
+⇒ **Where this leaves criterion 1: still failing, still not cleanly measured.** The three
+surviving uncontaminated numbers are the matched-stall control (`p5` 25→12.5 at identical 0.6%
+stall, **0.0089 = 9× criterion**), hit 1 of this run (**passes**), and workstream A's elongation
+series at gain 1.5e-5 (−0.03% → −11.69% over 17 hits). **The next experiment is not another speed
+sweep** — it is separating which suppressed knob causes the supersonic failure, because until an
+arm can complete 17 hits with the controller out there is no clean late-hit geometry to measure.
+
 #### 🎯 Why chasing lower press speeds was never going to work
 
 The cleanest statement of the whole result, and it is an argument rather than a measurement:
