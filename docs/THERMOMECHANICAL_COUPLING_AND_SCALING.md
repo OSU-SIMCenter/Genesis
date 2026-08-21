@@ -1103,6 +1103,75 @@ lowers the stall bound on every slow arm it runs:
 this very section calls defective.** At `1.5e-5` the slowest arm stays above it. So `1.5e-5` is
 not a preference; it is the **floor** at which the whole sweep is no worse than shipped-nominal.
 
+#### ✅ The CROSS-ARM gain pair, scored 2026-08-21 — the comparison this section says was missing
+
+The 2026-08-14 sweep above varied gain on ONE contact configuration, and says so:
+*"It never measured spread ACROSS contact arms."* `batch_gain_1p5em4` and `batch_gain_1p5em5` are
+that missing measurement — **six arms × 17 hits, gain 1.5e-4 against 1.5e-5**, matched on CFL 0.45,
+press speed 25.0, cpd 10, psize 2.0, `AGF_ENABLE_CPIC=0`, `AGF_MAX_FORCE` disabled, and the
+imbalance threshold deliberately left at its 20 kN default so the guard itself is held constant.
+They ran 2026-08-18 and were **never scored until now**.
+📄 `gain_score.py`; stall exposure from `gain_sweep.log` via `stall_audit.py`.
+
+⚠️ **OLD card, both cells.** They predate `6ee71236`; σ_y at ε_p = 0.2 is 106 MPa here against
+200 MPa shipped, ~1.9× in flow stress. Valid against each other and — per their own
+`MATERIAL_AND_CONFIG.txt`, which puts `batch_speed_*` on an explicit do-not-compare list — against
+nothing on the new card.
+
+**The controller half is unambiguous. Observed stall exposure, both gains, same log:**
+
+| arm | 1.5e-4 | 1.5e-5 | max &#124;dF&#124; @1.5e-4 | max &#124;dF&#124; @1.5e-5 |
+|---|---|---|---|---|
+| `p3_pg2p_pos` | **32.7%** (11/11 hits) | **0.0%** | 1,036,651 N | 96,669 N |
+| `f3_pg2pvel_hyb` | 23.2% (13/17) | **0.0%** | 343,341 N | 35,011 N |
+| `g0_grid_alone` | 21.9% (12/17) | **0.0%** | 312,915 N | 34,723 N |
+| `f4_penalty_hyb` | 15.1% (10/17) | **0.0%** | 373,340 N | 62,428 N |
+| `g1_grid_prod` | 14.4% (8/17) | **0.0%** | 454,312 N | 124,003 N |
+| `p5_penalty` | 1.6% (2/17) | **0.0%** | 82,281 N | 43,448 N |
+
+✅ **The closed form is corroborated at the correct gain.** Every 1.5e-5 max |dF| sits below that
+gain's **182,574 N** bound, so zero stall is predicted and zero is observed. Cross-arm exposure at
+1.5e-5 is **0.0 pp**, better than the 4.2 pp the per-arm telemetry predicted.
+
+⚠️ **Two corrections to predictions made above and in `gain_sweep.sh`.** `p5_penalty` was called the
+invariant control at *"0.0% exposure at every gain — it must not move"*; it actually runs **1.6%** at
+the shipped gain. And `stall_audit.py` hardcodes `GAIN = 1.5e-4`, so its `bound N`, `modul>20k` and
+`pred>bound` columns are **wrong for any other gain** — only `OBS stall`, which reads a die commanded
+to exactly zero, is gain-independent. Read that column and ignore the rest when auditing a non-shipped
+gain.
+
+🎯 **The one unambiguous effect is SURVIVAL, not ranking.** `p3_pg2p_pos` dies at
+**`failed_at_hit_11`** with `SimulationStabilityError: Supersonic Velocity (>100 m/s)` at the shipped
+gain, and completes **17/17** at 1.5e-5.
+🚨 **That is the OPPOSITE direction from the controller-OFF result below**, where full suppression
+*destabilises* arms that complete 17/17 in the archive. Taken together the relationship between
+controller authority and stability is **non-monotonic**: the shipped gain and full suppression are
+both worse than the quiet setting in between. This is the first *measured* content of "quiet, not
+absent", which until now was a working preference rather than an observation. Note the guard differs
+between the two experiments — 20 kN default here, `1e12` in the suppression runs — so "quiet" means
+low gain **with the guard live**.
+
+**⚠️ The ranking half CANNOT be answered at n = 1.** The go/no-go `gain_sweep.sh` was launched for —
+*"if arms reorder with force_balance_gain, the sweep is measuring the controller, not the contact
+method"* — returns **reorders at all four hits scored** (1, 5, 10, 17). That reading does not survive
+scrutiny:
+
+- The reorders happen **inside clusters tighter than the noise**. At hit 1 the swap is `f4` 0.7161
+  vs `g0` 0.7159 becoming `g0` 0.7158 vs `f4` 0.7147 — gaps of 0.0002 and 0.0011.
+- **The deltas do not track stall exposure.** `p5` has the *lowest* exposure (1.6%) and one of the
+  *largest* hit-17 deltas (−0.0084); `f3` has 23.2% and +0.0170; `g0` has 21.9% and −0.0048. If the
+  controller were driving geometry, |Δ| should scale with exposure. It does not.
+- **The deltas grow with hit index** — 0.0002–0.0016 at hit 1 against 0.0048–0.0238 at hits 10 and
+  17 — which is the signature of the replicate-scatter surface (0.0004 at hit 1 rising to 0.0867 at
+  hit 17), not of a controller effect.
+- Both cells are **n = 1**. Nothing here separates a 0.008 gain effect from 0.087 of scatter.
+
+⇒ **`g0_grid_alone` and `g1_grid_prod` sit at the bottom under both gains at every hit; the top three
+are not resolvable at n = 1.** The honest verdict is that the arm ranking is **not shown to be
+controller-dependent, and not shown to be controller-independent either.** This comparison is gated
+on the noise floor rather than the other way round — and re-reading it once replicates exist costs
+no GPU, because the geometry is already on disk.
+
 #### 🚨 D1a — RUN 2026-08-20 by re-scoring sweeps already on disk. **CRITERION 1 FAILS.**
 
 Answered at zero GPU cost. Press-speed sweeps already existed on disk from the contact workstream
