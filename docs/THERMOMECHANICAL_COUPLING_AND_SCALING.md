@@ -1142,6 +1142,14 @@ scaling for quasi-static problems is standard practice with a published criterio
 loading rates to determine an acceptable loading rate."* We ran the series. **What is missing is
 the KE/IE metric needed to interpret it** — that is criterion 4 / defect 8, owned by W-A.
 
+> 🚫 **STALE as of 2026-08-20 — the metric now exists.** `forge_energy.py`, committed at
+> **`f1d18d2f`** on this branch, measures KE, plastic work and elastic strain energy on the MPM
+> particles; `energy_probe.py` runs it live against a built scene. Criterion 4 has been evaluated —
+> see the retraction block at the end of §4.7.x for the numbers, and for what the first reading of
+> them got wrong. This paragraph is kept because the *sequence* matters: the series was run before
+> the metric existed, which is why its interpretation had to be revised afterwards rather than
+> checked at the time.
+
 **Confounds excluded by measurement, not by argument:**
 - **Stop reason.** All six batches are **100% `Target Strain`** — 34/34 per old-card batch,
   221/221 and 204/204 on the new card. Zero `Max Force`, zero `Timeout`. Every arm reached the
@@ -1170,6 +1178,26 @@ near-flat while `g1_grid_prod` drifts hard under *identical* thermal conditions 
 contact/discretisation-mechanical, not a thermal-time-per-hit artifact. **Criterion 4 (KE/IE)
 remains unmeasurable** — no monitor exists anywhere in `agforge` (defect 8), so criterion 1 has
 failed *without* its companion validity check ever having run.
+
+> 🚫 **STALE as of 2026-08-20.** *"No monitor exists anywhere in `agforge`"* is no longer
+> true — `forge_energy.py` (`f1d18d2f`) implements criterion 4. What remains true, and is why this
+> paragraph is annotated rather than rewritten: criterion 1 in **this** sweep did fail without its
+> companion check ever having run. The check has since run on *separate* runs, not retroactively on
+> these.
+>
+> ⚠️ **Criterion 4 depends on a BUILD-TIME flag, and the failure mode is silence.** The plastic
+> channel — `plastic_strain`, `plastic_work`, `temp`, `dT_adiabatic` — is written only inside
+> `p2g_post_constitutive`, which sits entirely within `if qd.static(self._enable_thermal)` in
+> `base_mpm_solver.py`. With `cfg.mpm.enable_thermal = False` the channel never accumulates, internal
+> energy loses its plastic half, and because `plastic_work` has no Python accessor (IE is *derived*
+> from `dT_adiabatic`), `forge_energy.py` reports the channel **ABSENT rather than erroring**.
+> 🎯 **For an isothermal study the correct configuration is `enable_thermal = True` PLUS
+> `StrikeController.thermal_enabled = False`:** the solver computes adiabatic heating and accumulates
+> `dT_adiabatic`, while the controller restores frozen temperatures every macro-step so the billet
+> stays uniform. Turning the *build* flag off in order to "make it isothermal" would remove criterion
+> 4 from the entire study without a single error message. It is also the more exact configuration —
+> with `temp` frozen, `Cp` is constant, so the identity `sum(m*Cp*dT) = 0.9*E_plastic` holds to 2e-16
+> instead of drifting with temperature.
 
 📄 Raw scores: 134 rows in `d1a_scores.jsonl`, W-B session scratchpad (**temporary**). Regenerate
 in ~35 s with `score_speed.py` from `forge_common/main/outputs/batch_speed_*` and `batch_spdmx_*`
@@ -1308,6 +1336,100 @@ to speed-dependent springback.
 collinear by construction here.** A time-proportional energy leak and a genuine speed dependence
 are indistinguishable on this axis. **The CFL sweep is the only axis that separates them** — it
 varies steps at fixed speed.
+
+> 🚫 **RETRACTED 2026-08-20 by the workstream that produced it** (session `379e635e`, branch
+> `agforge/v2/thermal-st-invariance`). Recorded additively; the original above is left intact so the
+> reasoning and its correction stay side by side.
+>
+> **Every number in this subsection came from runs contaminated by the die-balance controller** at
+> the shipped gain `1.5e-4`, and that is not a small perturbation: **72–93% of a run's total kinetic
+> energy sits in a ~15-step burst.** KE ramps to 18.6 J, **dips to 9.8 J** as a die is commanded to
+> exactly zero, then **spikes to 60.1 J** on recovery. At gain `1.5e-5` with **zero stall frames** it
+> ramps smoothly to 31.0 J and decays — no dip, no spike, peak halved.
+>
+> **1. The heading is wrong, and so is the 20%.** Re-measured stall-free at matched strain 0.2496:
+>
+> | press speed | KE/IE at peak KE | `v_max` | `v_max` / press speed |
+> |---|---|---|---|
+> | 25.0 m/s | **0.0383** | 25.15 m/s | 1.006 |
+> | 6.25 m/s | **0.00278** | 6.00 m/s | 0.960 |
+>
+> **13.8x BETTER, not 20% worse** — pure v² scaling predicts 16x. Peak particle velocity tracks the
+> press almost exactly. **Inertia behaves as classical quasi-static theory says once the balance loop
+> is quiet.** *"KE proportional to v^0.76"* and the *"speed-independent velocity floor"*, both
+> circulated from this table, are withdrawn with it — they were the stall.
+>
+> **2. The mutual-corroboration argument does not stand.** Its energy half is withdrawn, so the
+> geometry half stands alone. That half may still be right; it is no longer corroborated from here.
+>
+> **3. Both "remaining candidates" are withdrawn.**
+> - *"+17 J after the material comes to rest, identically at all speeds"* was a coincidence of
+>   steady-window lengths (51 / 52 / 108 samples). Stall-free, the same measurement gives **+13.54 J
+>   and +7.47 J** over 27 and 13 samples. The real invariant is a **per-step rate of ~0.5–0.6 J/step**,
+>   roughly speed-independent on every target-strain run. ⇒ **quote the rate, never the total.**
+> - *"elastic energy 73.9 → 116.4 → 146.0 J"* is the **force-truncated** series (§4.7.3) — hits that
+>   stopped on `Max Force` at strains that move with press speed. Superseded by the phase-matched
+>   decomposition in the next subsection.
+>
+> ⇒ 🚨 **STANDING RULE: state the stall exposure of the runs behind any speed-dependent result
+> before reporting it.** Four separate findings in this document would have been caught at source.
+> Exposure is *observable*, not inferable: `~/speed_sweep*.log` records `v=[vL,vR]` per pressing
+> frame, and `stall_audit.py` reads a die commanded to exactly zero. A force-imbalance proxy is a
+> **lower bound**, and read `p5_penalty` as 0% at every speed when it actually stalls
+> 0.6 / 0.6 / 2.6 / 4.4%.
+
+#### 🎯 The elastic anomaly is a VOLUMETRIC CONSERVATION DEFECT
+
+**Measured 2026-08-20**, session `379e635e`, branch `agforge/v2/thermal-st-invariance`; recorded in
+`forge_energy.py` at `a42907b8` / `852983c5`. This replaces the withdrawn elastic series above, and
+until this annotation it existed in **no document** — only a module docstring.
+
+Phase-matched at first `HOLDING`, gain `1.5e-5`, strain 0.2496:
+
+| press speed | deviatoric | volumetric | particles at yield |
+|---|---|---|---|
+| 25.0 m/s | 8.9 J | 148.1 J | 3.2% |
+| 6.25 m/s | 8.2 J | 386.8 J | 3.5% |
+| ratio | **0.92x** | **2.61x** | 1.11x |
+
+🚨 **The volumetric term carries 100% of the +238.7 J gap**, which **rules out deformation
+localization** — the leading candidate at the time. Localization requires the yield population to
+grow; it moves 1.11x.
+
+**`tr(eps)` starts at exactly 0.0 and never returns after unload**: **−1.14e−03** and
+**−2.22e−03** with the dies released, holding **171.5 J** and **546.8 J** of nominally recoverable
+elastic energy. The billet stays hydrostatically compressed by **0.11% / 0.22% with no load on it**.
+
+**Why this is a defect and not residual stress.** The von Mises return in `materials.py` subtracts a
+multiple of `epsilon_hat`, which is traceless by construction, so **plasticity cannot change
+`trace(epsilon)` at all.** Every part of it is elastic and must recover. And genuine residual stress
+is self-equilibrated with mean near 0; this mean is **net-compressive**.
+
+✅ **REPLICATED**, unlike the stability results on this branch. Two runs per speed agree on final
+elastic energy to **1.4%** and **4.6%**, and KE/IE reproduces to **four significant figures**
+(0.0383057 vs 0.0382950; 0.0027771 vs 0.0027766).
+
+⚠️ **Mechanism — a lead, not a result.** An earlier version of this note (`a42907b8`) blamed
+multiplicative drift in the per-substep `F` update. **That is wrong, and `852983c5` corrects it.**
+Integration error in `F_new = (I + dt*C) F_old` is O(dt²) per step and **falls as 1/N**; the measured
+drift **rises**. PRESSING steps 45 → 180 (**4.00x**) took final `tr_eps` from −1.14e−03 to
+−2.22e−03 (**1.94x**), and 1.94 is approximately **sqrt(4)**, which fits **per-transfer P2G/G2P
+accumulation** — a random walk in transfer count — rather than a per-unit-time leak. **This is two
+points.** What is solid is the direction: drift rises with step count, and that alone is what rules
+out the `F` update.
+
+**Why it matters beyond the energy budget.** A billet compressed by a **speed-dependent** amount is a
+route to speed-dependent geometry that needs neither inertia, nor the controller, nor per-step
+accumulation. It also closes the chain from the **+16.5% total-IE gap at matched strain** (1154.6 J
+at 25 m/s against 1344.7 J at 6.25, elastic 3.0x higher and plastic 17% lower) to an apparently
+rate-dependent elastic/plastic split produced by a rate-**in**dependent flow law.
+
+🚨 **Live exposure — the RESOLUTION axis, which has zero data.** Because the drift scales with
+transfer count, it is a confound for precisely the axis nobody has swept. Changing
+`cells_per_diameter` moves grid spacing, hence `dt` via CFL, hence substep count, hence P2G/G2P
+transfer count — and particle count with it, since `particle_size = dx/2.0` pins 8 PPC. **A
+resolution sweep can show convergence or divergence that is entirely this defect.** Characterise it
+on the CFL axis — two points exist, a third is cheap — before any resolution result is interpreted.
 
 #### ✅ The degeneracy, broken: refining the timestep moves geometry the OPPOSITE way
 
@@ -1522,6 +1644,24 @@ criterion.
 sweep diverges instead of converging, and why the remaining candidates are energetic rather than
 inertial: plastic work growing **+17 J after the material comes to rest**, and stored elastic
 energy nearly doubling as the press slows despite *lower* strain.
+
+> 🚫 **PARTIALLY RETRACTED 2026-08-20 (session `379e635e`): the ARGUMENT survives and is
+> STRENGTHENED; the SUPPORTING NUMBERS are withdrawn.**
+>
+> The reasoning above — a rate-independent material in a genuinely quasi-static regime must give
+> speed-independent results, so movement implies numerical coupling — is **correct, and the corrected
+> measurement makes it stronger.** *"Nominally quasi-static (6–7%)"* was the stall-contaminated
+> figure. Stall-free at matched strain the sweep reads **0.0383 at 25 m/s and 0.00278 at 6.25** —
+> *more* quasi-static than claimed, comfortably inside the band at the fast end and an order of
+> magnitude inside it at the slow end. The results still move. **The conclusion holds on better
+> evidence than it was originally given.**
+>
+> Both named candidates are withdrawn: *"+17 J after rest"* was a window-length coincidence (the
+> invariant is a **per-step rate of ~0.5–0.6 J/step**), and the near-doubling elastic series was
+> force-truncated. **The replacement candidate is the volumetric conservation defect** — see *"The
+> elastic anomaly is a VOLUMETRIC CONSERVATION DEFECT"* in §4.7.x — which is speed-dependent (2.61x
+> volumetric energy between 25 and 6.25 m/s), carries 100% of the IE gap, and is the surviving route
+> to speed-dependent springback.
 
 ⚠️ This does **not** license lowering the shipped default. Doing so changes every existing force
 number and the balance loop exists for a reason; it is a config change with cross-workstream
