@@ -197,6 +197,22 @@ class ArrheniusPlasticity(gs.materials.MPM.Base):
     #: one-process batching -- and scene build is ~93% of run time.
     rate_time_scale: ValidFloat = 1.0
 
+    #: Dimensionless multiplier on the flow stress. 1.0 is [Song2020] as
+    #: published; 0.906 is [RyanMcQueen1990]'s level at 1000 C / 0.373 /s, which
+    #: is how the second constitutive arm is built. See
+    #: material_properties_mechanical.ryan_mcqueen_level_scale.
+    #:
+    #: This is deliberately the ONLY thing that differs between the two
+    #: constitutive arms. E, nu and rho stay fixed, so the P-wave speed and hence
+    #: the controller's rate limit are identical and any change in the contact
+    #: ranking is attributable to the flow law rather than to control gain.
+    #:
+    #: ⚠️ Constant, so it drops the ratio's own rate dependence -- which runs
+    #: 0.930 to 0.875 across the measured rate band at 1000 C, about +/-3%
+    #: against a 9.4% level shift. Fine for an isothermal study at one
+    #: temperature; revisit if either changes.
+    flow_level_scale: ValidFloat = 1.0
+
     #: Lower bound on the DERIVED rate, in physical units (i.e. applied after the
     #: rate_time_scale division). 0.0 means "use rate_seed".
     #:
@@ -316,7 +332,7 @@ class ArrheniusPlasticity(gs.materials.MPM.Base):
                 asinh_x = qd.math.log(x + qd.math.sqrt(x * x + gs.qd_float(1.0)))
                 sigma_mpa += w * asinh_x / gs.qd_float(_ARR_ALPHA[k])
 
-        return sigma_mpa * gs.qd_float(1.0e6)
+        return sigma_mpa * gs.qd_float(1.0e6) * gs.qd_float(self.flow_level_scale)
 
     @qd.func
     def _update_F_S_Jp_arrhenius(self, J, F_tmp, U, S, V, Jp, temp):

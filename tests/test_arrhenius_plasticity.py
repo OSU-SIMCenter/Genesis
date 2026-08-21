@@ -168,6 +168,76 @@ def test_rate_clamp_brackets_the_forging_band():
     assert mat.rate_max >= 100.0, "forging runs to ~100 /s; the clamp must not bite there"
 
 
+def test_flow_level_scale_defaults_to_song_as_published():
+    mat = ArrheniusPlasticity(E=121.5e9, nu=0.383, rho=7334.0)
+    assert mat.flow_level_scale == pytest.approx(1.0)
+
+
+def test_the_two_sources_disagree_by_level_at_the_study_point():
+    """The size of the constitutive arm, from the two published curves.
+
+    Peak to peak -- comparing R&M's peak against Song at some arbitrary strain
+    is an apples-to-oranges error that understates the gap.
+    """
+    scale = cpu.ryan_mcqueen_level_scale(0.373, 1273.15)
+    assert scale == pytest.approx(0.906, abs=0.005)
+    assert scale < 1.0, "R&M is the softer of the two throughout our envelope"
+
+
+def test_the_sources_converge_with_temperature():
+    """🚩 Study-design consequence: 1000 C is the point of MINIMUM contrast.
+
+    The isothermal scope was chosen so both sources are in domain -- but that is
+    also where they most agree, which weakens the very comparison the second arm
+    exists to make. The 900 C robustness point carries nearly double the signal.
+    """
+    hot = 1.0 - cpu.ryan_mcqueen_level_scale(0.373, 1273.15)
+    warm = 1.0 - cpu.ryan_mcqueen_level_scale(0.373, 1173.15)
+    cool = 1.0 - cpu.ryan_mcqueen_level_scale(0.373, 1073.15)
+    assert hot < warm < cool, "sources must diverge as temperature falls"
+    assert warm / hot > 1.5, (
+        "900 C should carry substantially more constitutive contrast than "
+        "1000 C; got %.2fx" % (warm / hot))
+
+
+def test_the_billet_default_is_inside_both_fit_domains():
+    """1273.15 K is load-bearing in three places at once, so pin it.
+
+    It is jc_T_ref exactly (T* = 0, no double-softening), Song2020's ceiling
+    (in domain, no clamp, no extrapolation), and above Ryan & McQueen's 900 C
+    floor. A drift in any direction breaks at least one of those.
+    """
+    from agforge.options import TeleopOptions
+    mat = ArrheniusPlasticity(E=121.5e9, nu=0.383, rho=7334.0)
+    billet_k = TeleopOptions().mpm.default_initial_temperature
+
+    assert billet_k == pytest.approx(1273.15)
+    assert mat.T_fit_min <= billet_k <= mat.T_fit_max, "billet outside the clamp"
+    assert billet_k == pytest.approx(mat.T_fit_min + 200.0), (
+        "1273.15 must stay Song's 1000 C ceiling, i.e. 200 K above the 800 C floor")
+    assert billet_k > 1173.15, "must stay above Ryan & McQueen's 900 C floor"
+
+
+def test_arrhenius_cannot_run_without_the_thermal_field():
+    """The trap: enable_thermal=False hands the flow law a hardcoded 293.15 K.
+
+    base_mpm_solver.get_particle_thermal_state seeds temp = 293.15 and only
+    overwrites it inside `if qd.static(self._enable_thermal)`, and
+    particles.temp is filled in the same guard. So Arrhenius would clamp to
+    T_fit_min for a whole run and say nothing. This pins that the two options
+    are coupled; environment.py raises on the combination.
+    """
+    from agforge.options import TeleopOptions
+    cfg = TeleopOptions()
+    assert cfg.mpm.enable_thermal is True, (
+        "enable_thermal is a PRECONDITION of the Arrhenius arm, not a "
+        "performance knob -- turning it off silently pins the flow law at "
+        "293.15 K")
+    # and the value it would be pinned at is far below the fit floor
+    mat = ArrheniusPlasticity(E=121.5e9, nu=0.383, rho=7334.0)
+    assert 293.15 < mat.T_fit_min
+
+
 def test_rate_time_scale_defaults_to_a_no_op():
     """N = 1 must reproduce the pre-2026-08-21 derived rate exactly."""
     mat = ArrheniusPlasticity(E=121.5e9, nu=0.329, rho=7334.0)

@@ -283,6 +283,22 @@ class AgilityForgeEnv:
         # Constitutive model selection. Arrhenius takes precedence over
         # Johnson-Cook; both fall back to plain von Mises elastoplasticity.
         if getattr(self.cfg.mat, 'use_arrhenius', False):
+            # Arrhenius reads the per-particle temperature, and that only exists
+            # when the solver's thermal machinery is allocated.
+            # base_mpm_solver.get_particle_thermal_state returns a HARDCODED
+            # 293.15 K unless _enable_thermal, and particles.temp is only filled
+            # inside the same guard -- so with it off the flow law would clamp to
+            # T_fit_min for the whole run regardless of what the billet is set
+            # to, and report nothing. Johnson-Cook conceals this completely
+            # (T* clamps to zero either way), which is why it can sit unnoticed.
+            # An experiment that cannot be verified is not run.
+            if not getattr(self.cfg.mpm, 'enable_thermal', False):
+                raise ValueError(
+                    "use_arrhenius requires mpm.enable_thermal=True. Without it "
+                    "the constitutive law is handed a hardcoded 293.15 K and "
+                    "clamps to T_fit_min for the entire run, silently, whatever "
+                    "default_initial_temperature says."
+                )
             billet_material = ArrheniusPlasticity(
                 # substep_dt is derived, not configured: the material needs it to
                 # turn the plastic strain increment into a strain rate, and it must
@@ -302,6 +318,12 @@ class AgilityForgeEnv:
                 rate_floor=(
                     getattr(self.cfg.mat, 'arrhenius_rate_floor', None)
                     or 0.0),
+                # Second constitutive arm. Flow law only -- see the note on
+                # MaterialOptions.arrhenius_flow_level_scale for why nothing
+                # elastic may move alongside it.
+                flow_level_scale=(
+                    getattr(self.cfg.mat, 'arrhenius_flow_level_scale', None)
+                    or 1.0),
                 **material_kwargs,
             )
         elif getattr(self.cfg.mat, 'use_johnson_cook', False):

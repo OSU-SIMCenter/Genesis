@@ -332,6 +332,38 @@ RM_STATES = {
 }
 
 
+def ryan_mcqueen_level_scale(strain_rate, temp_k):
+    """Ratio of [RyanMcQueen1990]'s peak stress to [Song2020]'s, PEAK to PEAK.
+
+    This is how the second constitutive arm is built. Both published sources are
+    in domain at the study point, they disagree, and the disagreement is a
+    LEVEL difference rather than a change of shape -- so the arm keeps Song's
+    strain-resolved curve and rescales it to Ryan & McQueen's level.
+
+    ⚠️ It is a HYBRID and should be named as one: "Song's strain shape at Ryan &
+    McQueen's level", not "Ryan & McQueen's flow rule". R&M publishes a PEAK
+    stress with no strain axis (thesis eqn. 44 gives eps_p, but for 304W, so
+    porting it to 316 is an open question), which is exactly why the level-scale
+    route exists.
+
+    Measured, peak to peak:
+
+        T [C]   0.136 /s   0.373 /s   1.472 /s
+         600      0.761      0.757      0.752
+         800      0.821      0.809      0.795
+         900      0.870      0.851      0.829
+        1000      0.930      0.906      0.875
+
+    ⚠️ Two consequences for study design. The ratio is only 0.906 at 1000 C, so
+    a constitutive-robustness arm run there is testing a ~9% level change -- and
+    the sources CONVERGE with temperature, so the isothermal-1000 C scope
+    decision sits at the point of MINIMUM contrast between them. At the 900 C
+    robustness point the contrast is 15%, nearly double.
+    """
+    song_peak = peak_flow_stress_mpa(strain_rate, temp_k)
+    return float(rm_peak_stress_mpa(strain_rate, temp_k) / song_peak)
+
+
 def rm_zener_hollomon(strain_rate, temp_k):
     """Z = strain_rate * exp(Q/RT) for the Ryan & McQueen activation energy."""
     return float(strain_rate) * math.exp(RM_Q_J_MOL / (R_GAS * float(temp_k)))

@@ -147,15 +147,25 @@ class MaterialOptions(Options):
     #: rate- AND temperature-coupled: it strengthens on cooling, it reads the
     #: plastic strain rate, and it reproduces the DRX peak-then-soften curve.
     #:
-    #: DEFAULT OFF, deliberately. The fit is a HOT-WORKING model valid over
-    #: 800-1000 C, but the billet currently starts at room temperature
-    #: (default_initial_temperature = 293.0 below). Arrhenius extrapolated to
-    #: 293 K returns ~3.8 GPa - about 18x the forging-temperature flow stress -
-    #: so ArrheniusPlasticity clamps temperature into the fit window as a
-    #: numerical guard. At 293 K that clamp yields the 800 C value (~394 MPa at
-    #: eps_p = 0.2), roughly 1.85x the Johnson-Cook card. Turning this on before
-    #: the billet actually runs hot therefore changes the answer without making
-    #: it more true. Switch it on together with a forging-temperature billet.
+    #: DEFAULT OFF, but the reason has changed and the precondition is now met.
+    #:
+    #: The fit is a HOT-WORKING model valid over 800-1000 C, and the billet used
+    #: to start at room temperature, where Arrhenius returns ~3.8 GPa (~18x the
+    #: forging value) and the exp() argument overflows float32 -- so the class
+    #: clamps temperature into the fit window as a numerical guard, which at
+    #: 293 K yields the 800 C value for the entire run. Switching it on then
+    #: changed the answer without making it more true.
+    #:
+    #: default_initial_temperature is now 1273.15 K, exactly Song's ceiling and
+    #: jc_T_ref, so that objection is discharged: nothing clamps and nothing
+    #: extrapolates. What keeps this OFF by default is comparability -- every
+    #: result on disk is rate-independent Johnson-Cook, and this is the arm that
+    #: breaks that, deliberately, as the second half of a matched pair.
+    #:
+    #: 🚨 Requires mpm.enable_thermal=True. Without it the solver returns a
+    #: hardcoded 293.15 K to the constitutive law and never fills particles.temp,
+    #: so this would clamp to T_fit_min no matter what the billet is set to.
+    #: environment.py raises rather than let that run.
     use_arrhenius: bool = False
 
     #: Prescribed process strain rate [1/s] for the Arrhenius flow rule. None
@@ -179,6 +189,14 @@ class MaterialOptions(Options):
     #: seed. Guards the elastic-trial-state artefact described on
     #: ArrheniusPlasticity.rate_floor, which grows as the timestep tightens.
     arrhenius_rate_floor: Optional[float] = None
+
+    #: Flow-stress level multiplier, for the second constitutive arm. None or 1.0
+    #: is Song2020 as published. Set it from
+    #: material_properties_mechanical.ryan_mcqueen_level_scale to run Song's
+    #: strain shape at Ryan & McQueen's level (0.906 at 1000 C / 0.373 /s).
+    #: Changes the flow law and NOTHING else -- E/nu/rho are untouched, so the
+    #: controller is identical across the pair.
+    arrhenius_flow_level_scale: Optional[float] = None
 
     #: Derived in material_properties_mechanical.isothermal_card(1.0). A is PINNED,
     #: not fitted: the residual is nearly flat in it, but the solver evaluates
@@ -708,7 +726,29 @@ class AgilityForgeOptions(Options):
             upper_bound=self.robot.mpm_upper_bound,
             enable_CPIC=True,  # Improved rigid-MPM contact accuracy
             enable_thermal=True,
-            default_initial_temperature=293.0,
+            # Forging temperature, 1000 C. Three things line up here, which is
+            # why it is this value and not a round 900 or 1100:
+            #   * jc_T_ref IS 1273.15, so T* = 0 exactly and Johnson-Cook is
+            #     reproduced at its own calibration point with no double-softening
+            #   * [Song2020]'s fit domain is 800-1000 C -- inside, at the top
+            #   * [RyanMcQueen1990] starts at 900 C -- inside as well
+            # so both candidate flow laws are in domain at the same point.
+            #
+            # Was 293.0. That was never a modelling choice -- it was the engine
+            # default surviving because Johnson-Cook cannot see temperature
+            # (T* clamps to zero below T_ref), so nothing ever objected. Measured
+            # effect of the change on the JC path: 201.28 -> 201.24 kN, 0.02%,
+            # which is inside the run-to-run scatter this sim is now known to
+            # have. For Arrhenius it is the difference between evaluating at
+            # 1000 C and clamping to the 800 C floor for the whole run.
+            #
+            # ⚠️ This is a UNIFORM, FROZEN field: StrikeController snapshots and
+            # restores temperatures around every physics step while
+            # thermal_enabled is False. Isothermal by construction, not by
+            # accident -- and see the guard in environment.py, because the
+            # constitutive law only sees this value at all when enable_thermal
+            # above is True.
+            default_initial_temperature=1273.15,
             thermal_time_scale=thermal_time_scale,
             # Fixed-end (truncated-domain) BC: the held end conducts into the unsimulated
             # rod (Robin BC on the cut plane) instead of being exposed to air.
