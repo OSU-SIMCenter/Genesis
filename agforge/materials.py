@@ -171,6 +171,48 @@ class ArrheniusPlasticity(gs.materials.MPM.Base):
     #: correction iteration from this seed is more than enough to converge.
     rate_seed: ValidFloat = 1.0
 
+    #: TIME-SCALE DIVISOR N applied to the DERIVED rate. This is the similarity
+    #: transform, and it is the difference between a rate-coupled model and a
+    #: rate-anchored one.
+    #:
+    #: The press runs at pressing_speed for numerical affordability, so
+    #:     N = pressing_speed / real_die_speed
+    #: and the rate the solver timestep implies is N times the physical one:
+    #:     eps_dot_derived / N = (v/h) / (v/v_real) = v_real/h
+    #: which is INVARIANT IN v. Dividing by N therefore anchors the global
+    #: magnitude at the real process rate while leaving the LOCAL, per-particle
+    #: rate free to vary with deformation -- so contact method still couples to
+    #: flow stress, which a contact benchmark requires and which
+    #: ``process_strain_rate`` destroys (it applies one scalar to every particle).
+    #:
+    #: ⚠️ Invariant in v; NOT obviously invariant in dt. The derived rate is
+    #: dg_trial/dt, and dg_trial is a trial excess rather than a clean per-step
+    #: increment, so its statistics move with the timestep. Treat any
+    #: CFL sweep on the rate-sensitive arm as measuring both until that is
+    #: checked -- see ``rate_floor``, which removes the worst of it.
+    #:
+    #: Backed by a RUNTIME field so a sweep over press speed can run many arms in
+    #: ONE process. A plain attribute read inside a @qd.func is baked at trace
+    #: time, so changing it would force a kernel recompile per arm and destroy
+    #: one-process batching -- and scene build is ~93% of run time.
+    rate_time_scale: ValidFloat = 1.0
+
+    #: Lower bound on the DERIVED rate, in physical units (i.e. applied after the
+    #: rate_time_scale division). 0.0 means "use rate_seed".
+    #:
+    #: This exists because of a real defect. When the trial state is elastic at
+    #: the seed rate, dg_trial <= 0, so rate_est collapses to 0 and the second
+    #: pass evaluates the flow stress at rate_min = 1e-4 -- about 3x softer than
+    #: the process rate. That can push yield_dist positive and MAKE A PARTICLE
+    #: YIELD THAT WAS ELASTIC, then plastify it by the whole trial excess.
+    #:
+    #: 🚨 And it is CFL-DEPENDENT: near-elastic trial states are more common when
+    #: per-step increments are small, so the artefact grows as the timestep
+    #: tightens -- on exactly the axis a convergence study varies. An elastic
+    #: trial state means "no plastic increment, so no meaningful rate", NOT
+    #: "deforming at 1e-4 /s". Flooring at the process rate says the first.
+    rate_floor: ValidFloat = 0.0
+
     #: PRESCRIBED process strain rate [1/s]. When > 0 the flow stress is
     #: evaluated at this rate instead of the one implied by the solver timestep.
     #:
@@ -200,6 +242,45 @@ class ArrheniusPlasticity(gs.materials.MPM.Base):
         super().model_post_init(context)
         self._default_Jp = 0.0
         self.update_F_S_Jp = self._update_F_S_Jp_arrhenius
+        # Effective floor: 0.0 means "the seed", which is by construction the
+        # best available estimate of the process rate.
+        self._rate_floor_eff = (
+            float(self.rate_floor) if self.rate_floor > 0.0
+            else float(self.rate_seed))
+        # Runtime field for N. Allocation needs an initialised backend; unit
+        # tests construct this class without one, so fall back to the
+        # compile-time constant there. Production always takes the field path.
+        self._rt_rate_time_scale = None
+        try:
+            self._rt_rate_time_scale = qd.field(dtype=gs.qd_float, shape=())
+            self._rt_rate_time_scale[None] = float(self.rate_time_scale)
+        except Exception:
+            self._rt_rate_time_scale = None
+
+    def set_rate_time_scale(self, value: float) -> None:
+        """Retune N without recompiling the kernel.
+
+        This is the whole reason N is a runtime field: a press-speed sweep at
+        fixed CFL varies N while dt stays put, so every arm can share one
+        compiled kernel and one built scene.
+        """
+        value = float(value)
+        if not value > 0.0:
+            raise ValueError("rate_time_scale must be > 0, got %r" % (value,))
+        if self._rt_rate_time_scale is None:
+            raise RuntimeError(
+                "no runtime field for rate_time_scale -- the backend was not "
+                "initialised when this material was constructed, so N is baked "
+                "in at %r and changing it would need a recompile"
+                % (float(self.rate_time_scale),))
+        self._rt_rate_time_scale[None] = value
+
+    @property
+    def effective_rate_time_scale(self) -> float:
+        """N as the kernel will actually read it."""
+        if self._rt_rate_time_scale is not None:
+            return float(self._rt_rate_time_scale[None])
+        return float(self.rate_time_scale)
 
     @qd.func
     def _flow_stress_pa(self, eps_p, rate, temp):
@@ -266,12 +347,13 @@ class ArrheniusPlasticity(gs.materials.MPM.Base):
         inv_dt = gs.qd_float(1.0) / gs.qd_float(self.substep_dt)
 
         # 2. Flow stress.
-        #    With a prescribed process rate there is nothing to resolve - the
-        #    rate is an input, not a consequence of the timestep - so the fixed
-        #    point collapses to a single evaluation. Otherwise fall back to
-        #    deriving the rate from the solver timestep: pass 1 seeds it, pass 2
-        #    uses the rate the trial state implies. See process_strain_rate on
-        #    why the derived rate is fictional at the sim's press speed.
+        #    A PRESCRIBED process rate collapses the fixed point to a single
+        #    evaluation - but it also applies ONE scalar to every particle, which
+        #    discards the local rate and stops contact method coupling to flow
+        #    stress. Prefer rate_time_scale; see its note.
+        #
+        #    Otherwise derive the rate from the timestep: pass 1 seeds it, pass 2
+        #    uses the rate the trial state implies, then N-scale and floor it.
         sigma_y = gs.qd_float(0.0)
         if qd.static(self.process_strain_rate > 0.0):
             sigma_y = self._flow_stress_pa(
@@ -281,6 +363,15 @@ class ArrheniusPlasticity(gs.materials.MPM.Base):
                 eps_p, gs.qd_float(self.rate_seed), temp)
             dg_trial = epsilon_hat_norm - sigma_y / (2.0 * self.mu)
             rate_est = qd.math.max(dg_trial, gs.qd_float(0.0)) * inv_dt
+            # Similarity transform: the derived rate is measured in SIM time.
+            if qd.static(self._rt_rate_time_scale is not None):
+                rate_est = rate_est / self._rt_rate_time_scale[None]
+            else:
+                rate_est = rate_est / gs.qd_float(self.rate_time_scale)
+            # Floor, in physical units. Without it an elastic trial state is read
+            # as "1e-4 /s" and softens ~3x, which can yield a particle that was
+            # elastic -- and does so more often as dt falls.
+            rate_est = qd.math.max(rate_est, gs.qd_float(self._rate_floor_eff))
             sigma_y = self._flow_stress_pa(eps_p, rate_est, temp)
 
         # 3. Yield condition (von Mises)

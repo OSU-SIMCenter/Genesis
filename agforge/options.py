@@ -166,6 +166,20 @@ class MaterialOptions(Options):
     #: rate coupling physical. See ArrheniusPlasticity.process_strain_rate.
     arrhenius_process_strain_rate: Optional[float] = None
 
+    #: Time-scale divisor N for the DERIVED Arrhenius rate. Preferred over
+    #: arrhenius_process_strain_rate: it anchors the global rate magnitude at the
+    #: physical process rate while leaving the per-particle rate free, so contact
+    #: method still couples to flow stress. Set it to
+    #: pressing_speed / real_die_speed (25.0 / 0.0141 = 1773 at the shipped
+    #: press speed). None or 1.0 leaves the derived rate untouched.
+    #: See ArrheniusPlasticity.rate_time_scale.
+    arrhenius_rate_time_scale: Optional[float] = None
+
+    #: Floor on the derived Arrhenius rate, in physical units. None uses the
+    #: seed. Guards the elastic-trial-state artefact described on
+    #: ArrheniusPlasticity.rate_floor, which grows as the timestep tightens.
+    arrhenius_rate_floor: Optional[float] = None
+
     #: Derived in material_properties_mechanical.isothermal_card(1.0). A is PINNED,
     #: not fitted: the residual is nearly flat in it, but the solver evaluates
     #: A + B eps^n from eps_p = 0, so A is the initial yield stress the sim sees.

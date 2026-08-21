@@ -293,6 +293,15 @@ class AgilityForgeEnv:
                 process_strain_rate=(
                     getattr(self.cfg.mat, 'arrhenius_process_strain_rate', None)
                     or 0.0),
+                # N, the similarity-transform divisor on the DERIVED rate. This
+                # is the rate-coupled path; process_strain_rate above is the
+                # rate-anchored one and discards per-particle variation.
+                rate_time_scale=(
+                    getattr(self.cfg.mat, 'arrhenius_rate_time_scale', None)
+                    or 1.0),
+                rate_floor=(
+                    getattr(self.cfg.mat, 'arrhenius_rate_floor', None)
+                    or 0.0),
                 **material_kwargs,
             )
         elif getattr(self.cfg.mat, 'use_johnson_cook', False):

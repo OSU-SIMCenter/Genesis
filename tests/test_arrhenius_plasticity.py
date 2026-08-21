@@ -168,6 +168,55 @@ def test_rate_clamp_brackets_the_forging_band():
     assert mat.rate_max >= 100.0, "forging runs to ~100 /s; the clamp must not bite there"
 
 
+def test_rate_time_scale_defaults_to_a_no_op():
+    """N = 1 must reproduce the pre-2026-08-21 derived rate exactly."""
+    mat = ArrheniusPlasticity(E=121.5e9, nu=0.329, rho=7334.0)
+    assert mat.rate_time_scale == pytest.approx(1.0)
+    assert mat.effective_rate_time_scale == pytest.approx(1.0)
+
+
+def test_rate_floor_defaults_to_the_seed():
+    """0.0 means 'use the seed', which is the best process-rate estimate we have."""
+    mat = ArrheniusPlasticity(E=121.5e9, nu=0.329, rho=7334.0)
+    assert mat.rate_floor == pytest.approx(0.0)
+    assert mat._rate_floor_eff == pytest.approx(mat.rate_seed)
+
+    explicit = ArrheniusPlasticity(E=121.5e9, nu=0.329, rho=7334.0, rate_floor=0.373)
+    assert explicit._rate_floor_eff == pytest.approx(0.373)
+
+
+def test_the_artefact_the_rate_floor_exists_to_prevent():
+    """An elastic trial state used to be read as rate_min = 1e-4 /s.
+
+    Anchored on the CPU reference, not on the kernel, so this pins the SIZE of
+    the softening independently of the code that reacts to it. If this ratio
+    ever falls near 1.0 the floor is unnecessary; while it is ~3x, evaluating an
+    elastic particle at the clamp floor can push it over the yield surface.
+    """
+    at_clamp_floor = cpu.flow_stress_mpa(0.20, 1e-4, 1273.15)
+    at_process_rate = cpu.flow_stress_mpa(0.20, 0.373, 1273.15)
+    assert at_process_rate / at_clamp_floor > 2.0, (
+        "softening at the rate clamp floor is only %.2fx"
+        % (at_process_rate / at_clamp_floor))
+
+
+def test_dividing_the_derived_rate_by_N_recovers_the_measured_rate():
+    """The similarity transform, checked against measurement rather than itself.
+
+    The press runs 25.0 m/s against a real 14.1 mm/s, so N = 1773. The sim's
+    nominal derived rate is v/D = 656 /s. Dividing must land on the rate
+    measured from the die-gap trace across all 47 blows of the 06-15 T4 session,
+    median 0.373 /s (blow_rates.py).
+
+    These are engineering (v/D) and true (ln(h0/h1)/dt) strain rates
+    respectively, so agreement to a few percent is corroboration and not an
+    identity -- which is why the tolerance is loose.
+    """
+    n = 25.0 / 0.0141
+    assert n == pytest.approx(1773.0, rel=1e-3)
+    assert 656.0 / n == pytest.approx(0.373, rel=0.10)
+
+
 def test_substep_dt_default_is_a_plausible_cfl_timestep():
     """It is overwritten by environment.py, but a silly default would hide bugs."""
     mat = ArrheniusPlasticity(E=121.5e9, nu=0.329, rho=7334.0)
