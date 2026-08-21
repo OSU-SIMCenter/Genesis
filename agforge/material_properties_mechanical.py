@@ -182,8 +182,17 @@ def peak_flow_stress_mpa(strain_rate, temp_k):
 # with eqn. (3) finds Q = 454 kJ/mol across the entire range". Published form is
 # its eqn. (3)/(4):
 #     Z = strain_rate * exp(Q/RT) = A [sinh(alpha * sigma)] ** n
-# The pre-exponential A is NOT recoverable from the text available to us, so
-# that equation cannot be evaluated here. DO NOT INVENT AN A.
+# ✅ A IS RECOVERED -- 2026-08-20, from N.D. Ryan's 1989 Concordia PhD thesis
+# (the thesis this paper is drawn from). Two routes, and they agree:
+#   (1) Thesis Fig. 18 (p.70) prints the INVERTED-SINH (Tanaka) form, which does
+#       not need A at all -- it replaces A with a characteristic temperature T':
+#           sigma_p = (1/alpha) * asinh{ [(edot/edot_s)
+#                                         * exp{(Q/R)(1/T - 1/T')}] ** (1/n) }
+#       with edot_s = 1 /s, T_m = 1780 K, and T'/T_m = 0.855 for type 316.
+#   (2) Thesis eqn. (19), p.68, gives the bridge T' = Q_HW / (R ln A), hence
+#       A = exp(Q / (R T')) = 3.826e15 /s for 316 worked.
+# The old instruction was right and was obeyed: A was not invented, it was read
+# off the source. See RM_TPRIME_W_K and rm_peak_stress_mpa below.
 #
 # 🚨 TIER 2 - SECONDARY EXTRACTION, NOT VERIFIED AGAINST THE PAPER: the
 # RM_STATES (C, m) pairs below. They reached this repo through an LLM research
@@ -198,6 +207,16 @@ def peak_flow_stress_mpa(strain_rate, temp_k):
 # Venugopal, so its base error rate is known to be non-trivial. Treat RM_STATES
 # as a PLAUSIBILITY RANGE of unconfirmed provenance, not as published law.
 #
+# 🚩 SUPERSEDED 2026-08-20 -- and now known to be WRONG, not merely
+# unverified. Against the published Tier-1 form (rm_peak_stress_mpa) at the same
+# point, 1200 C / 0.41 /s: the Tier-2 bracket returns 38.5-67.2 MPa, the
+# published equation returns 77.4 MPa. The bracket does not contain the paper's
+# own answer. Everything downstream of it that quoted "Song's margin widens to
+# 16%" is therefore wrong in the safe direction -- matched-rate, Song's 77.8
+# against the published 77.4 is 0.5%, not 16%.
+# RM_STATES and its two helpers are KEPT so that nothing which cites them breaks
+# silently, but they must not be used for new work. Use rm_peak_stress_mpa.
+#
 # 🚩 Q WAS WRONG UNTIL 2026-08-11. This module shipped Q = 460 kJ/mol. In the
 # paper, 460 is the MEAN of a 21-study literature survey in Table 1 (reported
 # alongside n = 4.3 +/- 0.8), not Ryan & McQueen's own measurement. Corrected to
@@ -206,6 +225,11 @@ def peak_flow_stress_mpa(strain_rate, temp_k):
 # bracket top to 16% above it. The decision that rests on this - raising
 # T_fit_max instead of clamping - survives easily either way, because the
 # clamped value is 2.7x the bracket top. But it is less clean than it read.
+#     ⚠️ Both of those margins came from the Tier-2 bracket and are now
+#     retired. Evaluated with the published Tier-1 form at the same point, R&M
+#     gives 77.4 MPa against Song's 77.8 -- 0.5%. Q = 454 is confirmed at the
+#     thesis (p.60); the 460 this module once shipped is the Fig. 17 survey mean
+#     for 316, which the thesis also prints, so the 08-11 diagnosis was right.
 #
 # ⚠️ ONE Q FOR ALL FOUR STATES IS AN ASSUMPTION, NOT THE PAPER'S POSITION. The
 # paper derives a separate and much lower activation energy for the DRX
@@ -249,10 +273,57 @@ RM_ALPHA_INV_MPA = 83.33
 #: Stress exponent at the peak. Same for 316W and 316C.
 RM_N = 4.5
 
+#: Melting point used by the thesis for the homologous scaling of T'.
+RM_TM_K = 1780.0
+#: T'/T_m for type 316, thesis Fig. 18. (301 0.788, 304 0.835, 317 0.835.)
+RM_TPRIME_RATIO_316 = 0.855
+#: Characteristic temperature, 316 worked. 0.855 * 1780 = 1521.9 K; the figure
+#: prints 1522 K, which is the self-consistency check on reading it.
+RM_TPRIME_W_K = RM_TPRIME_RATIO_316 * RM_TM_K
+#: Reference strain rate of the inverted-sinh form, thesis Fig. 18.
+RM_EDOT_S = 1.0
+#: Pre-exponential, recovered through thesis eqn. (19): A = exp(Q / (R T')).
+#: 3.826e15 /s. ln A = 35.9 sits inside the 316 cluster plotted in Fig. 18.
+RM_A_W_PER_S = math.exp(RM_Q_J_MOL / (R_GAS * RM_TPRIME_W_K))
+
+
+def rm_peak_stress_mpa(strain_rate, temp_k, q_j_mol=None, tprime_k=None):
+    """PEAK flow stress [MPa], Ryan 1989 thesis Fig. 18 (Tanaka inverted sinh).
+
+        sigma_p = (1/alpha) * asinh{ [(edot/edot_s)
+                                      * exp{(Q/R)(1/T - 1/T')}] ** (1/n) }
+
+    This is the published equation with every constant read off the source, and
+    it supersedes :func:`rm_stress_mpa` / :func:`rm_bracket_mpa` for all new
+    work. Defaults are 316 WORKED, which is our bar.
+
+    ⚠️ Four caveats, none of them optional:
+
+    * It is **peak** stress, a single point on the flow curve -- not a
+      strain-resolved law. Comparing it against a strain-compensated fit at some
+      arbitrary eps is only meaningful if that eps is near the peak strain.
+      Thesis eqn. (44) publishes eps_p, so this is checkable, not guesswork.
+    * Type **316**, not 316L, and **torsion**, not compression. Fig. 18 plots an
+      equivalent stress, so no sqrt(3) conversion applies -- a missing one would
+      show up as a 1.73x offset, and the observed offset against [Song2020] runs
+      0.81-0.99x.
+    * Fitted over **900-1200 C, 0.1-5.0 /s**. Below 900 C this extrapolates, so
+      at the measured cold end of our envelope (615 C) it is a second
+      extrapolation rather than an independent measurement.
+    * Q scatter across the thesis's 70-alloy survey is +/-25 kJ/mol (~6%).
+    """
+    q = RM_Q_J_MOL if q_j_mol is None else float(q_j_mol)
+    tp = RM_TPRIME_W_K if tprime_k is None else float(tprime_k)
+    z = (float(strain_rate) / RM_EDOT_S) * math.exp(
+        (q / R_GAS) * (1.0 / float(temp_k) - 1.0 / tp))
+    return float(RM_ALPHA_INV_MPA * math.asinh(z ** (1.0 / RM_N)))
+
+
 #: state -> (C [MPa], m).
-#: 🚨 TIER 2 -- UNVERIFIED secondary extraction, and its functional form does
-#: not match the paper's published equation. See the provenance note above
-#: before relying on, quoting, or porting these.
+#: 🚨 TIER 2 -- SUPERSEDED 2026-08-20 by rm_peak_stress_mpa, and shown to be
+#: wrong rather than merely unverified: the bracket it produces does not contain
+#: the paper's own published answer. Kept only so existing citations do not
+#: break silently. Do not use for new work. See the provenance note above.
 RM_STATES = {
     "eps_0": (65.7, 0.077),    # zero strain
     "eps_0.1": (62.2, 0.162),  # eps = 0.1

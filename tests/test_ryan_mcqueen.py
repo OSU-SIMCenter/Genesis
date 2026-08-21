@@ -5,11 +5,22 @@ torsion over 900-1200 C at 0.1-5 /s -- a window that CONTAINS the real process
 (1150-1260 C, 0.41 /s), where the shipped [Song2020] card (800-1000 C,
 2e-4 - 2e-2 /s) does not and simply clamps.
 
-The headline these tests protect: at the real forging point the shipped card is
-2.7x - 4.7x too STIFF. That is a factor, not a percentage, and it is established
-from published sources alone -- no simulation, no force reading, no shape metric.
+🚩 THE HEADLINE THESE TESTS ONCE PROTECTED WAS WRONG ON THREE COUNTS, corrected
+2026-08-20. It read "at the real forging point the shipped card is 2.7x - 4.7x
+too STIFF". Every part of that has since failed:
+  (a) the "real forging point" of 1150-1260 C is the GENERIC LITERATURE window
+      for 316L, not a measurement of this billet. The camera reads 615-967 C,
+      so this forge never reaches it. See doc section 0.1.
+  (b) the 2.7x-4.7x compares the CLAMPED Song value (181.1 MPa) against the
+      Tier-2 bracket. That clamp was removed when T_fit_max went to 1473.15 K,
+      so the configuration the factor describes no longer runs.
+  (c) the bracket itself is wrong. The published Tier-1 equation returns
+      77.4 MPa at 1200 C / 0.41 /s -- outside the 38.5-67.2 bracket entirely.
+Matched-rate against the published form, the card AS IT NOW RUNS is within 0.5%
+of Ryan & McQueen at 1200 C. It runs 7-24% stiffer across 615-967 C, which is
+the band that actually matters and which nothing here yet pins.
 
-⚠️ The (C, m) constants these numbers come from are an UNVERIFIED secondary
+⚠️ The (C, m) constants the Tier-2 numbers come from are an UNVERIFIED secondary
 extraction whose functional form does not match the paper's published equation
 -- see the provenance note in material_properties_mechanical.py. These tests pin
 what the module currently computes; they do not certify the source.
@@ -82,6 +93,38 @@ def test_stress_rises_with_strain_rate():
     lo = m.rm_stress_mpa("drv_sat", 0.1, T_FORGE_K)
     hi = m.rm_stress_mpa("drv_sat", 5.0, T_FORGE_K)
     assert hi > lo
+
+
+def test_pre_exponential_recovered_via_characteristic_temperature():
+    """Thesis eqn. (19): T' = Q_HW / (R ln A), so A = exp(Q / (R T'))."""
+    assert m.RM_TPRIME_W_K == pytest.approx(1521.9, abs=0.1)   # figure prints 1522
+    assert m.RM_A_W_PER_S == pytest.approx(3.826e15, rel=1e-3)
+    # round trip back through eqn. (19)
+    assert m.RM_Q_J_MOL / (8.314 * math.log(m.RM_A_W_PER_S)) == pytest.approx(
+        m.RM_TPRIME_W_K, rel=1e-3)
+
+
+@pytest.mark.parametrize("rate, temp_c, expected_mpa", [
+    (0.373, 1200, 76.11),   # doc comparison point
+    (0.373, 615, 513.6),    # coldest measured blow
+    (0.41, 1200, 77.38),    # rate-matched against Song's 77.8
+])
+def test_tier1_peak_stress_matches_independent_evaluation(rate, temp_c, expected_mpa):
+    """Anchored on two INDEPENDENT evaluations of the published equation that
+    agreed to 4 s.f., not on a re-derivation of this module's own arithmetic --
+    a mirror test would only pin consistency. See the thermal-solver episode."""
+    assert m.rm_peak_stress_mpa(rate, temp_c + 273.15) == pytest.approx(
+        expected_mpa, rel=2e-3)
+
+
+def test_tier2_bracket_does_not_contain_the_published_answer():
+    """Why RM_STATES is superseded: at 1200 C / 0.41 /s the Tier-2 bracket is
+    38.5-67.2 MPa while the published form gives 77.4. Pinned so that anyone
+    reinstating the bracket as authoritative trips this."""
+    lo, hi = m.rm_bracket_mpa(0.41, 1473.15)
+    published = m.rm_peak_stress_mpa(0.41, 1473.15)
+    assert published > hi, "bracket unexpectedly contains the published value"
+    assert lo < hi < published
 
 
 def test_the_bracket_is_ordered_and_contains_the_operating_strain():
