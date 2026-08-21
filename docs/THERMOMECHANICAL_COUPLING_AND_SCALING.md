@@ -1178,23 +1178,30 @@ Answered at zero GPU cost. Press-speed sweeps already existed on disk from the c
 (old-scheme workstream A, session `a9cc09a6`, branch `agforge/v2/forge-common`, worktree
 `nsf-demo` — **not** the new-scheme W-A). They were re-scored with *this project's own scorer and
 metric* — `agforge/analysis/geom_batch.py`'s `summarize()`, `real_mesh(hit, "after")`,
-`r = psize(len(P))/2`, vox 2.0 — so the numbers are directly comparable to every other geometry
-number in this document. 134 arm-scorings, 33 s CPU.
+`r = psize(len(P))/2`, vox 2.0. 134 arm-scorings, 33 s CPU.
+🚨 **CORRECTED 2026-08-21 — that `r = psize(len(P))/2` is exactly what made them NOT
+comparable.** `psize()` derives the lattice spacing from **nominal** volume; a mesh-seeded billet
+(`AGF_BILLET_MESH`, n = 8358) fills ~10% less than nominal, so it returned **2.0701 against a true
+2.0** — a +3.5% cube edge and **+10.9% in cube volume**. Cylinder-seeded runs (n = 9266) return
+2.0001 and were always fine, so the defect silently split the corpus in two. Every table below has
+been **re-scored with `AGF_PSIZE_MM=2.0` pinned**; see *“The psize re-score”* below.
 
 **Criterion 1 (§9.4): IoU spread across the N sweep < 0.001.**
 Old card (pre-`6ee71236`), full **8× range** (25 → 3.125 m/s, N 1773 → 222), n=1:
 
 | hit | `g1_grid_prod` spread | ×criterion | `p5_penalty` spread | ×criterion |
 |---|---|---|---|---|
-| 1 | 0.0087 | 9× | 0.0058 | 6× |
-| 5 | 0.0173 | 17× | 0.0022 | 2× |
-| 10 | 0.0370 | 37× | 0.0069 | 7× |
-| **17** | **0.0678** | **68×** | **0.0282** | **28×** |
+| 1 | 0.0038 | 4× | 0.0057 | 6× |
+| 5 | 0.0203 | 20× | 0.0047 | 5× |
+| 10 | 0.0326 | 33× | 0.0081 | 8× |
+| **17** | **0.0631** | **63×** | **0.0228** | **23×** |
 
-🚨 **No hit and no arm is under 0.001.** The smallest spread measured anywhere is 0.0022 — still
-2.2× the threshold. `g1_grid_prod` is monotonic in speed at hits 1, 10 and 17, and its spread
-**grows monotonically with hit number** (0.0087 → 0.0678): the signature of an error that
+🚨 **No hit and no arm is under 0.001.** The smallest spread measured anywhere is 0.0038 — still
+3.8× the threshold. `g1_grid_prod` is monotonic in speed at hits 1, 10 and 17, and its spread
+**grows monotonically with hit number** (0.0038 → 0.0631): the signature of an error that
 accumulates through the sequence, not a fixed offset.
+✅ **The verdict is unchanged by the psize correction** — every cell still fails criterion 1, and
+the monotonic growth survives. What moved is the *margin* at hit 1 (9× → 4×).
 ⇒ **Risk 1 of §10.1 has occurred, in its measurable form.**
 🚩 **State this precisely — the stronger version is the kind of claim this project has been
 burned by.** What was measured is **"no convergence over 25 → 3.125 m/s per jaw"**, NOT "no valid
@@ -1508,16 +1515,16 @@ they separate "more steps" from "slower press". Scored with the same scorer, all
 
 | arm | hit | CFL 0.90 | CFL 0.45 | CFL 0.225 | spread | ×criterion | direction |
 |---|---|---|---|---|---|---|---|
-| `g1_grid_prod` | 10 | 0.6154 | 0.6558 | 0.6038 | 0.0520 | 52× | non-monotonic |
-| `g1_grid_prod` | **17** | 0.5217 | 0.5970 | 0.5868 | **0.0753** | **75×** | net **UP** with steps |
-| `p5_penalty` | 10 | 0.5961 | 0.6789 | 0.6832 | 0.0871 | 87× | UP |
-| `p5_penalty` | **17** | 0.4944 | 0.6096 | 0.6239 | **0.1294** | **129×** | monotonic **UP** |
+| `g1_grid_prod` | 10 | 0.5889 | 0.6181 | 0.5731 | 0.0451 | 45× | non-monotonic |
+| `g1_grid_prod` | **17** | 0.4906 | 0.5686 | 0.5577 | **0.0780** | **78×** | net **UP** with steps |
+| `p5_penalty` | 10 | 0.5685 | 0.6441 | 0.6434 | 0.0757 | 76× | UP |
+| `p5_penalty` | **17** | 0.4712 | 0.5768 | 0.5904 | **0.1193** | **119×** | monotonic **UP** |
 
 🎯 **Refining the timestep moves IoU UP — toward the real scan. Slowing the press moves it DOWN.
 Opposite signs ⇒ a per-step accumulation cannot explain the speed drift**, and the two axes are
 not the same mechanism. That kills the tidiest available hypothesis.
-🎯 **And the timestep axis is the LARGER effect at hit 17** — `p5_penalty` moves **0.1294** across
-a 4× CFL range against **0.0282** across an 8× speed range, 4.6×. The arm that looked *converged*
+🎯 **And the timestep axis is the LARGER effect at hit 17** — `p5_penalty` moves **0.1193** across
+a 4× CFL range against **0.0228** across an 8× speed range, 5.2×. The arm that looked *converged*
 on the speed axis is the least converged on the timestep axis.
 ⚠️ **Cross-axis MAGNITUDES are card-confounded.** The CFL batches ran 2026-08-18 15:05–15:45,
 *after* `6ee71236` (14:55:56) ⇒ **sourced-316L card**; the speed batches are 08-14 ⇒ **old card**.
@@ -1603,11 +1610,11 @@ mechanism for p5's fragility that owes nothing to the controller.
 
 | arm | hit | clean spread | ×crit | archived spread | ×crit | clean ÷ archived |
 |---|---|---|---|---|---|---|
-| `g1_grid_prod` | **1** | **0.0002** | **0×** | 0.0087 | 9× | **0.02× — PASSES** |
-| `g1_grid_prod` | 5 | 0.0611 | 61× | 0.0135 | 13× | 4.5× worse |
-| `g1_grid_prod` | 10 | 0.0905 | 91× | 0.0370 | 37× | 2.5× worse |
-| `p5_penalty` | 1 | 0.0021 | 2× | 0.0051 | 5× | 0.4× |
-| `p5_penalty` | 5 | 0.0300 | 30× | 0.0007 | 1× | 43× worse |
+| `g1_grid_prod` | **1** | **0.0044** | **4×** | 0.0038 | 4× | **1.16× — FAILS** |
+| `g1_grid_prod` | 5 | 0.0631 | 63× | 0.0163 | 16× | 3.9× worse |
+| `g1_grid_prod` | 10 | 0.0848 | 85× | 0.0326 | 33× | 2.6× worse |
+| `p5_penalty` | **1** | **0.0007** | **PASSES** | 0.0053 | 5× | **0.13×** |
+| `p5_penalty` | 5 | 0.0329 | 33× | 0.0046 | 5× | 7.2× worse |
 
 🚩 **EVERY NUMBER IN THIS TABLE IS n = 1, AND THE PROCESS IS NON-DETERMINISTIC.** The
 stochasticity established below for *stability* applies with equal force to the *geometry* here —
@@ -1616,13 +1623,20 @@ project has measured hit-17 IoU replicate scatter as high as **0.0964**, which i
 several of the spreads tabulated above. **Treat every clean-run spread as a single sample**, and
 in particular do not quote "passes criterion 1" as established from one run.
 
-🎯 **At hit 1 the spread collapses to 0.0002 and PASSES criterion 1** (n=1) ⇒ at hit 1 the
-controller was plausibly the dominant contributor. ⚠️ But hit 1 is the saturated regime where a stock-volume ceiling
-already makes configurations indistinguishable (§4.9), so this is the weakest possible place to
-demonstrate invariance.
+🚨 **RETRACTED 2026-08-21 BY THE psize RE-SCORE. This previously read “At hit 1 the spread
+collapses to 0.0002 and PASSES criterion 1 ⇒ at hit 1 the controller was plausibly the dominant
+contributor.” On the pinned metric `g1_grid_prod`'s hit-1 clean spread is 0.0044, which FAILS —
+and it is marginally WORSE than the archived 0.0038, not 50× better.** The inference that the
+controller dominated at hit 1 rested entirely on the inflated cube and does not survive.
+🎯 **The pass moved arms rather than vanishing:** `p5_penalty` at hit 1 goes 0.0021 → **0.0007**
+and now passes criterion 1 — the only cell anywhere in this document that does. ⚠️ n = 1, on a
+process whose hit-1 replicate scatter is ~0.0002–0.0006 (§4.5), so this is a single sample sitting
+about 1–3σ from the threshold. **Do not quote it as an established pass.**
+⚠️ Hit 1 remains the saturated regime where a stock-volume ceiling already makes configurations
+indistinguishable (§4.9), so it is the weakest possible place to demonstrate invariance.
 🚩 **From hit 5 on the spread is 2.5–43× LARGER with the controller removed.** So the
 expectation that suppression would collapse the spread the way it collapsed W-A's KE/IE is
-**falsified beyond hit 1**, and *"the archived 0.0678 is an upper bound inflated by stall"* is
+**falsified beyond hit 1**, and *"the archived 0.0631 is an upper bound inflated by stall"* is
 **not supported** — the uncontaminated number at hit 10 is bigger, not smaller.
 ⚠️ **BUT those later hits are confounded by the developing instability.** g1 at 3.125 is scored at
 hit 10 while dying at hit 12; p5 at 3.125 is scored at hit 5 while dying at hit 8. Geometry a few
@@ -1650,11 +1664,14 @@ the batches already scored (`batch_cfl090/045/0225`):
 
 | arm | CFL 0.90 | 0.45 | 0.225 | d1/d2 | extrapolated limit | reading at CFL 0.90 |
 |---|---|---|---|---|---|---|
-| `p5_penalty` | 0.4944 | 0.6096 | 0.6239 | **8.06** (p = 3.01) | **0.6259** | **21.0% BELOW converged** |
-| `g1_grid_prod` | 0.5217 | 0.5970 | 0.5868 | −7.38 | — | non-monotonic, **undetermined** |
+| `p5_penalty` | 0.4712 | 0.5768 | 0.5904 | **7.74** (p = 2.95) | **0.5924** | **20.5% BELOW converged** |
+| `g1_grid_prod` | 0.4906 | 0.5686 | 0.5577 | −7.18 | — | non-monotonic, **undetermined** |
 
-🚨 **`p5` reads 21% low at the timestep the D1a sweep used**, and `g1` moves 0.0753 between
-CFL 0.90 and 0.45 — 75× criterion 1 — with no valid extrapolation. ⇒ **absolute IoU values in the
+🚨 **`p5` reads 20.5% low at the timestep the D1a sweep used**, and `g1` moves 0.0780 between
+CFL 0.90 and 0.45 — 78× criterion 1 — with no valid extrapolation.
+✅ **The psize correction does not change this conclusion** — the ratio moves 8.06 → 7.74 and the
+order stays ~3rd; `g1` stays non-monotonic at −7.18. The convergence verdicts proved robust to the
+metric defect even though the absolute values were not. ⇒ **absolute IoU values in the
 D1a result are unreliable**, and comparing arms at a single shared CFL rewards whichever method
 converges fastest rather than whichever is most accurate.
 ⚠️ **Do NOT over-read this into "the spread is resolution error."** A timestep bias at fixed CFL is
@@ -1700,6 +1717,69 @@ just not on the batches most people read.** ⚠️ My own runs write `controller
 4. The file records `AGF_MPM_X_PAD_LOWER=1.3` and `AGF_DIAG_PENETRATION=1`, neither of which my
    reconstruction set and neither of which appears in `run_meta.json`. ⇒ the count of env vars
    needed to reproduce a batch, and absent from its own metadata, is now **at least seven**.
+
+#### 🚨 The psize re-score — every mesh-seeded IoU in this document was on an inflated cube
+
+**What was wrong.** `geom_metrics.psize(n)` derives the particle lattice spacing from the billet's
+**nominal** volume. That is exact for a cylinder IC, which fills the nominal volume by construction.
+It is wrong for a mesh IC: `AGF_BILLET_MESH` seeds from the real scan, which holds ~10% less
+material, so `n` drops to 8358 while the nominal volume does not — and `psize` reads **2.0701 mm
+against a true 2.0000**. The IoU cube half-width is `psize/2`, so the scoring cube was **+3.5% per
+edge, +10.9% in volume**. `psize()`'s own docstring documents this and names the fix
+(`AGF_PSIZE_MM`); nothing in this document had been applying it.
+
+⚠️ **This silently split the corpus in two.** Cylinder-seeded batches (n = 9266 → psize 2.0001) were
+always correct; mesh-seeded batches (n = 8358) were not. Any table mixing the two compared a
+forgiving metric against a strict one.
+
+**Scale of it**, measured over **368 mesh-seeded arm-hit cells** re-scored both ways:
+
+| | absolute IoU |
+|---|---|
+| mean shift | **−0.0344** |
+| range | −0.0103 … −0.0485 |
+| direction | **368 of 368 downward** |
+| cells shifted > 0.001 | **368 of 368** |
+
+⇒ every absolute IoU here was high by ~0.03 — about **34× criterion 1**, and larger than most
+between-arm differences this project has called real.
+
+🎯 **Spreads are far more robust than absolute values, but not invariant.** Differencing
+cancels most of it: the D1a spreads move by −0.0054 … +0.0030. **The sign is not uniform** — `g1` at
+hit 1 falls 0.0087 → 0.0038 while at hit 5 it *rises* 0.0173 → 0.0203 — so this is **not a scale
+factor and cannot be corrected by annotation.**
+
+**What survived, and what did not:**
+
+| claim | outcome |
+|---|---|
+| D1a: criterion 1 fails at every hit and arm | ✅ **unchanged** — smallest spread 0.0022 → 0.0038, still 3.8× |
+| D1a spread grows monotonically with hit | ✅ **unchanged** (0.0038 → 0.0631) |
+| Richardson: `p5` ~3rd order, reads ~21% below converged | ✅ **unchanged** — 8.06 → 7.74, 21.0% → 20.5% |
+| Richardson: `g1` non-monotonic, undetermined | ✅ **unchanged** (−7.38 → −7.18) |
+| Timestep axis larger than speed axis at hit 17 | ✅ **unchanged** (4.6× → 5.2×) |
+| 🚨 Clean re-run: `g1` hit 1 PASSES criterion 1 | 🚨 **RETRACTED** — 0.0002 → 0.0044, now FAILS |
+| 🚨 `p5` hit 1 clean spread is unremarkable | 🚨 **REVERSED** — 0.0021 → 0.0007, now the only passing cell in this document |
+
+⇒ **the conclusions held; one sub-claim inverted and another appeared.** The metric defect was large
+in absolute terms and mostly self-cancelling in the differences the argument actually rests on —
+which is luck, not design, and is exactly why the pin is now mandatory rather than advisory.
+
+**Scope.** Batches re-scored: `batch_speed_*`, `batch_spdmx_*`, `batch_cfl*`, `batch_d1aclean_*`,
+`batch_f4test_25p0`, `batch_pf_25p0`, `batch_meshic_*`, `batch_cherrysmoke`, `batch_patchsmoke`.
+✅ **`batch_gain_1p5em4/5` were NOT re-scaled** — `gain_score.py` refuses to run without
+`AGF_PSIZE_MM`, so workstream A's gain-pair numbers were produced pinned and are already correct.
+✅ Cylinder-seeded batches (`batch_all14_n3*`, `batch_nostop_n3`, `batch_cinj35_n3`,
+`batch_billet*_cyl`) need no correction, which is why the replicate-scatter σ values stand.
+
+🚨 **The pin is NOT confined to the three ad-hoc scripts.** The *standard* path skips it too:
+`score_batch.py`, `geom_batch.py`, `score_arms.py` and `batch_arms.py` all call `psize()` unpinned;
+only `gain_score.py` and `render_arms.py` set it. ⇒ **recommendation: move the refusal into
+`geom_metrics.psize()` itself.** As long as pinning is opt-in, every new script inherits the bug by
+default — `gain_score.py:59` is the right guard in the wrong layer.
+
+📄 `~/probes/wb_scoring/rescore2.py` (resumable), `rescore_pinned.jsonl` (368 cells, both
+bases), `gen_tables.py`, `patch_psize.py`.
 
 #### 🎯 Why chasing lower press speeds was never going to work
 
@@ -2198,8 +2278,8 @@ makes it *used*. If only one of the two lands, coupled forging still does not ru
 
 ⇒ 🚨 **D1a HAS NOW BEEN RUN (2026-08-20) AND CRITERION 1 FAILS IN THE RANGE TESTED** — see
 §4.7.4. Geometry does not converge over 25 → 3.125 m/s per jaw on either material card, the drift
-accumulates with hit number (spread 0.0087 → 0.0678 from hit 1 to hit 17), and no hit or arm comes
-within 2.2× of the 0.001 threshold. ⚠️ **Read that as "not converged in the range tested", not as
+accumulates with hit number (spread 0.0038 → 0.0631 from hit 1 to hit 17), and no hit or arm comes
+within 3.8× of the 0.001 threshold. ⚠️ **Read that as "not converged in the range tested", not as
 "no valid press speed exists"** — the slowest point is still two to three orders of magnitude
 above physical, and the die-balance controller is not held fixed across the four points (§4.7.4).
 **This reorders the plan below**: A + B are no longer a prologue to D1a, they are what is needed
