@@ -399,10 +399,12 @@ class AgilityForgeOptions(Options):
         # robot_time_to_seconds is derived from dt, and it feeds convert_to_robot_time_units
         # for the PD gains _kp/_kv. That means changing cfl_safety silently changes the
         # CONTROLLER as well as the integrator, so a timestep sweep is not single-variable.
-        # Pin this to hold the control problem fixed while refining dt:
-        #   AGF_ROBOT_TIME_TO_SECONDS=48611.1 <cmd>
+        # Unset AGF_ROBOT_TIME_TO_SECONDS to derive _rtu (production / Wave 1 unpinned).
+        # Set a numeric pin to hold the controller fixed. Do not copy a literal out of a
+        # comment (48611.1 / 312232 / 109278 have all circulated; none is "the" pin).
+        # Empty/whitespace is fatal: it is not a pin and not the default.
         _rtu = 0.1 * self.sim.substeps / self.sim.dt
-        _rtu = env_float("AGF_ROBOT_TIME_TO_SECONDS", _rtu)
+        _rtu = env_float("AGF_ROBOT_TIME_TO_SECONDS", _rtu, blank_ok=False)
         self.robot = RobotOptions(robot_time_to_seconds=_rtu,
                                   cylinder_diameter=self.stock_diameter,
                                   cylinder_height=self.stock_length,
