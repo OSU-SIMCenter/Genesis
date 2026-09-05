@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 import enum
 import zlib
@@ -7,6 +8,18 @@ import torch
 import numpy as np
 import genesis as gs
 import contextlib
+
+from agforge.env_knobs import env_float
+
+# Feed-rate throttle knee. Above this force imbalance the PRESSING speed is scaled by
+# threshold/|dF| and a jaw can be clamped to zero velocity (see the PRESSING branch).
+# Measured 2026-08-14 across the contact methods then under study: it fires on 31% of pressing
+# frames, ranging 8% to 50% depending on the method, and commands one die to a dead stop in
+# 16% of frames.
+# So it is an arm-dependent kinematic effect, not a neutral safety net, and raising max_force does
+# NOT remove it. Set very high to disable it for a controlled comparison.
+#   AGF_FORCE_IMBALANCE_THRESHOLD=1e12 <cmd>
+_AGF_IMBALANCE_THRESHOLD = env_float("AGF_FORCE_IMBALANCE_THRESHOLD", 20000.0)
 
 from agforge.reconstruction import SurfaceReconstructor
 from agforge.physics_mesh import InductionPhysicsMesher
@@ -107,6 +120,16 @@ class StrikeController:
         # Data Recorder
         import os
         self.recorder = AgForgeRecorder(data_dir=os.path.join(os.path.dirname(__file__), "..", "data"))
+
+        # --- contact-method diagnostics tap (opt-in; see _diag_emit) ---------------------
+        #   AGF_DIAG_OUT=/path/run.jsonl <cmd>
+        # Records per-strike force and det(F) so a contact-method comparison can be scored
+        # on force accuracy and on the det-F-vs-packing gap, neither of which reaches the
+        # velo_*.db hits table. Off => zero added work.
+        self._diag_out = os.environ.get("AGF_DIAG_OUT", "") or None
+        self._diag_prev_state = StrikeState.IDLE
+        self._diag_strike_idx = 0
+        self._diag_acc = None
         
         # Checkpointing
         self.checkpoints = []
@@ -673,6 +696,10 @@ class StrikeController:
                             else:
                                 stop_reason = "Unknown"
                             strain_val = current_strain_tensor.item()
+                        # Carried into the diagnostics row so a run can prove what stopped each
+                        # hit. "Max Force" fires on 39% of hits at 25 m/s and is arm-dependent,
+                        # so any comparison across arms needs this on the record, not in stdout.
+                        self._diag_stop_reason = stop_reason
                         gs.logger.info(f"Strike -> HOLDING ({stop_reason}, strain={strain_val:.4f}, steps={self.strike_step_count}, time={elapsed_time:.2f}s)")
                         self.strike_state = StrikeState.HOLDING
                         self.hold_steps_remaining = self.env.cfg.strike.hold_steps
@@ -686,7 +713,7 @@ class StrikeController:
                     # --- ADVANCED PROTECTION: Feed Rate Modulation ---
                     # If force imbalance exceeds threshold, slow down the main pressing speed
                     # to allow the balance controller to catch up without fighting forward momentum.
-                    SAFETY_THRESHOLD = 20000.0 # 20kN (~10% of max force)
+                    SAFETY_THRESHOLD = _AGF_IMBALANCE_THRESHOLD # default 20kN (~10% of max force)
                     adaptive_speed = pressing_speed
                     
                     imbalance_abs = torch.abs(imbalance)
@@ -1216,6 +1243,11 @@ class StrikeController:
                 with self._profile("teleop_render_visualizer_update"):
                     self.env.scene.visualizer.update(force=False, auto=True)
 
+        if self._diag_out is not None:
+            if self._diag_prev_state != StrikeState.IDLE and self.strike_state == StrikeState.IDLE:
+                self._diag_emit()
+            self._diag_prev_state = self.strike_state
+
         # 6. Record Data Frame (only if actively striking)
         if self.strike_state != StrikeState.IDLE:
             with self._profile("teleop_record"):
@@ -1269,6 +1301,126 @@ class StrikeController:
                         force_R=force_R,
                         dof_cmd=self._vel_cmd
                     )
+
+                if self._diag_out is not None:
+                    self._diag_accumulate(particles_detF, force_L, force_R)
+
+    # ------------------------------------------------------------------------------------
+    # ------------------------- contact-method diagnostics tap ---------------------------
+    # ------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _diag_scalar(v):
+        """get_resistance_forces returns per-env tensors; collapse to one float."""
+        try:
+            t = v.detach().cpu().numpy() if hasattr(v, "detach") else np.asarray(v)
+            return float(np.asarray(t).reshape(-1)[0])
+        except Exception:
+            return float("nan")
+
+    def _diag_accumulate(self, particles_detF, force_L, force_R):
+        """Fold one already-computed frame into the current strike's running stats."""
+        if self._diag_acc is None:
+            self._diag_acc = {
+                "n_frames": 0, "fL_peak": -1e30, "fR_peak": -1e30,
+                "fL_press_sum": 0.0, "fR_press_sum": 0.0, "n_press": 0,
+                "detF_last": None, "detF_first": None, "peak_frame": -1,
+                "pen_max": 0.0, "pen_mean_sum": 0.0, "pen_frac_sum": 0.0,
+                "n_pen": 0, "pen_dx": None, "pen_psize": None,
+            }
+        a = self._diag_acc
+        fL = self._diag_scalar(force_L)
+        fR = self._diag_scalar(force_R)
+        if fL == fL and fL > a["fL_peak"]:          # NaN-safe max
+            a["fL_peak"] = fL
+            a["peak_frame"] = a["n_frames"]
+        if fR == fR and fR > a["fR_peak"]:
+            a["fR_peak"] = fR
+        if self.strike_state == StrikeState.PRESSING:
+            if fL == fL:
+                a["fL_press_sum"] += fL
+            if fR == fR:
+                a["fR_press_sum"] += fR
+            a["n_press"] += 1
+        # First frame of this strike: the die is still APPROACHING and has not touched
+        # the bar, so this is the POST-SETTLE state of the previous strike -- the state the
+        # mesh in hits.vertices was actually captured at. Keeping it lets the analysis
+        # measure the settle drift rather than assume it away.
+        if a["detF_first"] is None and particles_detF is not None:
+            import numpy as _np
+            _d = _np.asarray(particles_detF, dtype=_np.float64).reshape(-1)
+            _d = _d[_np.isfinite(_d)]
+            if _d.size:
+                a["detF_first"] = float(_d.mean())
+        # Keep only the latest det(F) array -- the strike-end snapshot.
+        a["detF_last"] = particles_detF
+
+        # Penetration, if the probe is built in. Read-and-reset per frame, so pen_max is the worst
+        # over every substep of the strike rather than whatever a single sampled instant showed --
+        # penetration is transient within a press and an instantaneous sample would understate it.
+        coupler = getattr(self.env.scene.sim, "coupler", None)
+        if coupler is not None and getattr(coupler, "_pen_probe", False):
+            p = coupler.penetration_read()
+            coupler.penetration_reset()
+            if p["pen_max"] > a["pen_max"]:
+                a["pen_max"] = p["pen_max"]
+            if self.strike_state == StrikeState.PRESSING:
+                a["pen_mean_sum"] += p["pen_mean"]
+                a["pen_frac_sum"] += p["pen_frac"]
+                a["n_pen"] += 1
+            a["pen_dx"] = p["dx"]
+            a["pen_psize"] = p["particle_size"]
+
+        a["n_frames"] += 1
+
+    def _diag_emit(self):
+        """Write one JSONL row for the strike that just finished."""
+        import json
+        a, self._diag_acc = self._diag_acc, None
+        if a is None or a["n_frames"] == 0:
+            return
+        self._diag_strike_idx += 1
+        d = a["detF_last"]
+        row = {
+            "strike": self._diag_strike_idx,
+            "stop_reason": getattr(self, "_diag_stop_reason", None),
+            "n_frames": a["n_frames"],
+            "peak_frame": a["peak_frame"],
+            "force_L_peak": a["fL_peak"] if a["fL_peak"] > -1e29 else None,
+            "force_R_peak": a["fR_peak"] if a["fR_peak"] > -1e29 else None,
+            "force_L_press_mean": (a["fL_press_sum"] / a["n_press"]) if a["n_press"] else None,
+            "force_R_press_mean": (a["fR_press_sum"] / a["n_press"]) if a["n_press"] else None,
+            "n_press_frames": a["n_press"],
+            # Post-settle det(F) of the PREVIOUS strike (see _diag_accumulate). Compare
+            # against the previous row's detF_mean to get the settle drift.
+            "detF_first_mean": a["detF_first"],
+            # Penetration left behind by this arm's contact resolution. pen_max is the worst
+            # single particle over the whole strike; the press means are averaged over PRESSING
+            # frames only, so approach/retract cannot dilute them. dx and particle_size travel
+            # with the row so the analysis can normalize without re-deriving the config.
+            "pen_max": a["pen_max"] if a["pen_dx"] is not None else None,
+            "pen_mean_press": (a["pen_mean_sum"] / a["n_pen"]) if a["n_pen"] else None,
+            "pen_frac_press": (a["pen_frac_sum"] / a["n_pen"]) if a["n_pen"] else None,
+            "pen_dx": a["pen_dx"],
+            "pen_particle_size": a["pen_psize"],
+        }
+        if d is not None:
+            d = np.asarray(d, dtype=np.float64).reshape(-1)
+            d = d[np.isfinite(d)]
+            if d.size:
+                row.update({
+                    "n_particles": int(d.size),
+                    "detF_mean": float(d.mean()),
+                    "detF_min": float(d.min()),
+                    "detF_p01": float(np.percentile(d, 1)),
+                    "detF_p50": float(np.percentile(d, 50)),
+                    "detF_p99": float(np.percentile(d, 99)),
+                })
+        try:
+            with open(self._diag_out, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row) + "\n")
+        except Exception as exc:  # diagnostics must never take the run down
+            print(f"[diag] write failed: {exc}")
 
     def _profile(self, name):
         # Fix for Pydantic model access

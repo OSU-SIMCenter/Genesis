@@ -11,6 +11,7 @@ ureg = UnitRegistry()
 
 import os
 import sys
+from agforge.env_knobs import env_bool, env_float
 
 # Determine path for generated assets relative to the application/script
 if getattr(sys, 'frozen', False):
@@ -28,18 +29,67 @@ def convert_to_robot_time_units(quantity: ureg.Quantity, time_unit_str: str) -> 
 
 class MaterialOptions(Options):
     """Parameters for the elasto-plastic material."""
-    E: float = 200.e9 * 0.25
-    nu: float = 0.28
-    rho: float = 8000.
-    von_mises_yield_stress: float = 190.e6 * 0.1
+    # 316L card sourced by workstream B (agforge/v2/thermal-st-invariance), cherry-picked
+    # 2026-08-14. E / nu / rho / cfl_use_pwave and the Johnson-Cook block below move
+    # ATOMICALLY -- see the notes on cfl_use_pwave and jc_T_ref for the two ways a partial
+    # application fails silently.
+    E: float = 121.5e9
+    #: Sourced: fitted as nu = E/(2G) - 1 across BAM2023 own E and G, replacing 0.329, an
+    #: interpolation invented for this repo. REQUIRES cfl_use_pwave -- nu does not appear in
+    #: the bar-wave branch, so raising it raises the P-wave speed WITHOUT shrinking substep_dt.
+    #: B measured nu 0.382 with cfl_use_pwave=False reaching 2.8e11 N; with it, stable 207 kN.
+    nu: float = 0.383
+    #: Derive substep_dt from the P-wave speed rather than the thin-rod bar wave sqrt(E/rho).
+    #: The P-wave is the fastest elastic wave in a bulk solid, so it is the criterion that
+    #: actually governs stability; sqrt(E/rho) understates it by 38% at this card, 4070 vs
+    #: 5620 m/s. This is a correctness fix, not a tuning knob -- the old substep_dt ignored nu
+    #: entirely. Cost: about 2.25x more substeps against our previous card.
+    cfl_use_pwave: bool = True
+    #: NIST2021 SRM 1155a, D(T) = 8052 - 0.564 T, at 1273.15 K. Was 8000, a room-temperature
+    #: figure.
+    rho: float = 7334.
+    #: Only read when use_johnson_cook is False, i.e. dead on this path. Set to the 316L peak
+    #: flow stress at the operating point so the two paths no longer disagree by about 11x.
+    von_mises_yield_stress: float = 213.4e6
 
-    # Johnson-Cook Parameters (Hot Steel ~1200C)
+    # Johnson-Cook parameters for 316L, calibrated by workstream B AT THE OPERATING POINT
+    # (1000 C, 1 /s). This block previously descended, essentially unchanged, from the
+    # canonical Johnson & Cook (1983) set for AISI 4340 -- only A and B had ever been
+    # hand-scaled, leaving n, C, m and T_melt as 4340 values. The billet is 316L.
+    #
+    # A and B are ALREADY the 1000 C values. They are NOT room-temperature values waiting to
+    # be softened, and must never be applied under a room-temperature jc_T_ref: at the
+    # measured median blow of 823.6 C that yields softening 0.42-0.46, a silent 2.2-2.4x
+    # under-strength error. jc_T_ref / jc_T_melt / jc_m below are part of the same atomic unit.
+    #
+    # jc_C IS DEAD CODE: materials.py computes sigma_y_static = A + B*eps_p^n and applies only
+    # thermal softening; the docstring (1 + C ln eps_dot) term is not implemented and self.C is
+    # never referenced. Carried at its sourced value so it is right if that term is ever added.
     use_johnson_cook: bool = True
-    jc_A: float = 40.e6   # ~40 MPa (Very Hot)
-    jc_B: float = 100.e6  # Reduced hardening
-    jc_n: float = 0.26
-    jc_C: float = 0.014
+    jc_A: float = 100.3e6
+    jc_B: float = 195.0e6
+    jc_n: float = 0.417
+    jc_C: float = 0.120
     jc_eps0: float = 1.0
+    # These three were hardcoded at the JohnsonCookPlasticity call site in environment.py, which
+    # silently overrode anything set here. Defaults below are exactly what that call site passed,
+    # so behaviour is unchanged -- they exist so a card whose reference temperature is its
+    # CALIBRATION temperature (a 316L card calibrated at 1000 C has jc_T_ref = 1273.15, not room
+    # temperature) can actually be applied.
+    #: The card CALIBRATION temperature, not room temperature. Must land together with
+    #: jc_A / jc_B above -- see the note there.
+    #: CONSEQUENCE, measured: all 47 real blows run 615-967 C, i.e. ALL BELOW this reference,
+    #: so T_star clamps to 0, thermal softening pins at exactly 1.0000, and its derivative is
+    #: exactly zero. The card is therefore INERT in temperature across the whole real operating
+    #: window and reduces to sigma_y = A + B*eps_p^n. For a contact-method ranking that is
+    #: useful, since material stops being a confound, but it is structural absence rather than
+    #: isothermal by design -- and the billet is systematically SOFT, because A and B are
+    #: 1000 C values while the median blow is 823.6 C.
+    jc_T_ref: float = 1273.15
+    #: Solidus, Pichler et al. (liquidus 1708 K). Written as a literal rather than through the
+    #: ACTIVE_MATERIAL registry indirection, which is in flux as of 2026-08-14.
+    jc_T_melt: float = 1675.0
+    jc_m: float = 1.0
 
 class EnvOptions(Options):
     """Parameters related to the RL environment and task."""
@@ -172,10 +222,28 @@ class RobotOptions(Options):
         self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
         self.cylinder_euler = (0.0, 90.0, 0.0)
 
-        self.base_grid_density = int(7 / self.cylinder_diameter)
+        # Cells across one billet diameter. 7 is the long-standing default; the die's
+        # contact tip is ~13.5 mm, so at 7 cells/diameter (dx = 5.71 mm on a 40 mm bar)
+        # the contact patch spans only ~2.4 cells. Overridable for resolution sweeps:
+        #   AGF_CELLS_PER_DIAMETER=10 <cmd>
+        _cpd = env_float("AGF_CELLS_PER_DIAMETER", 10)
+        self.base_grid_density = int(_cpd / self.cylinder_diameter)
         dx = 1.0 / self.base_grid_density
         mpm_solver_padding = 3 * dx
-        mpm_x_padding_lower = self.cylinder_height * 0.85
+        # Headroom for the billet to ELONGATE into, as a multiple of its own length. The billet
+        # is pinned at +x by `fixed_region_bounds` and grows in -x, so its usable room is
+        # (mpm_x_padding_lower - cylinder_height/2).
+        #
+        # 0.85 gives 0.85*59 - 29.5 = 20.65 mm. The real 17-hit sequence needs 34.4 mm (59 ->
+        # 93.4 mm), so the bar runs into the domain and STOPS: measured x_max freezes at 77.8 mm
+        # from hit 13 onward while the real part keeps growing, and surface error doubles at that
+        # exact hit. Contact-method comparisons past hit ~13 are partly measuring that wall.
+        #
+        # Default left at the historical 0.85 so other work in this tree is unaffected; opt in
+        # for the full real replay. 1.3 leaves ~47 mm of headroom against the 34.4 mm needed
+        # (minimum that fits is 1.083). Costs x grid cells only: 28 -> ~33.
+        #   AGF_MPM_X_PAD_LOWER=1.3 <cmd>
+        mpm_x_padding_lower = self.cylinder_height * env_float("AGF_MPM_X_PAD_LOWER", 1.3)
         mpm_x_padding_upper = self.cylinder_height * 0.52
         mpm_yz_padding = self.cylinder_radius * 1.6
         mpm_lower_offset = np.array([mpm_x_padding_lower, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
@@ -267,10 +335,26 @@ class AgilityForgeOptions(Options):
                                   cylinder_diameter=self.stock_diameter,
                                   cylinder_height=self.stock_length)
         dx = 1.0 / temp_robot.base_grid_density
-        c = math.sqrt(self.mat.E / self.mat.rho)
+        if getattr(self.mat, "cfl_use_pwave", False):
+            # The fastest elastic wave in a bulk solid, which is the criterion that actually
+            # governs stability. Ported from workstream B together with nu = 0.383, which is
+            # unstable without it.
+            mu_lame = self.mat.E / (2.0 * (1.0 + self.mat.nu))
+            k_bulk = self.mat.E / (3.0 * (1.0 - 2.0 * self.mat.nu))
+            c = math.sqrt((k_bulk + 4.0 * mu_lame / 3.0) / self.mat.rho)
+        else:
+            # Historical thin-rod bar wave. Understates the true limit, and nu does not appear
+            # in it at all -- which is why raising nu was unsafe until this branch existed.
+            c = math.sqrt(self.mat.E / self.mat.rho)
         dt_cfl = dx / c  # Theoretical max substep_dt
 
-        cfl_safety = 0.90                         # 5% safety margin
+        # THE temporal-refinement knob. substep_dt is what actually integrates, so halving
+        # this halves the integration step with dx and particle count untouched --
+        # unlike base_grid_density, which moves grid, dt and particle count together.
+        # (`substeps` below scales macro_dt / control-loop rate, NOT the integration step.)
+        #   AGF_CFL_SAFETY=0.45 <cmd>
+        cfl_safety = env_float("AGF_CFL_SAFETY", 0.45)  # NB: 0.45 is the measured value,
+                                                  # the original '5% safety margin' comment was wrong
         substeps = 8                              # Fixed substep count for real-time teleop
         substep_dt = dt_cfl * cfl_safety          # Safe substep timestep
         macro_dt = substep_dt * substeps           # Macro timestep = substep_dt × substeps
@@ -312,18 +396,41 @@ class AgilityForgeOptions(Options):
             gravity=(0, 0, 0),
             check_bounds=not self.performance_mode,
         )
-        self.robot = RobotOptions(robot_time_to_seconds=0.1 * self.sim.substeps / self.sim.dt,
+        # robot_time_to_seconds is derived from dt, and it feeds convert_to_robot_time_units
+        # for the PD gains _kp/_kv. That means changing cfl_safety silently changes the
+        # CONTROLLER as well as the integrator, so a timestep sweep is not single-variable.
+        # Unset AGF_ROBOT_TIME_TO_SECONDS to derive _rtu (production / Wave 1 unpinned).
+        # Set a numeric pin to hold the controller fixed. Do not copy a literal out of a
+        # comment (48611.1 / 312232 / 109278 have all circulated; none is "the" pin).
+        # Empty/whitespace is fatal: it is not a pin and not the default.
+        _rtu = 0.1 * self.sim.substeps / self.sim.dt
+        _rtu = env_float("AGF_ROBOT_TIME_TO_SECONDS", _rtu, blank_ok=False)
+        self.robot = RobotOptions(robot_time_to_seconds=_rtu,
                                   cylinder_diameter=self.stock_diameter,
                                   cylinder_height=self.stock_length,
                                   gripper_axial_width=self.gripper_axial_width)
         self.mpm = MPMOptions(
             grid_density=self.robot.base_grid_density,
-            particle_size=dx / 2.0,  # 8 particles per cell (2³ = 8 PPC)
+            # PPC = divisor³ : 2.0 -> 8 PPC, 3.0 -> 27 PPC. Pinned to dx by default, which
+            # is why a grid sweep alone cannot separate resolution from particle density.
+            #   AGF_PPC_DIVISOR=3.0 <cmd>
+            particle_size=dx / env_float("AGF_PPC_DIVISOR", 2.0),
             lower_bound=self.robot.mpm_lower_bound,
             upper_bound=self.robot.mpm_upper_bound,
-            enable_CPIC=True,  # Improved rigid-MPM contact accuracy
+            # CPIC resolves rigid contact INSIDE g2p (base_mpm_solver.g2p): it corrects
+            # `grid_vel` before that value accumulates into new_vel AND new_C, so the
+            # correction reaches the affine field and hence F. That is the same pathway the
+            # 'particle' contact mode uses -- which is why the coupler forbids both at once.
+            # Toggle to isolate that pathway's effect on volume conservation:
+            #   AGF_ENABLE_CPIC=0 <cmd>
+            enable_CPIC=env_bool("AGF_ENABLE_CPIC", False),
             enable_thermal=True,
-            default_initial_temperature=293.0,
+            # AGF_BILLET_TEMP_K. NOTE this is a MECHANICAL setting, not only a thermal one:
+            # the flow stress is temperature-coupled through the Johnson-Cook melting term in
+            # materials.py, so with jc_T_ref at its 293.15 default any temperature above ~293 K
+            # softens the material. The real billet is ~960 C at blow 1 (measured), i.e. 1233 K,
+            # against the 293.0 K default this has always run at. Default unchanged.
+            default_initial_temperature=env_float("AGF_BILLET_TEMP_K", 293.0),
             thermal_time_scale=thermal_time_scale,
             # Fixed-end (truncated-domain) BC: the held end conducts into the unsimulated
             # rod (Robin BC on the cut plane) instead of being exposed to air.
@@ -389,17 +496,46 @@ class StrikeOptions(Options):
     contact_force_threshold: float = 150.0 # Force threshold to detect contact
     
     target_strain: float = 0.5 # 50% reduction
-    pressing_speed: float = 25.0 # m/s
+    # Overridable for stability/fidelity sweeps without editing code:
+    #   AGF_PRESSING_SPEED=5.0 <cmd>
+    # Real presses run 0.02-0.5 m/s; 25.0 is a teleop-era literal (not CFL-derived --
+    # approach_speed is, this is not). At 25.0 the two jaws close at 50 m/s against a
+    # 100 m/s max_particle_velocity abort, i.e. only 2x headroom.
+    pressing_speed: float = env_float("AGF_PRESSING_SPEED", 25.0) # m/s
     
     # Force Balance Control
     # 5e-5 was robust. 1.5e-4 is peak performance but near instability (2e-4).
     # User selected 1.5e-4 for maximum benchmark results.
-    force_balance_gain: float = 1.5e-4 
+    # AGF_FORCE_BALANCE_GAIN. How hard the die-balance loop corrects. Together with the
+    # imbalance threshold it sets where a die stalls outright:
+    #     |dF|_stall = sqrt(pressing_speed * AGF_FORCE_IMBALANCE_THRESHOLD / this)
+    # = 57,735 N at the shipped values (verified 100.00% over 5,302 pressing frames).
+    # LOWERING this is the preferred lever for anything a third party runs, because it KEEPS
+    # the speed-modulation guard; RAISING AGF_FORCE_IMBALANCE_THRESHOLD removes that guard
+    # entirely and is a diagnostic lever only, so the THRESHOLD default is left at 20 kN.
+    force_balance_gain: float = env_float("AGF_FORCE_BALANCE_GAIN", 1.5e-5)
     
     # Safety Limits
     max_force_imbalance: float = 20000.0 # 20 kN% compression
-    max_force: float = 200000.0 # 20 tons (200kN)
-    pressing_timeout: float = 30.0 # seconds (Increased to avoid timeout)
+    # AGF_MAX_FORCE raises/disables the press control stop (strike_controller.py:663 ends
+    # PRESSING when force_L or force_R exceeds this). Default is unchanged at 200 kN.
+    # Measured 2026-08-13 at the former 200 kN default: this stop fired on 7 of 17 hits for
+    # the grid baseline and on up to 14 of 17 for other methods, and trip-count correlates
+    # -0.994 with elongation shortfall -- so methods were partly ranked by how often they
+    # tripped it.
+    # Runaway backstop, NOT a physical press limit. Sim peak force is a numerical artifact, so
+    # this cannot be set from the real machine (110.2 kN). Set from the banked corpus instead:
+    # across 2,336 recorded peak-force samples the maximum was 787.3 kN, so 2.5e6 N sits ~3.2x
+    # above anything ever observed. Every banked hit stopped on Target Strain with zero Max
+    # Force events, so any ceiling above the observed peak reproduces them identically -- this
+    # keeps that property while still halting a divergent run. The former 200 kN default was
+    # exceeded by 55.6% of those samples and truncated the majority of hits.
+    max_force: float = env_float("AGF_MAX_FORCE", 2.5e6) # 2500 kN backstop
+    # AGF_PRESSING_TIMEOUT. This is WALL-CLOCK, not sim time, so it binds harder as the press
+    # is slowed or the grid refined. It already fired once at 25 m/s, and it becomes the BINDING
+    # stop as soon as AGF_MAX_FORCE removes the force stop -- swapping one arm-biased truncation
+    # for another. Raised with max_force: 30 s could not complete a 17-hit replay at cpd 10.
+    pressing_timeout: float = env_float("AGF_PRESSING_TIMEOUT", 3600.0) # seconds; binds once the force stop is off
     approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     release_timeout: float = 10.0 # seconds
     hold_steps: int = 15 # Number of steps to hold position after reaching target before releasing
@@ -411,7 +547,11 @@ class SafetyOptions(Options):
     strict_tracing_enabled: bool = True # Gating flag for heavy threshold bounds checking
     
     # Thresholds for early detection (Mid-blowup catching)
-    max_particle_velocity: float = 100.0 # m/s (Supersonic catch)
+    # Overridable: AGF_MAX_PARTICLE_VELOCITY=400 <cmd>
+    # NB this is a heuristic tripwire, not the numerical limit: the CFL velocity bound is
+    # dx/substep_dt ~= 2778 m/s and the material sound speed is 2500 m/s, so 100 m/s is 4%
+    # of sonic despite the 'Supersonic catch' label.
+    max_particle_velocity: float = env_float("AGF_MAX_PARTICLE_VELOCITY", 100.0) # m/s
     max_temperature: float = 4000.0      # Thermal runaway threshold
     min_temperature: float = 0.0         # Thermal collapse threshold
     
@@ -525,7 +665,11 @@ class TeleopOptions(AgilityForgeOptions):
         # User requested max safe ratio = 0.35
         # v_approach = ratio * (dx / dt)
         
-        target_cfl_ratio = 0.35
+        # Overridable so the approach-speed hypothesis can be tested:
+        #   AGF_APPROACH_CFL_RATIO=0.05 <cmd>
+        # 0.35 * (dx/dt) = ~243 m/s per jaw, against a 100 m/s max_particle_velocity abort.
+        # Derived for GRID stability; per-particle contact samplers see the raw jaw velocity.
+        target_cfl_ratio = env_float("AGF_APPROACH_CFL_RATIO", 0.05)
         dx = 1.0 / self.robot.base_grid_density
         dt = self.sim.dt
         

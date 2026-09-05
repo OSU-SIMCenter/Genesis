@@ -1,8 +1,17 @@
+import os
+import platform
+import sys
+
 import numpy as np
 import torch
+
+# Before Genesis/OpenGL: shared WSLg Gallium defaults.
+from agforge.wsl_graphics import apply_early_wsl_graphics_defaults
+
+apply_early_wsl_graphics_defaults()
+
 import genesis as gs
 
-import platform
 from agforge.options import AgilityForgeOptions, RobotOptions, GENERATED_ROBOT_XML_PATH
 from agforge.environment import AgilityForgeEnv
 
@@ -116,6 +125,17 @@ def build_env(cfg: AgilityForgeOptions) -> AgilityForgeEnv:
     """
     Builds the simulation scene using the provided configuration.
     """
+    if getattr(cfg.general, "show_viewer", False):
+        apply_early_wsl_graphics_defaults()
+        perf = getattr(cfg, "performance", None)
+        if (
+            perf is not None
+            and getattr(perf, "opengl_platform", None) in (None, "")
+            and getattr(perf, "wsl_prefer_glx", True)
+            and os.environ.get("WSL_DISTRO_NAME")
+        ):
+            perf.opengl_platform = "glx"
+
     # --- Step 1: Dynamically generate the robot XML ---
     print(f"Generating robot XML ('{GENERATED_ROBOT_XML_PATH}') from config parameters...")
     generator = RobotXMLGenerator(robot_cfg=cfg.robot)

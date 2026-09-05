@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 import contextlib
+import os
 
 import numpy as np
 import quadrants as qd
@@ -42,6 +43,32 @@ class BaseMPMSolver(Solver):
         self._lower_bound = np.array(options.lower_bound)
         self._enable_CPIC = options.enable_CPIC
         self._constraints_initialized = False
+        # Gate for the custom particle-level hard non-penetration contact below. It projects
+        # particle POSITIONS out of rigid geometry after g2p; that motion never enters C, so F
+        # cannot see it. Prime suspect for the det-F-vs-packing gap.
+        #   AGF_PARTICLE_CONTACT=0 <cmd>
+        # The custom particle-contact pass does TWO independent jobs. Gate them separately
+        # so a contact-method comparison can drop the mechanical projection without also
+        # dropping die<->billet heat transfer (which would confound every thermal-sensitive
+        # quantity). The master flag keeps the previous single-switch behaviour.
+        _pc_master = os.environ.get("AGF_PARTICLE_CONTACT", "1")
+        self._pc_mech = bool(int(os.environ.get("AGF_PARTICLE_CONTACT_MECH", _pc_master)))
+        self._pc_thermal = bool(int(os.environ.get("AGF_PARTICLE_CONTACT_THERMAL", _pc_master)))
+        self._enable_particle_contact = self._pc_mech or self._pc_thermal
+        # Two ways to make the hard projection visible to the affine/deformation state.
+        # See this patch's docstring; both are off by default and both are heuristics
+        # aimed at the det-F-vs-packing gap from opposite directions.
+        #   AGF_PC_C_PROJECT=1 AGF_PC_F_FEEDBACK=1 AGF_PC_C_DAMP=0.5 <cmd>
+        self._pc_c_project = bool(int(os.environ.get("AGF_PC_C_PROJECT", "0")))
+        self._pc_f_feedback = bool(int(os.environ.get("AGF_PC_F_FEEDBACK", "0")))
+        self._pc_f_fb_scale = float(os.environ.get("AGF_PC_F_FEEDBACK_SCALE", "1.0"))
+        self._pc_c_damp = float(os.environ.get("AGF_PC_C_DAMP", "1.0"))
+        self._pc_c_damp_on = self._pc_c_damp != 1.0
+        # Runtime-switchable contact (see LegacyCoupler). When set, this kernel's gates read the
+        # coupler's runtime fields instead of specializing on the flags above, so an arm sweep can
+        # change contact configuration without rebuilding the scene. The coupler cross-checks that
+        # it agrees about this and raises if not.
+        self._pc_switchable = bool(int(os.environ.get("AGF_CONTACT_RUNTIME_SWITCH", "0")))
 
         # Thermal config
         self._enable_thermal = options.enable_thermal
@@ -682,6 +709,10 @@ class BaseMPMSolver(Solver):
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
         rigid_global_info: array_class.RigidGlobalInfo,
+        # --- CONTACT-MODE PORT: needed by the in-g2p contact modes (particle / fluidlab) ---
+        geoms_state: array_class.GeomsState,
+        sdf_info: array_class.SDFInfo,
+        collider_static_config: qd.template(),
     ):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
@@ -691,6 +722,74 @@ class BaseMPMSolver(Solver):
                 w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0) ** 2, 0.5 * (fx - 0.5) ** 2]
                 new_vel = qd.Vector.zero(gs.qd_float, 3)
                 new_C = qd.Matrix.zero(gs.qd_float, 3, 3)
+
+                # ---------------- CONTACT-MODE PORT: particle-mode detection ----------------
+                # Evaluate the rigid SDF at the CONTINUOUS particle position and keep the
+                # most-influential geom. Unlike grid-mode contact this has no grid-crossing
+                # aliasing, which matters here because the die contact tip spans only ~2.4 cells.
+                # Which in-g2p contact path is active. Each ternary is selected at trace time
+                # by `qd.static(... _runtime_switchable)`: a normal build keeps the original
+                # `qd.static` flags and dead-code-eliminates the unused paths, while a switchable
+                # build reads the active mode from runtime fields so it can be changed live.
+                do_ing2p_vel = (
+                    (self._coupler._rt_contact_mode[None] == self._coupler.CM_PARTICLE)
+                    if qd.static(self._coupler._runtime_switchable)
+                    else qd.static(self._coupler._contact_ing2p_vel)
+                )
+                do_fluidlab = (
+                    (self._coupler._rt_contact_mode[None] == self._coupler.CM_FLUIDLAB)
+                    if qd.static(self._coupler._runtime_switchable)
+                    else qd.static(self._coupler._contact_ing2p_fluidlab)
+                )
+                do_per_node = (
+                    (self._coupler._rt_per_node[None] != 0)
+                    if qd.static(self._coupler._runtime_switchable)
+                    else qd.static(self._coupler._contact_per_node)
+                )
+                do_c_injection = (
+                    (self._coupler._rt_c_injection[None] != 0)
+                    if qd.static(self._coupler._runtime_switchable)
+                    else qd.static(self._coupler._contact_c_injection)
+                )
+
+                rigid_contact = False
+                rigid_geom_idx = -1
+                rigid_influence = gs.qd_float(0.0)
+                rigid_signed_dist = gs.qd_float(0.0)
+                rigid_normal = qd.Vector.zero(gs.qd_float, 3)
+                if do_ing2p_vel or do_c_injection or do_per_node:
+                    pos_p = self.particles[f, i_p, i_b].pos
+                    for i_g in range(self.sim.rigid_solver.n_geoms):
+                        if geoms_info.needs_coup[i_g]:
+                            signed_dist = sdf.sdf_func_world(
+                                geoms_state=geoms_state,
+                                geoms_info=geoms_info,
+                                sdf_info=sdf_info,
+                                pos_world=pos_p,
+                                geom_idx=i_g,
+                                batch_idx=i_b,
+                            )
+                            influence = qd.min(
+                                qd.exp(-signed_dist / max(1e-10, geoms_info.coup_softness[i_g])), 1
+                            )
+                            if influence > 0.1 and influence > rigid_influence:
+                                rigid_influence = influence
+                                rigid_geom_idx = i_g
+                                rigid_signed_dist = signed_dist
+                    if rigid_geom_idx != -1:
+                        rigid_normal = sdf.sdf_func_normal_world(
+                            geoms_state=geoms_state,
+                            geoms_info=geoms_info,
+                            rigid_global_info=rigid_global_info,
+                            collider_static_config=collider_static_config,
+                            sdf_info=sdf_info,
+                            pos_world=pos_p,
+                            geom_idx=rigid_geom_idx,
+                            batch_idx=i_b,
+                        )
+                        rigid_contact = True
+                # -------------------------- end CONTACT-MODE PORT ---------------------------
+
                 for offset in qd.static(qd.grouped(self.stencil_range())):
                     dpos = offset.cast(gs.qd_float) - fx
                     grid_vel = self.grid[f, base - self._grid_offset + offset, i_b].vel_out
@@ -714,9 +813,113 @@ class BaseMPMSolver(Solver):
                                 rigid_global_info=rigid_global_info,
                             )
 
+                    # ------------- CONTACT-MODE PORT: correction feeding new_C -------------
+                    # Applied to grid_vel BEFORE it accumulates into new_vel and new_C, so the
+                    # contact correction reaches the affine field and hence F. This is the
+                    # property the fluidlab mode deliberately lacks.
+                    if do_per_node:
+                        # Sample the SDF at THIS stencil node, so the correction varies across the
+                        # stencil and preserves the normal-velocity (compression) gradient that a
+                        # single broadcast normal flattens.
+                        if rigid_contact:
+                            cell_pos = (base + offset).cast(gs.qd_float) * self._dx
+                            node_sd = sdf.sdf_func_world(
+                                geoms_state=geoms_state,
+                                geoms_info=geoms_info,
+                                sdf_info=sdf_info,
+                                pos_world=cell_pos,
+                                geom_idx=rigid_geom_idx,
+                                batch_idx=i_b,
+                            )
+                            node_inf = qd.min(
+                                qd.exp(-node_sd / max(1e-10, geoms_info.coup_softness[rigid_geom_idx])), 1
+                            )
+                            if node_inf > 0.1:
+                                node_normal = sdf.sdf_func_normal_world(
+                                    geoms_state=geoms_state,
+                                    geoms_info=geoms_info,
+                                    rigid_global_info=rigid_global_info,
+                                    collider_static_config=collider_static_config,
+                                    sdf_info=sdf_info,
+                                    pos_world=cell_pos,
+                                    geom_idx=rigid_geom_idx,
+                                    batch_idx=i_b,
+                                )
+                                grid_vel = self.sim.coupler._func_collide_in_rigid_geom(
+                                    cell_pos,
+                                    grid_vel,
+                                    self.particles_info[i_p].mass * weight / self._particle_volume_scale,
+                                    node_normal,
+                                    node_inf,
+                                    rigid_geom_idx,
+                                    i_b,
+                                    geoms_info=geoms_info,
+                                    links_state=links_state,
+                                    rigid_global_info=rigid_global_info,
+                                )
+                    elif do_ing2p_vel:
+                        if rigid_contact:
+                            # Mass weighted by the interpolation weight so the summed two-way
+                            # reaction on the rigid body is single-counted, matching the CPIC and
+                            # grid conventions.
+                            grid_vel = self.sim.coupler._func_collide_in_rigid_geom(
+                                self.particles[f, i_p, i_b].pos,
+                                grid_vel,
+                                self.particles_info[i_p].mass * weight / self._particle_volume_scale,
+                                rigid_normal,
+                                rigid_influence,
+                                rigid_geom_idx,
+                                i_b,
+                                geoms_info=geoms_info,
+                                links_state=links_state,
+                                rigid_global_info=rigid_global_info,
+                            )
+                    # ------------------------ end CONTACT-MODE PORT ------------------------
+
                     new_vel += weight * grid_vel
                     new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
                     self.g2p_transfer_extra_fields(f, i_p, i_b, weight, base - self._grid_offset + offset)
+
+                # ---------------- CONTACT-MODE PORT: c_injection / fluidlab ----------------
+                # c_injection writes the contact compression rate (v_rel . n)/d directly into the
+                # normal-normal component of C, forcing F to register the compression that a
+                # single broadcast normal would otherwise flatten. This is the most direct
+                # available attack on det-F blindness to contact compaction.
+                if do_c_injection:
+                    if rigid_contact:
+                        v_rigid = self.sim.coupler.rigid_solver._func_vel_at_point(
+                            pos_world=self.particles[f, i_p, i_b].pos,
+                            link_idx=geoms_info.link_idx[rigid_geom_idx],
+                            i_b=i_b,
+                            links_state=links_state,
+                        )
+                        rvel_n = (new_vel - v_rigid).dot(rigid_normal)
+                        if rvel_n < 0.0:  # only inject while approaching
+                            d_eff = qd.max(rigid_signed_dist, 0.5 * self._dx)
+                            c_nn_target = rvel_n / d_eff
+                            c_nn_current = rigid_normal.dot(new_C @ rigid_normal)
+                            new_C += (c_nn_target - c_nn_current) * rigid_normal.outer_product(rigid_normal)
+
+                # FluidLab-style one-way contact: resolved at the predicted position AFTER new_C
+                # is formed, so it intentionally does not feed the affine field, and it applies no
+                # reaction force to the rigid body.
+                if do_fluidlab:
+                    for i_g in range(self.sim.rigid_solver.n_geoms):
+                        if geoms_info.needs_coup[i_g]:
+                            pred_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
+                            new_vel = self.sim.coupler._func_fluidlab_collide(
+                                pred_pos,
+                                new_vel,
+                                i_g,
+                                i_b,
+                                geoms_state=geoms_state,
+                                geoms_info=geoms_info,
+                                links_state=links_state,
+                                rigid_global_info=rigid_global_info,
+                                sdf_info=sdf_info,
+                                collider_static_config=collider_static_config,
+                            )
+                # -------------------------- end CONTACT-MODE PORT --------------------------
 
                 # compute actual new_pos with new_vel
                 new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
@@ -760,6 +963,19 @@ class BaseMPMSolver(Solver):
                 self.reset_grid_and_grad(f)
             with profiler.time("mpm_compute_F_tmp") if True else contextlib.suppress():
                 self.compute_F_tmp(f)
+            # Contact compression enters the TRIAL F_tmp here, between compute_F_tmp and the
+            # SVD/stress step, so the constitutive model processes it and p2g carries the
+            # resulting stress to the grid in this same substep.
+            if self.sim.coupler._contact_ftmp_proj:
+                with profiler.time("mpm_ftmp_contact") if True else contextlib.suppress():
+                    self.sim.coupler.mpm_ftmp_contact_projection(
+                        f,
+                        self.sim.coupler.rigid_solver.geoms_state,
+                        self.sim.coupler.rigid_solver.geoms_info,
+                        self.sim.coupler.rigid_solver._rigid_global_info,
+                        self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
+                        self.sim.coupler.rigid_solver.collider._collider_static_config,
+                    )
             with profiler.time("mpm_svd") if True else contextlib.suppress():
                 self.svd(f)
             with profiler.time("mpm_p2g") if True else contextlib.suppress():
@@ -784,6 +1000,17 @@ class BaseMPMSolver(Solver):
             self.sim.coupler.rigid_solver.collider._collider_static_config,
         )
         self.svd_grad(f)
+        # Reverse of substep_pre_coupling: the F_tmp projection runs after compute_F_tmp in
+        # the forward pass, so its adjoint runs before compute_F_tmp.grad here.
+        if self.sim.coupler._contact_ftmp_proj:
+            self.sim.coupler.mpm_ftmp_contact_projection.grad(
+                f,
+                self.sim.coupler.rigid_solver.geoms_state,
+                self.sim.coupler.rigid_solver.geoms_info,
+                self.sim.coupler.rigid_solver._rigid_global_info,
+                self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
+                self.sim.coupler.rigid_solver.collider._collider_static_config,
+            )
         self.compute_F_tmp.grad(f)
 
     def substep_post_coupling(self, f):
@@ -795,14 +1022,20 @@ class BaseMPMSolver(Solver):
                     self.sim.coupler.rigid_solver.geoms_info,
                     self.sim.coupler.rigid_solver.links_state,
                     self.sim.coupler.rigid_solver._rigid_global_info,
+                    self.sim.coupler.rigid_solver.geoms_state,
+                    self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
+                    self.sim.coupler.rigid_solver.collider._collider_static_config,
                 )
+
 
             # Apply particle constraints after g2p
             if self._constraints_initialized:
                 with profiler.time("mpm_apply_constraints") if True else contextlib.suppress():
                     self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
-            if qd.static(self.sim.coupler.rigid_solver.is_active):
+            if qd.static(self.sim.coupler.rigid_solver.is_active) and (
+                self._enable_particle_contact or self._pc_switchable
+            ):
                 with profiler.time("mpm_particle_contact") if True else contextlib.suppress():
                     self.apply_particle_contact(
                         f,
@@ -812,6 +1045,17 @@ class BaseMPMSolver(Solver):
                         self.sim.coupler.rigid_solver._rigid_global_info,
                         self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
                         self.sim.coupler.rigid_solver.collider._collider_static_config,
+                    )
+
+                # Measure the penetration this substep's contact resolution left behind. Launched
+                # after every contact operation, and independently of which one ran, so the number
+                # means the same thing for every arm being compared.
+                if self.sim.coupler._pen_probe:
+                    self.sim.coupler.mpm_penetration_probe(
+                        f,
+                        self.sim.coupler.rigid_solver.geoms_state,
+                        self.sim.coupler.rigid_solver.geoms_info,
+                        self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
                     )
 
             # FIXME: Use existing errno mechanism for this.
@@ -832,6 +1076,9 @@ class BaseMPMSolver(Solver):
             self.sim.coupler.rigid_solver.geoms_info,
             self.sim.coupler.rigid_solver.links_state,
             self.sim.coupler.rigid_solver._rigid_global_info,
+            self.sim.coupler.rigid_solver.geoms_state,
+            self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
+            self.sim.coupler.rigid_solver.collider._collider_static_config,
         )
 
     @qd.func
@@ -1894,7 +2141,7 @@ class BaseMPMSolver(Solver):
                 vel = self.particles[f + 1, i_p, i_b].vel
                 
                 temp_old = qd.cast(0.0, gs.qd_float)
-                if qd.static(self._enable_thermal):
+                if qd.static(self._enable_thermal and self._pc_thermal):
                     temp_old = self.particles[f + 1, i_p, i_b].temp
                 
                 # Check distance against all rigid geometries
@@ -1911,8 +2158,32 @@ class BaseMPMSolver(Solver):
                         
                         margin = self._particle_size * 0.5
                         
+                        # Teleport gates, selected at trace time exactly as in g2p above: the
+                        # original `qd.static` flags in a normal build, runtime field reads when
+                        # the switchable path is active.
+                        do_pc_mech = (
+                            (self.sim.coupler._rt_pc_mech[None] != 0)
+                            if qd.static(self.sim.coupler._runtime_switchable)
+                            else qd.static(self.sim.coupler._rigid_mpm and self._pc_mech)
+                        )
+                        do_pc_c_project = (
+                            (self.sim.coupler._rt_pc_c_project[None] != 0)
+                            if qd.static(self.sim.coupler._runtime_switchable)
+                            else qd.static(self._pc_c_project)
+                        )
+                        do_pc_f_feedback = (
+                            (self.sim.coupler._rt_pc_f_feedback[None] != 0)
+                            if qd.static(self.sim.coupler._runtime_switchable)
+                            else qd.static(self._pc_f_feedback)
+                        )
+                        pc_c_damp = (
+                            self.sim.coupler._rt_pc_c_damp[None]
+                            if qd.static(self.sim.coupler._runtime_switchable)
+                            else qd.static(self._pc_c_damp)
+                        )
+
                         # 1. MECHANICAL COLLISION
-                        if qd.static(self.sim.coupler._rigid_mpm):
+                        if do_pc_mech:
                             if signed_dist < margin:
                                 normal_rigid = sdf.sdf_func_normal_world(
                                     geoms_state=geoms_state,
@@ -1955,9 +2226,36 @@ class BaseMPMSolver(Solver):
                                     
                                     vel = vel_rigid + rvel_tan + rvel_normal
                                     self.particles[f + 1, i_p, i_b].vel = vel
+
+                                # ---- H3: project the affine field onto the contact plane ----
+                                if do_pc_c_project:
+                                    P_tan = qd.Matrix.identity(gs.qd_float, 3) - \
+                                        normal_rigid.outer_product(normal_rigid)
+                                    self.particles[f + 1, i_p, i_b].C = (
+                                        P_tan @ self.particles[f + 1, i_p, i_b].C @ P_tan
+                                    )
+
+                                # ---- shared: damp C for contacting particles (PIC-ward) ----
+                                if pc_c_damp != 1.0:
+                                    self.particles[f + 1, i_p, i_b].C = (
+                                        self.particles[f + 1, i_p, i_b].C * pc_c_damp
+                                    )
+
+                                # ---- H4: write the projection's compression into F ----
+                                if do_pc_f_feedback:
+                                    # d_push > 0 is how far this particle was moved out along n.
+                                    d_push = margin - signed_dist
+                                    eps = self._pc_f_fb_scale * d_push * self._inv_dx
+                                    # Clamp: a deep penetrator must not be able to drive
+                                    # det(F) <= 0 in a single substep.
+                                    eps = qd.min(qd.max(eps, 0.0), 0.5)
+                                    self.particles[f + 1, i_p, i_b].F = (
+                                        qd.Matrix.identity(gs.qd_float, 3)
+                                        - eps * normal_rigid.outer_product(normal_rigid)
+                                    ) @ self.particles[f + 1, i_p, i_b].F
                         
                         # 2. THERMAL CONTACT
-                        if qd.static(self._enable_thermal):
+                        if qd.static(self._enable_thermal and self._pc_thermal):
                             if signed_dist <= margin: # Physical contact Trigger
                                 T_ambient = 293.15
                                 # Interface effusivity approximation (flash boundary heating)
@@ -1983,7 +2281,7 @@ class BaseMPMSolver(Solver):
                                 temp_old = temp_old - dT_val
                                 self.particles[f + 1, i_p, i_b].dT_contact -= dT_val
                                 
-                if qd.static(self._enable_thermal):
+                if qd.static(self._enable_thermal and self._pc_thermal):
                     self.particles[f + 1, i_p, i_b].temp = temp_old
 
     # ------------------------------------------------------------------------------------

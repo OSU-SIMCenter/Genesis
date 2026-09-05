@@ -56,13 +56,17 @@ class AgForgeRecorder:
             "qpos": [],
             "force_torque": [],
             "dof_cmd": [],
+            # Wall-clock stamps (monotonic seconds) for real-time replay pacing.
+            "wall_mono": [],
         }
         self.strike_boundaries = [] # For undo logic
+        self._episode_wall_t0 = None
         
     def start_new_episode(self, target_id):
         self._init_buffer()
         self.current_target_id = target_id
         self.is_recording = True
+        self._episode_wall_t0 = None
         print(f"[Recorder] Started new episode: ID {self.global_episode_id} (Target: {target_id})")
 
     def mark_strike_start(self):
@@ -90,6 +94,7 @@ class AgForgeRecorder:
         self.buffer["qpos"] = self.buffer["qpos"][:f_idx]
         self.buffer["force_torque"] = self.buffer["force_torque"][:f_idx]
         self.buffer["dof_cmd"] = self.buffer["dof_cmd"][:f_idx]
+        self.buffer["wall_mono"] = self.buffer["wall_mono"][:f_idx]
         
         self.buffer["particles_offsets"] = self.buffer["particles_offsets"][:o_idx + 1]
         self.buffer["particles_pos"] = self.buffer["particles_pos"][:f_idx]
@@ -143,8 +148,23 @@ class AgForgeRecorder:
         if cmd_arr.ndim == 2: cmd_arr = cmd_arr[0]
         self.buffer["dof_cmd"].append(cmd_arr.astype(np.float32))
 
-    def flush_episode(self, success_flag=True, language_instruction="Strike the hot steel billet."):
-        """Flushes the buffered episode into the current HDF5 shard and updates Parquet."""
+        # Wall clock relative to first recorded frame (excludes pre-record setup).
+        now = time.monotonic()
+        if self._episode_wall_t0 is None:
+            self._episode_wall_t0 = now
+        self.buffer["wall_mono"].append(float(now - self._episode_wall_t0))
+
+    def flush_episode(
+        self,
+        success_flag=True,
+        language_instruction="Strike the hot steel billet.",
+        extra_attrs=None,
+    ):
+        """Flushes the buffered episode into the current HDF5 shard and updates Parquet.
+
+        `extra_attrs`: optional dict of scalar attrs written onto the episode
+        group (e.g. stock_diameter_m) so replay can rebuild a matching scene.
+        """
         if not self.is_recording or len(self.buffer["qpos"]) == 0:
             print("[Recorder] Buffer empty or not recording, skipping flush.")
             return
@@ -167,6 +187,10 @@ class AgForgeRecorder:
         qpos_arr = np.array(self.buffer["qpos"], dtype=np.float32)
         force_arr = np.array(self.buffer["force_torque"], dtype=np.float32)
         cmd_arr = np.array(self.buffer["dof_cmd"], dtype=np.float32)
+        wall_arr = np.array(self.buffer["wall_mono"], dtype=np.float64)
+        if wall_arr.shape[0] != num_timesteps:
+            # Should not happen; keep shapes consistent for replay.
+            wall_arr = np.resize(wall_arr, num_timesteps)
         
         # 2. Sharding Logic
         self.current_shard_id = self.global_episode_id // self.shard_capacity
@@ -187,6 +211,13 @@ class AgForgeRecorder:
                 ep_grp.attrs["is_terminal"] = True
                 ep_grp.attrs["is_first"] = True
                 ep_grp.attrs["success_flag"] = success_flag
+                ep_grp.attrs["has_wall_timestamps"] = True
+                if wall_arr.size:
+                    ep_grp.attrs["wall_duration_s"] = float(wall_arr[-1] - wall_arr[0])
+                if extra_attrs:
+                    for key, value in extra_attrs.items():
+                        if value is not None:
+                            ep_grp.attrs[key] = value
                 
                 # --- OBSERVATIONS ---
                 obs_grp = ep_grp.create_group("observations")
@@ -206,6 +237,7 @@ class AgForgeRecorder:
                 scene_grp = state_grp.create_group("scene")
                 scene_grp.create_dataset("qpos", data=qpos_arr)
                 scene_grp.create_dataset("force_torque", data=force_arr)
+                scene_grp.create_dataset("wall_time_s", data=wall_arr)
                 
                 # --- ACTIONS ---
                 act_grp = ep_grp.create_group("actions")

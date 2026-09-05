@@ -5,6 +5,19 @@ import threading
 from traceback import TracebackException
 from typing import TYPE_CHECKING
 
+# Must run before OpenGL/pyrender import (driver selection is sticky).
+if (
+    sys.platform.startswith("linux")
+    and os.environ.get("WSL_DISTRO_NAME")
+    and os.path.exists("/dev/dxg")
+):
+    if not os.environ.get("GALLIUM_DRIVER") and not os.environ.get(
+        "MESA_LOADER_DRIVER_OVERRIDE"
+    ):
+        os.environ["GALLIUM_DRIVER"] = "d3d12"
+    os.environ.setdefault("MESA_D3D12_DEFAULT_ADAPTER_NAME", "NVIDIA")
+    os.environ.setdefault("PYOPENGL_PLATFORM", "glx")
+
 import numpy as np
 import OpenGL.error
 import OpenGL.platform
@@ -24,14 +37,21 @@ if TYPE_CHECKING:
 
 
 def apply_wslg_graphics_defaults() -> None:
-    """Prefer Mesa D3D12 over llvmpipe for WSLg (no /dev/dri, but /dev/dxg is present)."""
+    """Prefer Mesa D3D12 over llvmpipe for WSLg (no /dev/dri, but /dev/dxg is present).
+
+    This module also applies the same defaults at import time (before OpenGL).
+    Safe to call again; uses setdefault.
+    """
     if sys.platform != "linux" or not os.environ.get("WSL_DISTRO_NAME"):
         return
     if not os.path.exists("/dev/dxg"):
         return
-    if os.environ.get("GALLIUM_DRIVER") or os.environ.get("MESA_LOADER_DRIVER_OVERRIDE"):
-        return
-    os.environ["GALLIUM_DRIVER"] = "d3d12"
+    if not os.environ.get("GALLIUM_DRIVER") and not os.environ.get(
+        "MESA_LOADER_DRIVER_OVERRIDE"
+    ):
+        os.environ["GALLIUM_DRIVER"] = "d3d12"
+    os.environ.setdefault("MESA_D3D12_DEFAULT_ADAPTER_NAME", "NVIDIA")
+    os.environ.setdefault("PYOPENGL_PLATFORM", "glx")
 
 
 class ViewerLock:
