@@ -250,9 +250,14 @@ def main():
                 "psize_mm": float(_ent.particle_size) * 1000.0,
                 "n_particles": int(_ent.n_particles),
                 "billet_mesh": os.environ.get("AGF_BILLET_MESH") or None,
-                "cells_per_diameter": os.environ.get("AGF_CELLS_PER_DIAMETER", "7"),
+                # These fall back to LITERALS, so they re-guess the configuration rather than
+                # observing it: with no AGF_ var set they record whatever is written here, not
+                # what the sim used. Keep them equal to the defaults in options.py or run_meta
+                # will confidently describe a run that did not happen. (This is why the batches
+                # of 2026-08-20 needed a hand-written RUN_PROVENANCE.txt alongside run_meta.)
+                "cells_per_diameter": os.environ.get("AGF_CELLS_PER_DIAMETER", "10"),
                 "ppc_divisor": os.environ.get("AGF_PPC_DIVISOR", "2.0"),
-                "approach_cfl_ratio": os.environ.get("AGF_APPROACH_CFL_RATIO", "0.35"),
+                "approach_cfl_ratio": os.environ.get("AGF_APPROACH_CFL_RATIO", "0.05"),
                 "max_particle_velocity": os.environ.get("AGF_MAX_PARTICLE_VELOCITY", "100.0"),
             }
             with open(os.path.join(OUT, "run_meta.json"), "w", encoding="utf-8") as fh:
