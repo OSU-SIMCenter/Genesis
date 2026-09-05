@@ -22,9 +22,9 @@ import numpy as np
 OUT = os.path.expanduser("~/GitHub/Genesis/forge_common/main/outputs")
 
 BANKED = {
-    "N1": "velo_mx_g1_grid_prod_r1.db",
-    "N2": "velo_mx_g1_grid_prod_r2.db",
-    "N3": "velo_mx_g1_grid_prod_r3.db",
+    "N1": "velo_mx_grid_position_correction_r1.db",
+    "N2": "velo_mx_grid_position_correction_r2.db",
+    "N3": "velo_mx_grid_position_correction_r3.db",
 }
 NEW = {
     "S": "velo_rt_static.db",

@@ -18,9 +18,9 @@ REAL = os.path.join(OUT, "real_meshes")
 DEST = os.path.join(BATCH, "review.html")
 
 ARMS = [
-    ("g1_grid_prod", "grid + teleport (production)", "#e8833a"),
-    ("g0_grid_alone", "grid alone (no teleport)", "#3aa7e8"),
-    ("p1_particle", "particle mode", "#7ac74f"),
+    ("grid", "grid (baseline)", "#3aa7e8"),
+    ("grid_position_correction", "grid + position correction", "#e8833a"),
+    ("grid_fluidlab", "grid + FluidLab correction", "#7ac74f"),
 ]
 REAL_COLOR = "#3f6fb0"
 MAXHIT = 17

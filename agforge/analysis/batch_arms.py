@@ -37,34 +37,17 @@ OUT = os.path.expanduser("~/GitHub/Genesis/forge_common/main/outputs/batch")
 # apply_particle_contact teleport -- the axis the headline grid-vs-grid+teleport result turns on,
 # and the reason the port had to be extended past what interactive-bench makes switchable.
 ARMS = [
-    # The 2x2 that produced the headline result. Re-run here so the batched numbers are
-    # directly comparable to the 18 banked 17-hit runs at the same config.
-    dict(tag="g1_grid_prod", mode="grid", mech=1),
-    dict(tag="g0_grid_alone", mode="grid", mech=0),
-    dict(tag="t1_teleport_only", mode="none", mech=1),
-    dict(tag="ctl_none", mode="none", mech=0),
-    # Hybrids: grid supplies the force balance, each refinement supplies contact compression to F
-    # by a different route.
-    dict(tag="h1_grid_cinj", mode="grid", mech=1, c_injection=1),
-    dict(tag="h2_grid_pernode", mode="grid", mech=1, per_node=1),
-    dict(tag="h5_grid_ftmp", mode="grid", mech=1, ftmp=1),
-    dict(tag="h5b_gridonly_ftmp", mode="grid", mech=0, ftmp=1),
-    dict(tag="h3_grid_cproj", mode="grid", mech=1, c_project=1),
-    # Standalone particle family, teleport off so each is genuinely itself.
-    dict(tag="p1_particle", mode="particle", mech=0),
-    dict(tag="p2_fluidlab", mode="fluidlab", mech=0),
-    dict(tag="p3_pg2p_pos", mode="postg2p_position", mech=0),
-    dict(tag="p4_pg2p_vel", mode="postg2p_velocity", mech=0),
-    dict(tag="p5_penalty", mode="penalty", mech=0),
-    # Particle modes WITH a grid-contact floor. Until grid_floor existed these were not
-    # expressible: contact modes are one mutually-exclusive scalar, so selecting any particle
-    # mode switched grid contact off entirely and left nothing preventing deep penetration.
-    # f1 is the configuration FluidLab's own repo shipped as its hybrid.
-    dict(tag="f1_fluidlab_hyb", mode="fluidlab", mech=0, grid_floor=1),
-    dict(tag="f2_particle_hyb", mode="particle", mech=0, grid_floor=1),
-    dict(tag="f3_pg2pvel_hyb", mode="postg2p_velocity", mech=0, grid_floor=1),
-    dict(tag="f4_penalty_hyb", mode="penalty", mech=0, grid_floor=1),
-    dict(tag="f5_pg2ppos_hyb", mode="postg2p_position", mech=0, grid_floor=1),
+    # Grid contact is the baseline and every other method composes with it: the grid projection
+    # supplies the non-penetration floor, the named correction supplies what the grid step cannot
+    # see. Selecting a non-grid mode does not disable grid contact (see legacy_coupler's implicit
+    # floor), so no configuration here resolves contact particle-side alone.
+    dict(tag="grid",                     mode="grid",     mech=0),
+    dict(tag="grid_position_correction", mode="grid",     mech=1),
+    dict(tag="grid_fluidlab",            mode="fluidlab", mech=0, grid_floor=1),
+    dict(tag="grid_particle_sdf",        mode="particle", mech=0, grid_floor=1),
+    dict(tag="grid_penalty",             mode="penalty",  mech=0, grid_floor=1),
+    # Control: no coupler-level contact at all.
+    dict(tag="no_contact",               mode="none",     mech=0),
 ]
 
 

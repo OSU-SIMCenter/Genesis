@@ -13,8 +13,9 @@ from agforge.env_knobs import env_float
 
 # Feed-rate throttle knee. Above this force imbalance the PRESSING speed is scaled by
 # threshold/|dF| and a jaw can be clamped to zero velocity (see the PRESSING branch).
-# Measured 2026-08-14 across all 19 contact arms: it fires on 31% of pressing frames and ranges
-# 8% (p5_penalty) to 50% (h5b_gridonly_ftmp), commanding one die to a dead stop in 16% of frames.
+# Measured 2026-08-14 across the contact methods then under study: it fires on 31% of pressing
+# frames, ranging 8% to 50% depending on the method, and commands one die to a dead stop in
+# 16% of frames.
 # So it is an arm-dependent kinematic effect, not a neutral safety net, and raising max_force does
 # NOT remove it. Set very high to disable it for a controlled comparison.
 #   AGF_FORCE_IMBALANCE_THRESHOLD=1e12 <cmd>

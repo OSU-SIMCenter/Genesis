@@ -110,10 +110,10 @@ def main():
     print()
     if rows:
         best = max(rows, key=lambda r: r[1][iou_key])
-        floor = next((r for r in rows if r[0] == "ctl_none"), None)
+        floor = next((r for r in rows if r[0] == "no_contact"), None)
         print("best as-is IoU: %s (%.4f)" % (best[0], best[1][iou_key]))
         if floor is not None:
-            print("no-contact FLOOR (ctl_none, an essentially undeformed bar): %.4f"
+            print("no-contact FLOOR (no_contact, an essentially undeformed bar): %.4f"
                   % floor[1][iou_key])
             print("  => read every arm against that floor, not against 0. An arm barely above it")
             print("     has captured almost none of the available improvement.")

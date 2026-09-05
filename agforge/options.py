@@ -519,9 +519,10 @@ class StrikeOptions(Options):
     max_force_imbalance: float = 20000.0 # 20 kN% compression
     # AGF_MAX_FORCE raises/disables the press control stop (strike_controller.py:663 ends
     # PRESSING when force_L or force_R exceeds this). Default is unchanged at 200 kN.
-    # Measured 2026-08-13: this stop FIRES on 7 of 17 hits for g1_grid_prod and 14 of 17
-    # for p3_pg2p_pos, and trip-count correlates -0.994 with elongation shortfall across
-    # arms -- so arms may be partly ranked by how often they trip it. Set high to test.
+    # Measured 2026-08-13 at the former 200 kN default: this stop fired on 7 of 17 hits for
+    # the grid baseline and on up to 14 of 17 for other methods, and trip-count correlates
+    # -0.994 with elongation shortfall -- so methods were partly ranked by how often they
+    # tripped it.
     # Runaway backstop, NOT a physical press limit. Sim peak force is a numerical artifact, so
     # this cannot be set from the real machine (110.2 kN). Set from the banked corpus instead:
     # across 2,336 recorded peak-force samples the maximum was 787.3 kN, so 2.5e6 N sits ~3.2x

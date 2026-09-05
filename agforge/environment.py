@@ -306,7 +306,9 @@ class AgilityForgeEnv:
         # Rigid-MPM contact method. Previously unreachable: no coupler_options were passed, so
         # the scene silently used the default LegacyCouplerOptions(). Defaults below reproduce
         # that exactly.
-        #   AGF_CONTACT_MODE=grid|particle|fluidlab|postg2p_velocity|postg2p_position|penalty
+        #   AGF_CONTACT_MODE=grid|particle|fluidlab|penalty|none
+        #   Non-grid modes compose WITH grid contact -- grid is the baseline and supplies
+        #   the non-penetration floor; the selected mode is a correction on top of it.
         #   AGF_CONTACT_PER_NODE=1        (particle mode only)
         #   AGF_CONTACT_C_INJECTION=1     (particle mode only)
         #   AGF_PENALTY_K=5e7             (penalty mode only, N/m)

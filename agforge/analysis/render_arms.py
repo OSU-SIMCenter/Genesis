@@ -76,14 +76,12 @@ def psize(n):
     return float((np.pi * SIM_STOCK_R_MM ** 2 * SIM_STOCK_L_MM / n) ** (1.0 / 3.0))
 
 PRETTY = {
-    "g1_grid_prod": "grid + teleport (production)",
-    "g0_grid_alone": "grid alone (no teleport)",
-    "h2_grid_pernode": "grid + per-node",
-    "h5_grid_ftmp": "grid + ftmp projection",
-    "h1_grid_cinj": "grid + C-injection",
-    "h3_grid_cproj": "grid + C-projection",
-    "ctl_none": "NO CONTACT (control)",
-    "p1_particle": "particle mode",
+    "grid": "grid (baseline)",
+    "grid_position_correction": "grid + position correction",
+    "grid_fluidlab": "grid + FluidLab correction",
+    "grid_particle_sdf": "grid + particle SDF correction",
+    "grid_penalty": "grid + penalty correction",
+    "no_contact": "NO CONTACT (control)",
 }
 COLORS = ["#e8833a", "#3aa7e8", "#7ac74f", "#c77adc", "#dcc84f"]
 REAL_COLOR = "#3f6fb0"
@@ -134,7 +132,7 @@ def _font(size):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--batch", default="batch17fix")
-    ap.add_argument("--arms", default="g1_grid_prod,g0_grid_alone,h2_grid_pernode")
+    ap.add_argument("--arms", default="grid,grid_position_correction,grid_fluidlab")
     ap.add_argument("--max-hit", type=int, default=17)
     ap.add_argument("--out", default="contact_methods")
     ap.add_argument("--fps", type=int, default=2)

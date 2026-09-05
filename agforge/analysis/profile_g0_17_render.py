@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profile g0_grid_alone 17-hit WITH Genesis viewer + MPM grid nodes visible.
+"""Profile grid 17-hit WITH Genesis viewer + MPM grid nodes visible.
 
 Same timing/RAM/GPU instrumentation as profile_g0_17.py, but:
   - show_viewer=True (Genesis rendering)
@@ -220,7 +220,7 @@ def main() -> int:
 
     report: dict = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
-        "arm": "g0_grid_alone",
+        "arm": "grid",
         "mode": "genesis_viewer_mpm_grid",
         "n_hits_requested": n_hits,
         "out_dir": out_dir,
@@ -248,7 +248,7 @@ def main() -> int:
 
     from agforge.analysis.batch_arms import ARMS, configure  # noqa: E402
 
-    arm = next(a for a in ARMS if a["tag"] == "g0_grid_alone")
+    arm = next(a for a in ARMS if a["tag"] == "grid")
 
     from forge_common.real_data import load_real_hits_for_sim  # noqa: E402
     from forge_common.real_scale import (  # noqa: E402
@@ -323,11 +323,11 @@ def main() -> int:
     coupler = state.env.scene.sim.coupler
     cfg = configure(coupler, arm)
     report["config"] = cfg
-    mark("configure_g0_grid_alone")
+    mark("configure_grid")
     report["mem_after_setup"] = memory_snapshot("after_configure")
 
     ctrl = state.controller
-    ctrl._diag_out = os.path.join(out_dir, "g0_grid_alone.diag.jsonl")
+    ctrl._diag_out = os.path.join(out_dir, "grid.diag.jsonl")
     ctrl._diag_strike_idx = 0
     ctrl._diag_acc = None
     if os.path.exists(ctrl._diag_out):
@@ -406,13 +406,13 @@ def main() -> int:
     mark("hits_done")
 
     if per_hit_clouds:
-        np.savez_compressed(os.path.join(out_dir, "g0_grid_alone_hits.npz"), **per_hit_clouds)
+        np.savez_compressed(os.path.join(out_dir, "grid_hits.npz"), **per_hit_clouds)
 
     P = adapter.to_mesh(state).vertices
     finite = bool(P is not None and len(P) and np.all(np.isfinite(P)))
     if P is not None and len(P) and finite:
         np.savez_compressed(
-            os.path.join(out_dir, "g0_grid_alone_verts.npz"), verts=P.astype(np.float32)
+            os.path.join(out_dir, "grid_verts.npz"), verts=P.astype(np.float32)
         )
 
     report["mem_after"] = memory_snapshot("finished")
@@ -435,7 +435,7 @@ def main() -> int:
     hit_walls = [r["wall_s"] for r in per_hit_times if not r.get("failed")]
     steady = hit_walls[1:] if len(hit_walls) > 1 else []
     setup_through = next(
-        (p["cumul_s"] for p in phases if p["phase"] == "configure_g0_grid_alone"), 0.0
+        (p["cumul_s"] for p in phases if p["phase"] == "configure_grid"), 0.0
     )
     hits_wall = t_hits_end - t_hits_start
     total_wall = time.perf_counter() - T0

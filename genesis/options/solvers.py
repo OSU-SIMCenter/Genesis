@@ -116,8 +116,6 @@ class LegacyCouplerOptions(BaseCouplerOptions):
     #   "grid"              velocity projection on grid nodes inside mpm_grid_op   (partially)
     #   "particle"          continuous SDF at the particle, inside g2p             (yes)
     #   "fluidlab"          one-way velocity fix after new_C is formed             (no)
-    #   "postg2p_velocity"  velocity fix on advected particles                     (no)
-    #   "postg2p_position"  as above + hard projection out to a particle_size/2 margin (no)
     #   "penalty"           spring force into grid momentum before the grid op     (yes)
     rigid_mpm_contact_mode: str = "grid"
     # Refinements, "particle" mode only. per_node samples the SDF at each stencil node so the

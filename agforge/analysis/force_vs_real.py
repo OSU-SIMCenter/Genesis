@@ -56,9 +56,9 @@ def spearman(a, b):
 
 def main():
     real = torch.load(PT, map_location="cpu", weights_only=False)["F"].numpy()
-    arms = [("g1_grid+teleport", ["velo_mx_g1_grid_prod_r%d" % i for i in (1, 2, 3)]),
-            ("g0_grid_alone", ["velo_mx_g0_grid_only_r%d" % i for i in (1, 2, 3)]),
-            ("h1_grid+cinj", ["velo_mx_h1_grid_cinj_r%d" % i for i in (1, 2, 3)])]
+    arms = [("grid", ["velo_mx_grid_r%d" % i for i in (1, 2, 3)]),
+            ("grid + position correction",
+             ["velo_mx_grid_position_correction_r%d" % i for i in (1, 2, 3)])]
 
     print("=" * 86)
     print("SIM FORCE vs REAL MACHINE F  (real F is in arbitrary units -- shape, not magnitude)")
@@ -86,7 +86,7 @@ def main():
             name, len(common), pear, spearman(f, r), f.mean(),
             "%.2f+-%.2f" % (scale.mean(), scale.std())))
 
-    name = "g0_grid_alone" if "g0_grid_alone" in series else next(iter(series))
+    name = "grid" if "grid" in series else next(iter(series))
     common, f, r = series[name]
     print()
     print("per-hit detail (%s):" % name)

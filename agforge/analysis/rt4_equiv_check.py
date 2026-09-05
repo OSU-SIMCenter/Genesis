@@ -9,7 +9,7 @@ against the run-to-run noise floor of identical code and config.
     W = post-port, switchable build  (AGF_CONTACT_RUNTIME_SWITCH=1)
     P = post-port, switchable + penetration probe
 
-    N1, N2 = two banked g1_grid_prod runs -- identical config, so |N1-N2| IS the noise floor
+    N1, N2 = two banked grid+position-correction runs -- identical config, so |N1-N2| IS the noise floor
 
 Three claims under test, each of which was asserted in a code comment before being measured:
     1. the port left the static path alone      -> |S-N| ~ |N1-N2|
@@ -46,10 +46,10 @@ def stats(P, Q):
 
 
 PAIRS = [
-    ("S vs N1   (port vs banked)", "velo_rt_static.db", "velo_mx_g1_grid_prod_r1.db"),
+    ("S vs N1   (port vs banked)", "velo_rt_static.db", "velo_mx_grid_position_correction_r1.db"),
     ("S vs W    (static vs switchable)", "velo_rt_static.db", "velo_rt_switch.db"),
     ("W vs P    (probe inert?)", "velo_rt_switch.db", "velo_rt_probe.db"),
-    ("NOISE FLOOR N1 vs N2", "velo_mx_g1_grid_prod_r1.db", "velo_mx_g1_grid_prod_r2.db"),
+    ("NOISE FLOOR N1 vs N2", "velo_mx_grid_position_correction_r1.db", "velo_mx_grid_position_correction_r2.db"),
 ]
 
 

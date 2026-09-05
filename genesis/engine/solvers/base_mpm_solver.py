@@ -816,7 +816,7 @@ class BaseMPMSolver(Solver):
                     # ------------- CONTACT-MODE PORT: correction feeding new_C -------------
                     # Applied to grid_vel BEFORE it accumulates into new_vel and new_C, so the
                     # contact correction reaches the affine field and hence F. This is the
-                    # property the postg2p_* and fluidlab modes deliberately lack.
+                    # property the fluidlab mode deliberately lacks.
                     if do_per_node:
                         # Sample the SDF at THIS stencil node, so the correction varies across the
                         # stencil and preserves the normal-velocity (compression) gradient that a
@@ -1027,18 +1027,6 @@ class BaseMPMSolver(Solver):
                     self.sim.coupler.rigid_solver.collider._collider_static_config,
                 )
 
-            # CONTACT-MODE PORT: post-g2p modes act on the advected particles (frame f+1).
-            if qd.static(self.sim.coupler.rigid_solver.is_active):
-                if self.sim.coupler._contact_postg2p:
-                    self.sim.coupler.mpm_postg2p_contact(
-                        f,
-                        self.sim.coupler.rigid_solver.geoms_state,
-                        self.sim.coupler.rigid_solver.geoms_info,
-                        self.sim.coupler.rigid_solver.links_state,
-                        self.sim.coupler.rigid_solver._rigid_global_info,
-                        self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
-                        self.sim.coupler.rigid_solver.collider._collider_static_config,
-                    )
 
             # Apply particle constraints after g2p
             if self._constraints_initialized:
