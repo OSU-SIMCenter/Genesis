@@ -226,7 +226,7 @@ class RobotOptions(Options):
         # contact tip is ~13.5 mm, so at 7 cells/diameter (dx = 5.71 mm on a 40 mm bar)
         # the contact patch spans only ~2.4 cells. Overridable for resolution sweeps:
         #   AGF_CELLS_PER_DIAMETER=10 <cmd>
-        _cpd = env_float("AGF_CELLS_PER_DIAMETER", 7)
+        _cpd = env_float("AGF_CELLS_PER_DIAMETER", 10)
         self.base_grid_density = int(_cpd / self.cylinder_diameter)
         dx = 1.0 / self.base_grid_density
         mpm_solver_padding = 3 * dx
@@ -243,7 +243,7 @@ class RobotOptions(Options):
         # for the full real replay. 1.3 leaves ~47 mm of headroom against the 34.4 mm needed
         # (minimum that fits is 1.083). Costs x grid cells only: 28 -> ~33.
         #   AGF_MPM_X_PAD_LOWER=1.3 <cmd>
-        mpm_x_padding_lower = self.cylinder_height * env_float("AGF_MPM_X_PAD_LOWER", 0.85)
+        mpm_x_padding_lower = self.cylinder_height * env_float("AGF_MPM_X_PAD_LOWER", 1.3)
         mpm_x_padding_upper = self.cylinder_height * 0.52
         mpm_yz_padding = self.cylinder_radius * 1.6
         mpm_lower_offset = np.array([mpm_x_padding_lower, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
@@ -353,7 +353,7 @@ class AgilityForgeOptions(Options):
         # unlike base_grid_density, which moves grid, dt and particle count together.
         # (`substeps` below scales macro_dt / control-loop rate, NOT the integration step.)
         #   AGF_CFL_SAFETY=0.45 <cmd>
-        cfl_safety = env_float("AGF_CFL_SAFETY", 0.90)  # NB: 0.90 = 10% margin,
+        cfl_safety = env_float("AGF_CFL_SAFETY", 0.45)  # NB: 0.45 is the measured value,
                                                   # the original '5% safety margin' comment was wrong
         substeps = 8                              # Fixed substep count for real-time teleop
         substep_dt = dt_cfl * cfl_safety          # Safe substep timestep
@@ -423,7 +423,7 @@ class AgilityForgeOptions(Options):
             # 'particle' contact mode uses -- which is why the coupler forbids both at once.
             # Toggle to isolate that pathway's effect on volume conservation:
             #   AGF_ENABLE_CPIC=0 <cmd>
-            enable_CPIC=env_bool("AGF_ENABLE_CPIC", True),
+            enable_CPIC=env_bool("AGF_ENABLE_CPIC", False),
             enable_thermal=True,
             # AGF_BILLET_TEMP_K. NOTE this is a MECHANICAL setting, not only a thermal one:
             # the flow stress is temperature-coupled through the Johnson-Cook melting term in
@@ -512,8 +512,8 @@ class StrikeOptions(Options):
     # = 57,735 N at the shipped values (verified 100.00% over 5,302 pressing frames).
     # LOWERING this is the preferred lever for anything a third party runs, because it KEEPS
     # the speed-modulation guard; RAISING AGF_FORCE_IMBALANCE_THRESHOLD removes that guard
-    # entirely and is a diagnostic lever only. Default unchanged at 1.5e-4.
-    force_balance_gain: float = env_float("AGF_FORCE_BALANCE_GAIN", 1.5e-4)
+    # entirely and is a diagnostic lever only, so the THRESHOLD default is left at 20 kN.
+    force_balance_gain: float = env_float("AGF_FORCE_BALANCE_GAIN", 1.5e-5)
     
     # Safety Limits
     max_force_imbalance: float = 20000.0 # 20 kN% compression
@@ -522,12 +522,19 @@ class StrikeOptions(Options):
     # Measured 2026-08-13: this stop FIRES on 7 of 17 hits for g1_grid_prod and 14 of 17
     # for p3_pg2p_pos, and trip-count correlates -0.994 with elongation shortfall across
     # arms -- so arms may be partly ranked by how often they trip it. Set high to test.
-    max_force: float = env_float("AGF_MAX_FORCE", 200000.0) # 20 tons (200kN)
+    # Runaway backstop, NOT a physical press limit. Sim peak force is a numerical artifact, so
+    # this cannot be set from the real machine (110.2 kN). Set from the banked corpus instead:
+    # across 2,336 recorded peak-force samples the maximum was 787.3 kN, so 2.5e6 N sits ~3.2x
+    # above anything ever observed. Every banked hit stopped on Target Strain with zero Max
+    # Force events, so any ceiling above the observed peak reproduces them identically -- this
+    # keeps that property while still halting a divergent run. The former 200 kN default was
+    # exceeded by 55.6% of those samples and truncated the majority of hits.
+    max_force: float = env_float("AGF_MAX_FORCE", 2.5e6) # 2500 kN backstop
     # AGF_PRESSING_TIMEOUT. This is WALL-CLOCK, not sim time, so it binds harder as the press
     # is slowed or the grid refined. It already fired once at 25 m/s, and it becomes the BINDING
     # stop as soon as AGF_MAX_FORCE removes the force stop -- swapping one arm-biased truncation
-    # for another. Raise it whenever max_force is raised. Default unchanged at 30 s.
-    pressing_timeout: float = env_float("AGF_PRESSING_TIMEOUT", 30.0) # seconds
+    # for another. Raised with max_force: 30 s could not complete a 17-hit replay at cpd 10.
+    pressing_timeout: float = env_float("AGF_PRESSING_TIMEOUT", 3600.0) # seconds; binds once the force stop is off
     approaching_timeout: float = 30.0 # seconds (Increased to avoid timeout)
     release_timeout: float = 10.0 # seconds
     hold_steps: int = 15 # Number of steps to hold position after reaching target before releasing
@@ -661,7 +668,7 @@ class TeleopOptions(AgilityForgeOptions):
         #   AGF_APPROACH_CFL_RATIO=0.05 <cmd>
         # 0.35 * (dx/dt) = ~243 m/s per jaw, against a 100 m/s max_particle_velocity abort.
         # Derived for GRID stability; per-particle contact samplers see the raw jaw velocity.
-        target_cfl_ratio = env_float("AGF_APPROACH_CFL_RATIO", 0.35)
+        target_cfl_ratio = env_float("AGF_APPROACH_CFL_RATIO", 0.05)
         dx = 1.0 / self.robot.base_grid_density
         dt = self.sim.dt
         
