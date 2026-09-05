@@ -9,6 +9,8 @@ import numpy as np
 import genesis as gs
 import contextlib
 
+from agforge.env_knobs import env_float
+
 # Feed-rate throttle knee. Above this force imbalance the PRESSING speed is scaled by
 # threshold/|dF| and a jaw can be clamped to zero velocity (see the PRESSING branch).
 # Measured 2026-08-14 across all 19 contact arms: it fires on 31% of pressing frames and ranges
@@ -21,7 +23,6 @@ _AGF_IMBALANCE_THRESHOLD = env_float("AGF_FORCE_IMBALANCE_THRESHOLD", 20000.0)
 from agforge.reconstruction import SurfaceReconstructor
 from agforge.physics_mesh import InductionPhysicsMesher
 from agforge.recorder import AgForgeRecorder
-from agforge.env_knobs import env_float
 
 class StrikeState(enum.Enum):
     IDLE = 0
