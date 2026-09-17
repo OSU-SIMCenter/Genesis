@@ -13,6 +13,9 @@ kept in sync by hand -- the same shape as `rho` already being carried twice
 consumer reads which). So "316L" overrides nothing and the invariant holds by
 construction rather than by transcription.
 
+The JC flow-curve triple (jc_A/jc_B/jc_n) must always land together; see the
+note beside them.
+
 Deliberately NOT here: `billet_length_m` and `target_cfl_ratio`. Those are stock
 geometry and solver time-step policy, not material properties. Putting them in a
 preset would mean selecting a material silently changes the simulation domain and
@@ -39,7 +42,18 @@ MATERIAL_PRESETS: dict[str, dict] = {
         "nu": 0.33,
         "rho": 2700.0,
         "von_mises_yield_stress": 137.9e6,
+        # use_johnson_cook defaults True, so environment.py takes the JohnsonCookPlasticity
+        # branch and von_mises_yield_stress above is NOT read -- it is here for the
+        # ElastoPlastic branch and to document the card. The live flow curve is
+        #     sigma_y = jc_A + jc_B * eps_p**jc_n
+        # so the JC triple is what actually sets strength, and all three must land together.
+        # Setting only jc_n left jc_A/jc_B at 316L's 1000 C values, which made this card
+        # 27.3% too soft at eps=0 and 10.5% too soft at eps=0.30 -- aluminium geometry with
+        # hot-steel flow constants. Values below are the roll1 T52 overlay's.
+        "jc_A": 137.9e6,        # T52 typical YS; shipped default is 100.3e6 (316L @ 1000 C)
+        "jc_B": 173.6e6,        # fitted to T52 typical UTS at eps=0.08; shipped is 195.0e6
         "jc_n": 0.45,
+        "jc_C": 0.0,            # dead code in materials.py; carried so it is right if wired up
         "jc_T_ref": 293.15,     # RT card: reference IS room temperature
         "jc_T_melt": 933.15,
         "jc_m": 1.0,
