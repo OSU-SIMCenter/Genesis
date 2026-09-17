@@ -46,18 +46,24 @@ class BaseMPMSolver(Solver):
         # Gate for the custom particle-level hard non-penetration contact below. It projects
         # particle POSITIONS out of rigid geometry after g2p; that motion never enters C, so F
         # cannot see it. Prime suspect for the det-F-vs-packing gap.
-        #   AGF_PARTICLE_CONTACT=0 <cmd>
-        # Default is "1": an unconfigured grid-mode scene is tag grid_position_correction,
-        # not tag grid. batch_arms selects mech per arm after init_stock; this default is
-        # the teleop / single-scene path. Flipping it to "0" (grid as default, teleport an
-        # explicit arm) is a behaviour change and is not done here.
+        # DEFAULT CHANGED 2026-09-16: the mechanical projection is OFF unless asked for, so an
+        # unconfigured grid-mode scene is tag grid, not tag grid_position_correction. Decision by
+        # Thomas for the academic / main default -- "grid contact only no fancy hybrid/particle
+        # methods". Scope is the DEFAULT ONLY: the projection is unchanged and still available.
+        #   AGF_PARTICLE_CONTACT_MECH=1 <cmd>   mechanical projection (teleport) back on
+        #   AGF_PARTICLE_CONTACT=0 <cmd>        both jobs off, as before
+        # batch_arms sets mech per arm after init_stock, so the six-arm harness is unaffected by
+        # this; it moves the teleop / single-scene path only.
         # The custom particle-contact pass does TWO independent jobs. Gate them separately
         # so a contact-method comparison can drop the mechanical projection without also
         # dropping die<->billet heat transfer (which would confound every thermal-sensitive
-        # quantity). The master flag keeps the previous single-switch behaviour.
-        _pc_master = os.environ.get("AGF_PARTICLE_CONTACT", "1")
-        self._pc_mech = bool(int(os.environ.get("AGF_PARTICLE_CONTACT_MECH", _pc_master)))
-        self._pc_thermal = bool(int(os.environ.get("AGF_PARTICLE_CONTACT_THERMAL", _pc_master)))
+        # quantity). An explicitly set master still drives BOTH jobs, so AGF_PARTICLE_CONTACT
+        # keeps its single-switch behaviour; only the unset default now differs per job.
+        _pc_master = os.environ.get("AGF_PARTICLE_CONTACT")
+        _pc_mech_default = _pc_master if _pc_master is not None else "0"
+        _pc_thermal_default = _pc_master if _pc_master is not None else "1"
+        self._pc_mech = bool(int(os.environ.get("AGF_PARTICLE_CONTACT_MECH", _pc_mech_default)))
+        self._pc_thermal = bool(int(os.environ.get("AGF_PARTICLE_CONTACT_THERMAL", _pc_thermal_default)))
         self._enable_particle_contact = self._pc_mech or self._pc_thermal
         # Two ways to make the hard projection visible to the affine/deformation state.
         # See this patch's docstring; both are off by default and both are heuristics

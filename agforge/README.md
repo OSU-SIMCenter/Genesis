@@ -57,10 +57,12 @@ Two tags share mode `grid`. They are different arms. There is **no alias** that 
 onto a short mode; `AGF_CONTACT_MODE=grid_penalty` is an error (use `penalty`).
 
 Teleport (`apply_particle_contact` mechanical projection) is in that academic set as
-`grid_position_correction`. The solver still defaults `AGF_PARTICLE_CONTACT` to `"1"`, so a
-scene built with mode `grid` and no other contact knobs is `grid_position_correction`, not
-`grid`. Select tag `grid` with `python -m agforge.analysis.batch_arms --arms grid` (or
-`AGF_PARTICLE_CONTACT=0` on a single-scene build).
+`grid_position_correction`. **It is off by default since 2026-09-16**, so a scene built with mode
+`grid` and no other contact knobs is tag `grid`. Ask for the teleport with
+`python -m agforge.analysis.batch_arms --arms grid_position_correction` (or
+`AGF_PARTICLE_CONTACT_MECH=1` on a single-scene build). Die-to-billet heat transfer is the other,
+independent job of the same pass and is NOT affected: it follows `AGF_PARTICLE_CONTACT_THERMAL`,
+which still defaults on. Setting the old master `AGF_PARTICLE_CONTACT` still drives both jobs.
 
 ## Checking the build
 
