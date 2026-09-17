@@ -11,16 +11,6 @@ import contextlib
 
 from agforge.env_knobs import env_float
 
-# Feed-rate throttle knee. Above this force imbalance the PRESSING speed is scaled by
-# threshold/|dF| and a jaw can be clamped to zero velocity (see the PRESSING branch).
-# Measured 2026-08-14 across the contact methods then under study: it fires on 31% of pressing
-# frames, ranging 8% to 50% depending on the method, and commands one die to a dead stop in
-# 16% of frames.
-# So it is an arm-dependent kinematic effect, not a neutral safety net, and raising max_force does
-# NOT remove it. Set very high to disable it for a controlled comparison.
-#   AGF_FORCE_IMBALANCE_THRESHOLD=1e12 <cmd>
-_AGF_IMBALANCE_THRESHOLD = env_float("AGF_FORCE_IMBALANCE_THRESHOLD", 20000.0)
-
 from agforge.reconstruction import SurfaceReconstructor
 from agforge.physics_mesh import InductionPhysicsMesher
 from agforge.recorder import AgForgeRecorder
@@ -713,7 +703,17 @@ class StrikeController:
                     # --- ADVANCED PROTECTION: Feed Rate Modulation ---
                     # If force imbalance exceeds threshold, slow down the main pressing speed
                     # to allow the balance controller to catch up without fighting forward momentum.
-                    SAFETY_THRESHOLD = _AGF_IMBALANCE_THRESHOLD # default 20kN (~10% of max force)
+                    # Feed-rate throttle knee. Read at use, not at import: batch_arms runs many
+                    # arms in one process, so a module-level env_float would be first-arm-wins.
+                    # Measured 2026-08-14 across the contact methods then under study: it fires
+                    # on 31% of pressing frames, ranging 8% to 50% depending on the method, and
+                    # commands one die to a dead stop in 16% of frames. Arm-dependent, not a
+                    # neutral safety net; raising max_force does NOT remove it.
+                    #   AGF_FORCE_IMBALANCE_THRESHOLD=1e12 <cmd>
+                    SAFETY_THRESHOLD = env_float(
+                        "AGF_FORCE_IMBALANCE_THRESHOLD",
+                        float(self.env.cfg.strike.max_force_imbalance),
+                    )
                     adaptive_speed = pressing_speed
                     
                     imbalance_abs = torch.abs(imbalance)

@@ -47,6 +47,10 @@ class BaseMPMSolver(Solver):
         # particle POSITIONS out of rigid geometry after g2p; that motion never enters C, so F
         # cannot see it. Prime suspect for the det-F-vs-packing gap.
         #   AGF_PARTICLE_CONTACT=0 <cmd>
+        # Default is "1": an unconfigured grid-mode scene is tag grid_position_correction,
+        # not tag grid. batch_arms selects mech per arm after init_stock; this default is
+        # the teleop / single-scene path. Flipping it to "0" (grid as default, teleport an
+        # explicit arm) is a behaviour change and is not done here.
         # The custom particle-contact pass does TWO independent jobs. Gate them separately
         # so a contact-method comparison can drop the mechanical projection without also
         # dropping die<->billet heat transfer (which would confound every thermal-sensitive

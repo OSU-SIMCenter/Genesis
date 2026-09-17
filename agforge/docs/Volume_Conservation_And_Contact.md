@@ -15,6 +15,15 @@
 > **[`Contact_Method_Research_And_Plan.md`](./Contact_Method_Research_And_Plan.md)**
 >
 > This document is retained for its mechanism analysis, which remains useful.
+>
+> **2026-09-10 — shipped contact set.** This file still discusses retired genesis-dev
+> modes (`postg2p_velocity`, `postg2p_position`) in the body. Shipped tags:
+> `grid`, `grid_position_correction`, `grid_fluidlab`, `grid_particle_sdf`,
+> `grid_penalty`, `no_contact`. `AGF_CONTACT_MODE` is the short names
+> `grid|particle|fluidlab|penalty|none`. CPIC defaults **off** on current main
+> (`AGF_ENABLE_CPIC=0`). Johnson–Cook thermal softening on the shipped card is
+> inert (T* = 0); the return-mapping remark below is about `F`, not an endorsement
+> of active thermal softening. No contact winner is declared here.
 
 # Volume Conservation and Rigid Contact in the Forging MPM
 
@@ -79,7 +88,10 @@ sub-affine motion, so it lies in the transfer null space.
 This matters beyond bookkeeping: the Johnson–Cook return mapping is driven by `F`. If `F`
 understates compression in the deformation zone, plastic flow is understated there too. The
 bar reaching only ~56% of real elongation (77.4 mm simulated vs 93.07 mm measured) is
-plausibly the same defect observed through a different variable — **untested**.
+plausibly the same defect observed through a different variable — **untested**. The shipped
+316L card's Johnson–Cook *thermal softening* term is inert across the real operating window
+(T* clamps to 0); this remark is about `F` driving the return map, not an active
+thermal-softening law.
 
 ### Where it happens
 
@@ -138,21 +150,22 @@ formed, and that displacement never enters `C` -- so `F` cannot see it. That is 
 "material moves but det F does not know" mechanism, sitting in the production path. It predicts
 the measured 9-10 pp det-F-vs-packing gap directly.
 
-Corollary: `apply_particle_contact` runs in EVERY contact-mode arm, because it is not gated by
-contact mode. Any contact-mode comparison therefore measures what a mode adds ON TOP of this
-projection, not the mode in isolation. The ported `postg2p_position` mode is very nearly a
-duplicate of it (same `psize/2` margin), so that arm double-projects.
+Corollary: `apply_particle_contact` is gated by `AGF_PARTICLE_CONTACT` / per-arm `mech`.
+It is **not** "every contact-mode arm". Tag `grid` runs with mech=0; tag
+`grid_position_correction` runs with mech=1. The retired `postg2p_position` mode is
+not in the shipped set. Historical note only: that mode was very nearly a duplicate
+of this projection (same `psize/2` margin) and would have double-projected.
 
 ## Why the Contact Modes Are Not the Lever
 
-Six switchable rigid-MPM contact modes exist in the `genesis-dev` fork (`grid`, `particle`,
-`fluidlab`, `postg2p_velocity`, `postg2p_position`, `penalty`). They differ in *where the
-boundary velocity constraint is applied*. Three observations argue they cannot be the main
-remedy:
+Six switchable rigid-MPM contact **tags** ship today (`grid`, `grid_position_correction`,
+`grid_fluidlab`, `grid_particle_sdf`, `grid_penalty`, `no_contact`). Coupler **modes** are
+the short names `grid|particle|fluidlab|penalty|none`. The old genesis-dev list that named
+`postg2p_velocity` / `postg2p_position` is **retired**; those modes are not on `main`.
+Three observations argue contact-mode switching cannot be the main remedy:
 
-1. **CPIC is already enabled** (`agforge/options.py`). The canonical fix for material smearing
-   through a thin rigid boundary is active, and the piling persists. This is not material
-   leaking through the die.
+1. **CPIC defaults off** on current main (`AGF_ENABLE_CPIC`, `enable_CPIC=False` in
+   `agforge/options.py`). An earlier draft of this document said it was already enabled.
 2. **The overlap peaks below the surface**, not at the interface.
 3. The literature independently reaches the same conclusion — see below.
 

@@ -307,6 +307,11 @@ class AgilityForgeEnv:
         # the scene silently used the default LegacyCouplerOptions(). Defaults below reproduce
         # that exactly.
         #   AGF_CONTACT_MODE=grid|particle|fluidlab|penalty|none
+        # Those are SHORT MODE names for the coupler, not the batch_arms TAGS
+        # (grid, grid_position_correction, grid_fluidlab, grid_particle_sdf, grid_penalty,
+        # no_contact). Two tags share mode "grid": tag "grid" (teleport off) and tag
+        # "grid_position_correction" (teleport on). AGF_CONTACT_MODE=grid_penalty is invalid;
+        # use AGF_CONTACT_MODE=penalty. There is no alias table mapping tags onto modes.
         #   Non-grid modes compose WITH grid contact -- grid is the baseline and supplies
         #   the non-penetration floor; the selected mode is a correction on top of it.
         #   AGF_CONTACT_PER_NODE=1        (particle mode only)

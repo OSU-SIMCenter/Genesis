@@ -426,10 +426,13 @@ class AgilityForgeOptions(Options):
             enable_CPIC=env_bool("AGF_ENABLE_CPIC", False),
             enable_thermal=True,
             # AGF_BILLET_TEMP_K. NOTE this is a MECHANICAL setting, not only a thermal one:
-            # the flow stress is temperature-coupled through the Johnson-Cook melting term in
-            # materials.py, so with jc_T_ref at its 293.15 default any temperature above ~293 K
-            # softens the material. The real billet is ~960 C at blow 1 (measured), i.e. 1233 K,
-            # against the 293.0 K default this has always run at. Default unchanged.
+            # the flow stress is temperature-coupled through the Johnson-Cook softening term in
+            # materials.py. On the shipped 316L card that coupling is INERT: jc_T_ref is the
+            # card's 1000 C CALIBRATION temperature, 1273.15 K (see the note at :77-88), so
+            # T_star clamps to 0 and softening pins at exactly 1.0000 for every temperature
+            # below it -- including the real billet, ~960 C at blow 1 (measured), i.e. 1233 K.
+            # Raising this knob anywhere in the real operating window therefore does NOT soften
+            # the material; only a value above 1273.15 K would. Default unchanged at 293.0 K.
             default_initial_temperature=env_float("AGF_BILLET_TEMP_K", 293.0),
             thermal_time_scale=thermal_time_scale,
             # Fixed-end (truncated-domain) BC: the held end conducts into the unsimulated
@@ -516,11 +519,17 @@ class StrikeOptions(Options):
     force_balance_gain: float = env_float("AGF_FORCE_BALANCE_GAIN", 1.5e-5)
     
     # Safety Limits
-    max_force_imbalance: float = 20000.0 # 20 kN% compression
-    # AGF_MAX_FORCE raises/disables the press control stop (strike_controller.py:663 ends
-    # PRESSING when force_L or force_R exceeds this). Default is unchanged at 200 kN.
+    # AGF_FORCE_IMBALANCE_THRESHOLD. Feed-rate throttle knee (N). This field used to be a
+    # bare 20000.0 that nothing read; the live threshold lived on a strike_controller
+    # module global captured at import (first-arm-wins in a batch). Wired here as the
+    # config-side default; strike_controller re-reads the env at use.
+    max_force_imbalance: float = env_float("AGF_FORCE_IMBALANCE_THRESHOLD", 20000.0)  # 20 kN
+    # AGF_MAX_FORCE raises/disables the press control stop (strike_controller.py ends
+    # PRESSING when force_L or force_R exceeds this). Default is 2.5e6 N (2500 kN backstop).
+    # The value is unchanged; only the "Default is unchanged at 200 kN" sentence was wrong.
     # Measured 2026-08-13 at the former 200 kN default: this stop fired on 7 of 17 hits for
-    # the grid baseline and on up to 14 of 17 for other methods, and trip-count correlates
+    # grid_position_correction (then g1_grid_prod), NOT for grid (then g0_grid_alone),
+    # and on up to 14 of 17 for other methods, and trip-count correlates
     # -0.994 with elongation shortfall -- so methods were partly ranked by how often they
     # tripped it.
     # Runaway backstop, NOT a physical press limit. Sim peak force is a numerical artifact, so

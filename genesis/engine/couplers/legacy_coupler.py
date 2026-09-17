@@ -86,7 +86,12 @@ class LegacyCoupler(RBC):
         _mode = getattr(self.options, "rigid_mpm_contact_mode", "grid")
         if _mode not in self._CONTACT_MODES:
             gs.raise_exception(
-                f"rigid_mpm_contact_mode={_mode!r} is not one of {self._CONTACT_MODES}."
+                f"rigid_mpm_contact_mode={_mode!r} is not one of {self._CONTACT_MODES}. "
+                "AGF_CONTACT_MODE takes these short names, not batch_arms tags "
+                "(grid, grid_position_correction, grid_fluidlab, grid_particle_sdf, "
+                "grid_penalty, no_contact). Two tags share mode 'grid' and are not the "
+                "same arm: tag 'grid' (teleport off) vs tag 'grid_position_correction' "
+                "(teleport on). Do not pass a tag as a mode."
             )
         self._contact_mode = _mode
 
@@ -1617,7 +1622,12 @@ class LegacyCoupler(RBC):
         """
         self._assert_runtime_switchable()
         if mode not in self._CONTACT_MODE_TO_ID:
-            gs.raise_exception(f"Unknown contact mode {mode!r}. Valid: {list(self._CONTACT_MODE_TO_ID)}.")
+            gs.raise_exception(
+                f"Unknown contact mode {mode!r}. Valid short names: "
+                f"{list(self._CONTACT_MODE_TO_ID)}. These are coupler modes, not batch_arms "
+                "tags. Two tags share mode 'grid' (tag 'grid' vs "
+                "'grid_position_correction'); there is no alias from a long tag onto a mode."
+            )
         mode_id = self._CONTACT_MODE_TO_ID[mode]
         self._rt_contact_mode[None] = mode_id
         self._contact_mode = mode

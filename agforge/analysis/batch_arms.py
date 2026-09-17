@@ -36,6 +36,10 @@ OUT = os.path.expanduser("~/GitHub/Genesis/forge_common/main/outputs/batch")
 # Each arm is (tag, contact mode, teleport mech, refinements). `mech` is the custom
 # apply_particle_contact teleport -- the axis the headline grid-vs-grid+teleport result turns on,
 # and the reason the port had to be extended past what interactive-bench makes switchable.
+# TAGS are not AGF_CONTACT_MODE values. Mode is the short coupler name
+# (grid|particle|fluidlab|penalty|none). Two tags share mode "grid": tag "grid"
+# (mech=0) and tag "grid_position_correction" (mech=1). There is no alias from a
+# long tag onto a mode.
 ARMS = [
     # Grid contact is the baseline and every other method composes with it: the grid projection
     # supplies the non-penetration floor, the named correction supplies what the grid step cannot

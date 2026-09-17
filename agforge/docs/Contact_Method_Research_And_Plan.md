@@ -1,10 +1,31 @@
 # Rigid–MPM Contact Methods: Research, Analysis, and Implementation Plan
 
+> **2026-09-10 — shipped set, not this document's arm table.**
+>
+> The code on `origin/main` ships **six tags**:
+> `grid`, `grid_position_correction`, `grid_fluidlab`, `grid_particle_sdf`,
+> `grid_penalty`, `no_contact`.
+>
+> `AGF_CONTACT_MODE` takes the **short mode names** `grid|particle|fluidlab|penalty|none`.
+> Tags are not modes. Two tags share mode `grid` (`grid` vs `grid_position_correction`);
+> there is no alias that maps a long tag onto a short mode.
+>
+> Names below (`p1_particle`, `g0_grid_alone`, `g1_grid_prod`, `h*`, `t1_*`,
+> `ctl_none`, …) are **retired**. Scoring tables that rank them are historical
+> measurements, not a current winner. Do not treat this document as the shipped
+> contact set. Implementation **did** start; the old "planning complete, not started"
+> status is stale.
+>
+> Johnson–Cook thermal softening is **inert** on the shipped 316L card across the
+> real operating window (`jc_T_ref = 1273.15` K; T* clamps to 0). Do not read this
+> paper as endorsing an active thermal-softening law.
+
 **Workstream A — contact fidelity of the Genesis MPM forging simulation.**
 
-Status: **planning complete, implementation not started.**
-Last updated: 2026-08-07.
-Branch: `agforge/v2/forge-common` @ `cddad882` (1,404 uncommitted insertions across 8 files).
+Status: **historical research log. Shipped contact set is the six tags above.**
+Last updated: 2026-08-07 (banner 2026-09-10).
+Branch at time of writing: `agforge/v2/forge-common` @ `cddad882` (stale; ship tree is
+`origin/main` @ `1423bd87`).
 
 ---
 
@@ -198,6 +219,11 @@ Terms used throughout, and (where applicable) where they are computed.
 
 ### 3.3 Arm naming convention
 
+> **RETIRED NAMES.** The table below is the 2026-08 experiment vocabulary. It is
+> not the shipped set. `g1_grid_prod` survives as today's `grid_position_correction`,
+> **not** as `grid`. Scoring that follows is historical; no contact winner is declared
+> from it.
+
 Arms are identified by a short tag used in every output file and plot.
 
 | tag | mode | teleport (`mech`) | extra flags |
@@ -325,6 +351,10 @@ of frozen at 76.8; the abrupt 1.92× jump at hit 14 becomes 1.32×.
 
 **Lesson worth generalizing:** a defect that affects *every* arm identically is invisible to
 between-arm comparison. Only the absolute trajectory against ground truth exposed it.
+
+> **Historical scoring (retired names).** The tables in §5.2–5.5 rank `g0_grid_alone`,
+> `g1_grid_prod`, `p1_particle`, `h2_*`, `h3_*`, `ctl_none`. Those tags are not on
+> `main`. They are not a shipped ranking and they do not pick a contact winner.
 
 ### 5.2 🚨 The domain fix REVERSED the stability ranking
 
