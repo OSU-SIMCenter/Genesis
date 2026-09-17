@@ -12,6 +12,7 @@ ureg = UnitRegistry()
 import os
 import sys
 from agforge.env_knobs import env_bool, env_float
+from agforge.material_presets import active_material_preset
 
 # Determine path for generated assets relative to the application/script
 if getattr(sys, 'frozen', False):
@@ -90,6 +91,19 @@ class MaterialOptions(Options):
     #: ACTIVE_MATERIAL registry indirection, which is in flux as of 2026-08-14.
     jc_T_melt: float = 1675.0
     jc_m: float = 1.0
+
+    def model_post_init(self, __context: any) -> None:
+        # AGF_MATERIAL selects a mechanical card. Unset == "316L" == the declared
+        # defaults above, which is why the 316L preset is empty: the field defaults
+        # ARE the 316L card, and a second copy of those numbers would be a second
+        # source of truth to keep in sync by hand.
+        # Only fields the caller did NOT set explicitly are overridden, so an
+        # external driver passing E=... is never clobbered by the preset.
+        preset = active_material_preset()
+        for _k, _v in preset.items():
+            if _k in type(self).model_fields and _k not in self.model_fields_set:
+                setattr(self, _k, _v)
+
 
 class EnvOptions(Options):
     """Parameters related to the RL environment and task."""
@@ -424,7 +438,8 @@ class AgilityForgeOptions(Options):
             # Toggle to isolate that pathway's effect on volume conservation:
             #   AGF_ENABLE_CPIC=0 <cmd>
             enable_CPIC=env_bool("AGF_ENABLE_CPIC", False),
-            enable_thermal=True,
+            # AGF_MATERIAL preset: True for 316L (unchanged), False for cold 6063T52.
+            enable_thermal=active_material_preset().get("enable_thermal", True),
             # AGF_BILLET_TEMP_K. NOTE this is a MECHANICAL setting, not only a thermal one:
             # the flow stress is temperature-coupled through the Johnson-Cook softening term in
             # materials.py. On the shipped 316L card that coupling is INERT: jc_T_ref is the
@@ -433,7 +448,9 @@ class AgilityForgeOptions(Options):
             # below it -- including the real billet, ~960 C at blow 1 (measured), i.e. 1233 K.
             # Raising this knob anywhere in the real operating window therefore does NOT soften
             # the material; only a value above 1273.15 K would. Default unchanged at 293.0 K.
-            default_initial_temperature=env_float("AGF_BILLET_TEMP_K", 293.0),
+            default_initial_temperature=env_float(
+                "AGF_BILLET_TEMP_K", active_material_preset().get("billet_temp_k", 293.0)
+            ),
             thermal_time_scale=thermal_time_scale,
             # Fixed-end (truncated-domain) BC: the held end conducts into the unsimulated
             # rod (Robin BC on the cut plane) instead of being exposed to air.
