@@ -23,6 +23,7 @@ Arms are ordered by information yield, so an early stop still leaves the valuabl
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -54,6 +55,23 @@ ARMS = [
     # Control: no coupler-level contact at all.
     dict(tag="no_contact",               mode="none",     mech=0),
 ]
+
+
+def _git_provenance():
+    """Which tree produced this run. Cheap, and it settles questions later that are
+    otherwise unanswerable -- e.g. whether a run predates 1423bd87 (2026-09-05), which is
+    where AGF_MPM_X_PAD_LOWER went 0.85 -> 1.3 and stopped the bar hitting the domain wall
+    from hit ~13. Returns None rather than raising if this is not a git checkout."""
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        def g(*a):
+            return subprocess.check_output(["git", "-C", repo] + list(a),
+                                           stderr=subprocess.DEVNULL, text=True).strip()
+        return {"commit": g("rev-parse", "HEAD"),
+                "branch": g("rev-parse", "--abbrev-ref", "HEAD"),
+                "dirty": bool(g("status", "--porcelain"))}
+    except Exception:
+        return None
 
 
 def configure(coupler, arm):
@@ -265,27 +283,73 @@ def main():
         # this tree assumed a cylinder IC and silently breaks under AGF_BILLET_MESH.
         try:
             _ent = state.env.mpm_entity
+            _psize_mm = float(_ent.particle_size) * 1000.0
+
+            # Read the grid back off the live config instead of re-deriving it. dx is exact;
+            # cells-per-diameter is int()-truncated on the way in, so the nominal env value and
+            # the effective one can differ slightly -- both are recorded rather than one being
+            # passed off as the other.
+            _cfg = getattr(state.env, "cfg", None)
+            _rb = getattr(_cfg, "robot", None)
+            _bgd = int(_rb.base_grid_density) if _rb is not None else None
+            _dx_mm = (1000.0 / _bgd) if _bgd else None
+            _diam_mm = (float(_rb.cylinder_diameter) * 1000.0) if _rb is not None else None
+            _safety = getattr(_cfg, "safety", None)
+
             _meta = {
-                "psize_mm": float(_ent.particle_size) * 1000.0,
+                # ---- observed: read back off the live sim, not re-guessed ----
+                "psize_mm": _psize_mm,
                 "n_particles": int(_ent.n_particles),
                 "billet_mesh": os.environ.get("AGF_BILLET_MESH") or None,
-                # Resolved VALUES, not env-var-with-literal-fallback: both are read once above
-                # and handed straight to init_stock, so recording them here OBSERVES the run
-                # rather than re-guessing it. Without these a lengthened run is indistinguishable
-                # from a 59 mm one in its own metadata -- the exact defect the block below warns
-                # about. hit_z_shift_mm is what keeps the strikes registered to the free end.
+                "base_grid_density": _bgd,
+                "dx_mm": _dx_mm,
+                "cylinder_diameter_mm": _diam_mm,
+                "cells_per_diameter_effective": (
+                    (_bgd * _diam_mm / 1000.0) if (_bgd and _diam_mm) else None),
+                # particle_size = dx / ppc_divisor, so this inverts to the divisor the sim
+                # actually used. forge-observer/render.py reads this key and rebuilds
+                # dx = psize * ppc, which is now exact by construction.
+                "ppc_divisor": (_dx_mm / _psize_mm) if _psize_mm else None,
+                "max_particle_velocity": (
+                    float(_safety.max_particle_velocity) if _safety is not None else None),
+                # Resolved values, read once above and handed straight to init_stock. Without
+                # these a lengthened run is indistinguishable from a 59 mm one in its own
+                # metadata. hit_z_shift_mm keeps the strikes registered to the free end.
                 "stock_length_mm": _stock_l,
                 "stock_radius_mm": _stock_r,
                 "hit_z_shift_mm": _dL,
-                # These fall back to LITERALS, so they re-guess the configuration rather than
-                # observing it: with no AGF_ var set they record whatever is written here, not
-                # what the sim used. Keep them equal to the defaults in options.py or run_meta
-                # will confidently describe a run that did not happen. (This is why the batches
-                # of 2026-08-20 needed a hand-written RUN_PROVENANCE.txt alongside run_meta.)
+
+                # ---- the commanded program ----
+                # THE artifact this file existed without for too long. Three separate analyses
+                # reconstructed the program from outside the run and two got it wrong; one of
+                # those retracted a published cluster over it. z is post-shift, i.e. what was
+                # actually commanded -- subtract hit_z_shift_mm to recover the source value.
+                "n_hits": len(hits),
+                "program_source": (
+                    "forge_common.real_data.load_real_hits_for_sim('genesis', %d)" % args.n_hits),
+                "program": [
+                    {"i": _k, "rho_mm": float(_h.rho), "phi_rad": float(_h.phi),
+                     "z_mm": float(_h.z), "duration_s": float(getattr(_h, "duration", 0.0) or 0.0),
+                     "press_id": getattr(_h, "press_id", None)}
+                    for _k, _h in enumerate(hits, 1)
+                ],
+
+                # ---- which code produced this ----
+                "git": _git_provenance(),
+
+                # ---- NOT observed: still env-var-with-literal fallback ----
+                # With no AGF_ var set these record what is typed here, not what the sim used.
+                # Kept separate so nothing downstream mistakes them for measurements. (This is
+                # why the batches of 2026-08-20 needed a hand-written RUN_PROVENANCE.txt.)
+                "_unobserved": {
+                    "_note": "env-var reads with literal fallbacks; not read back from the sim",
+                    "cells_per_diameter_nominal": os.environ.get("AGF_CELLS_PER_DIAMETER", "10"),
+                    "approach_cfl_ratio": os.environ.get("AGF_APPROACH_CFL_RATIO", "0.05"),
+                },
+                # Kept at the nominal value: forge-observer/render.py does
+                # int(float(cells_per_diameter)) for display, and the effective value is
+                # fractional, so writing it here would silently drop the displayed grid by one.
                 "cells_per_diameter": os.environ.get("AGF_CELLS_PER_DIAMETER", "10"),
-                "ppc_divisor": os.environ.get("AGF_PPC_DIVISOR", "2.0"),
-                "approach_cfl_ratio": os.environ.get("AGF_APPROACH_CFL_RATIO", "0.05"),
-                "max_particle_velocity": os.environ.get("AGF_MAX_PARTICLE_VELOCITY", "100.0"),
             }
             with open(os.path.join(OUT, "run_meta.json"), "w", encoding="utf-8") as fh:
                 json.dump(_meta, fh, indent=2)
