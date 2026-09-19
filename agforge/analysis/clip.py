@@ -42,8 +42,41 @@ The free end needs no exclusion -- it is real material in every run.
 """
 import numpy as np
 
-REAL_STOCK_LENGTH_MM = 59.0   # forge_common.real_scale -- a fact about the world
+# ------------------------------------------------------------------ "how long is the real bar?"
+# Four different numbers were in use for this on 2026-09-19, a 1.1% spread, each hardcoded
+# somewhere different. They are NOT all the same quantity, so pinning one value would itself be
+# wrong; what was missing is a statement of which means what. Import from here, do not re-literal.
+#
+#   59.0     NOMINAL, and the REGISTRATION DATUM. forge_common.real_scale.REAL_STOCK_LENGTH_MM.
+#            batch_arms computes dL = stock_length - 59.0 and shifts every hit z by it, so this
+#            value DEFINES the shift. It must not be "corrected" to the measured extent: doing so
+#            would silently re-register every run ever recorded. Authoritative for dL only.
+#   59.196   MEASURED extent of the scan mesh (billet_hit01_before_d8000.obj, bbox in x).
+#            Authoritative for anything about the real billet's actual geometry -- volume per mm,
+#            what a synthesized extension has to match, whether a rebuilt mesh is the right size.
+#   58.98    the real part's free end in canonical x AT HIT 1. Not a constant, and not a competing
+#            definition: the part elongates under forging, so the same measurement reads 71.01 at
+#            hit 8 and 93.08 at hit 17. Read it per hit from real_meshes/hit_NN.npz.
+#   58.57    ORPHAN. Appeared only as a bare literal in score_arms.py, with no derivation anywhere
+#            in the tree. Removed 2026-09-19. Do not reintroduce.
+REAL_STOCK_LENGTH_MM = 59.0        # nominal; DEFINES the hit-z shift. Read the note before changing.
+SCAN_STOCK_LENGTH_MM = 59.196      # measured bbox extent of the scan mesh
+REAL_STOCK_RADIUS_MM = 20.0        # forge_common.real_scale; note this is the BOUNDING BOX radius,
+                                   # ~10.9% more material than the scan actually holds
+
 CLAMP_ARTIFACT_DX = 1.2       # measured band width, in dx. See BACKLOG "clamp boundary artifact".
+
+# THE CLAMP IS PROPORTIONAL, NOT ABSOLUTE (options.py: fixed_region_size = 0.35*cylinder_height),
+# so lengthening the bar lengthens the CLAMP as well as the clearance. The 2026-09-19 length
+# result changed both at once:
+#           clamp length   inner edge   nearest strike   clearance
+#     L=59     20.65 mm      10.33 mm      23.43 mm       13.1 mm
+#     L=92     32.20 mm      16.10 mm      56.43 mm       40.3 mm
+# Clearance x3.1 and clamp x1.56 in one step, so "length is what fixes the clamp" attributes to
+# clearance an effect that clamp length is an uncontrolled co-variate in. Raised by
+# free-cloud-compute-branch-5, verified here at options.py:288. Separating them is one run:
+# L=92 with AGF_CLAMP_FRACTION set so the clamp holds the same ABSOLUTE 20.65 mm as L=59.
+CLAMP_FRACTION_OF_LENGTH = 0.35
 
 
 def to_free_end_mm(x_mm, stock_length_mm):

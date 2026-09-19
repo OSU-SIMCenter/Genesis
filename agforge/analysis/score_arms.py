@@ -43,8 +43,13 @@ from scipy.spatial import cKDTree
 OUT = os.path.expanduser("~/GitHub/Genesis/forge_common/main/outputs")
 RNG = np.random.default_rng(0)
 
-# Real stock the replay is initialised from (forge_common.real_scale).
-REAL_R_MM, REAL_L_MM = 20.0, 58.57
+# Real stock the replay is initialised from. These come from clip.py, which documents why four
+# different values for "how long is the real bar" were in circulation and which of them means
+# what. The 58.57 that used to sit here was an orphan literal with no derivation in the tree.
+from agforge.analysis import clip
+
+REAL_R_MM = clip.REAL_STOCK_RADIUS_MM
+REAL_L_MM = clip.REAL_STOCK_LENGTH_MM
 
 # Arms whose contact mechanism applies NO reaction force to the die. Verified by resolving
 # the call graph to _func_apply_coupling_force, not by grepping bodies for a string.
@@ -120,11 +125,31 @@ def eta(P, r):
     return union_balls(P, r) / (len(P) * ((4.0 / 3.0) * np.pi * r ** 3))
 
 
-def psize_from_N(n):
-    """psize = (V_bar / N)^(1/3): particles sit on a cubic lattice of spacing psize, so each
-    occupies psize^3. Derived rather than hardcoded so a resolution change cannot silently
-    invalidate the ball radius."""
-    return float((np.pi * REAL_R_MM ** 2 * REAL_L_MM / n) ** (1.0 / 3.0))
+_PSIZE_WARNED = [False]
+
+
+def psize_from_N(n, stock_length_mm=None):
+    """psize = (V_bar / N)^(1/3) -- a FALLBACK, and a biased one. Prefer the recorded value.
+
+    Two ways this reads wrong, and they compound:
+
+      * it assumes the NOMINAL cylinder volume. Seed from a mesh (AGF_BILLET_MESH) and N drops
+        ~10% while the nominal volume does not, so psize reads high -- measured 2.0696 mm
+        against a true 2.0000 mm, +3.48%.
+      * it assumed a 59 mm bar. At L=92 the volume term is short by 1.56x, so psize reads ~16%
+        small -- and eta divides by the BALL volume, which goes as r^3, so the denominator is
+        out by ~40% and eta is pushed toward 1. That understates interpenetration in exactly
+        the longer-bar runs the length comparison depends on.
+
+    batch_arms records the true value, read straight off the entity, as `psize_mm` in the
+    batch's run_meta.json. Pass --psize-mm (or AGF_PSIZE_MM) for any run that has one."""
+    L = float(stock_length_mm) if stock_length_mm else REAL_L_MM
+    if not _PSIZE_WARNED[0]:
+        print("WARNING: psize derived from a nominal %.1f x %.1f mm cylinder, not measured. It "
+              "reads ~3.5%% high for a mesh-seeded run and is length-sensitive. Pass --psize-mm "
+              "(run_meta.json records it) to score honestly." % (2 * REAL_R_MM, L))
+        _PSIZE_WARNED[0] = True
+    return float((np.pi * REAL_R_MM ** 2 * L / n) ** (1.0 / 3.0))
 
 
 def spans(P):
@@ -158,7 +183,16 @@ def main():
                     help="baseline hit for the eta drop (default 1)")
     ap.add_argument("--arms", nargs="+", required=True,
                     help="name=tag1,tag2,... (repeats of one arm)")
+    ap.add_argument("--psize-mm", type=float, default=None,
+                    help="TRUE particle spacing, from the batch's run_meta.json. Without it psize "
+                         "is derived from a nominal cylinder and reads ~3.5%% high on a "
+                         "mesh-seeded run, and worse on a lengthened one.")
+    ap.add_argument("--stock-length-mm", type=float, default=None,
+                    help="billet length, if not the real stock. Only used for the psize fallback; "
+                         "--psize-mm supersedes it.")
     a = ap.parse_args()
+    if a.psize_mm:
+        os.environ["AGF_PSIZE_MM"] = "%.6f" % a.psize_mm
 
     parsed = []
     for spec in a.arms:
@@ -182,7 +216,8 @@ def main():
             P0, PH = load_cloud(t, a.ref_hit), load_cloud(t, a.hit)
             if PH is None:
                 continue
-            r = psize_from_N(len(PH)) / 2.0
+            r = (float(os.environ["AGF_PSIZE_MM"]) if os.environ.get("AGF_PSIZE_MM")
+                 else psize_from_N(len(PH), a.stock_length_mm)) / 2.0
             if P0 is not None:
                 e_ref.append(eta(P0, r))
             e_hit.append(eta(PH, r))
