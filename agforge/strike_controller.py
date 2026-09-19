@@ -1416,6 +1416,36 @@ class StrikeController:
                     "detF_p50": float(np.percentile(d, 50)),
                     "detF_p99": float(np.percentile(d, 99)),
                 })
+                # AGF_DETF_DUMP=1 also writes the RAW per-particle det(F) beside the diag,
+                # with each particle's position at the same instant.
+                #
+                # Why this exists: percentiles cannot say WHERE the volume went. Two
+                # independent kNN-density proxies, run on matched IC and matched arm, put the
+                # peak volumetric error in different places and disagreed by ~4x at the clamp
+                # edge (2026-09-19). Calibrating one of them against these same percentiles
+                # showed the median is faithful but the UPPER tail over-reads by ~1.65x -- a
+                # neighbour-spacing proxy cannot separate real volume change from particle
+                # rearrangement. det(F) is the solver's own quantity and settles it.
+                #
+                # Positions are raw sim coordinates for this array; the *_hits.npz clouds are
+                # in pinned-face coordinates instead. Do not mix the two frames -- that has
+                # produced a reversed profile once already.
+                # Cost: ~8k-20k float32 pairs per strike, only when asked for.
+                if os.environ.get("AGF_DETF_DUMP") == "1" and getattr(self, "_diag_out", None):
+                    try:
+                        _pos = self.env.mpm_entity.get_particles_pos()
+                        try:
+                            _pos = _pos.detach().cpu().numpy()
+                        except AttributeError:
+                            pass
+                        _pos = np.asarray(_pos, dtype=np.float32).reshape(-1, 3)
+                        _stem = self._diag_out[:-len(".diag.jsonl")] \
+                            if self._diag_out.endswith(".diag.jsonl") else self._diag_out
+                        np.savez_compressed(
+                            "%s_detF_h%02d.npz" % (_stem, int(self._diag_strike_idx)),
+                            detF=d.astype(np.float32), pos=_pos)
+                    except Exception as _exc:  # diagnostics must never take the run down
+                        print(f"[diag] detF dump failed: {_exc}")
         try:
             with open(self._diag_out, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row) + "\n")
