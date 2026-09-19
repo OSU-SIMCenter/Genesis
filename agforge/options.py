@@ -266,7 +266,19 @@ class RobotOptions(Options):
         # (minimum that fits is 1.083). Costs x grid cells only: 28 -> ~33.
         #   AGF_MPM_X_PAD_LOWER=1.3 <cmd>
         mpm_x_padding_lower = self.cylinder_height * env_float("AGF_MPM_X_PAD_LOWER", 1.3)
-        mpm_x_padding_upper = self.cylinder_height * 0.52
+        # The grid is a free choice and must never be the thing that caps billet length: if a
+        # longer bar needs more room, the domain grows. The clamp box runs to 0.675*H while the
+        # 0.52 framing grows slower, so the two cross at L ~= 78 mm on a 40 mm bar -- without
+        # this floor that arbitrary constant, not physics or cost, would set the maximum length.
+        # Take whichever is larger: the historical framing, or enough to hold the clamp with half
+        # a cell to spare. At the shipped 59 mm the 0.52 term already clears the clamp by 0.71*dx,
+        # so this is inert by default and only binds once the bar is lengthened.
+        #   AGF_MPM_X_PAD_UPPER=0.6 <cmd>
+        mpm_x_padding_upper = self.cylinder_height * env_float("AGF_MPM_X_PAD_UPPER", 0.52)
+        mpm_x_padding_upper = max(
+            mpm_x_padding_upper,
+            0.675 * self.cylinder_height + 0.5 * dx - mpm_solver_padding,
+        )
         mpm_yz_padding = self.cylinder_radius * 1.6
         mpm_lower_offset = np.array([mpm_x_padding_lower, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
         mpm_upper_offset = np.array([mpm_x_padding_upper, mpm_yz_padding, mpm_yz_padding]) + mpm_solver_padding
