@@ -169,7 +169,16 @@ def main():
     # Unlike AGF_STOCK_RADIUS_MM this does NOT move dx or the timestep: base_grid_density is
     # int(cells_per_diameter / cylinder_diameter), a function of DIAMETER only. It does grow
     # the x domain (padding scales with H), so cell count and runtime rise roughly linearly.
-    _stock_l = float(os.environ.get("AGF_STOCK_LENGTH_MM", REAL_STOCK_LENGTH_MM))
+    # DEFAULT IS 92 mm, NOT the 59 mm real stock length. Measured 2026-09-19 at identical
+    # program and arm: moving the clamp from 0.33 to ~1.0 bar diameters from the forged region
+    # takes detF_p50 in the damaged band from 0.8128 to 0.9188 and cuts spurious cross-section
+    # growth from +11.05% to +4.12%. It saturates by ~1 diameter, so 92 is the value, not more.
+    # REAL_STOCK_LENGTH_MM stays 59 -- that is the real stock, a fact about the world, and the
+    # hit-z shift below is measured against it. This is a SIMULATION setting, and the point of
+    # making it the default is that a good run should not depend on remembering an env var.
+    # AGF_STOCK_LENGTH_MM=59 still reproduces the old geometry exactly.
+    DEFAULT_STOCK_LENGTH_MM = 92.0
+    _stock_l = float(os.environ.get("AGF_STOCK_LENGTH_MM", DEFAULT_STOCK_LENGTH_MM))
     _dL = _stock_l - REAL_STOCK_LENGTH_MM
 
     wanted = [a.strip() for a in args.arms.split(",") if a.strip()]
@@ -183,6 +192,34 @@ def main():
     if args.reps > 1:
         arms = [dict(a, tag="%s_r%d" % (a["tag"], r))
                 for r in range(1, args.reps + 1) for a in arms]
+
+    # --- Initial condition: the real scan, by DEFAULT, or refuse ---
+    # A run on the nominal cylinder is not usable for accuracy work. Correcting the IC alone,
+    # at identical length/program/arm, cut spurious cross-section growth from +11.05% to
+    # +3.17% (2026-09-19, measured). Silently seeding a cylinder because an env var was
+    # forgotten is exactly how a day of compute gets spent on an unusable answer, so this
+    # resolves the scan-derived mesh itself and ABORTS rather than falling back quietly.
+    _MESH_DIR = os.path.expanduser("~/GitHub/Genesis/forge_common/main/outputs/real_meshes")
+    if not os.environ.get("AGF_BILLET_MESH"):
+        if os.environ.get("AGF_ALLOW_CYLINDER_IC") == "1":
+            print("[batch_arms] AGF_ALLOW_CYLINDER_IC=1 -- seeding the NOMINAL CYLINDER. "
+                  "Not comparable with scan-IC runs and not usable for accuracy claims.")
+        else:
+            _want = os.path.join(
+                _MESH_DIR,
+                "billet_hit01_before_d8000.obj" if abs(_stock_l - REAL_STOCK_LENGTH_MM) < 1.0
+                else "billet_hit01_ext%d.obj" % int(round(_stock_l)))
+            if not os.path.isfile(_want):
+                print("ERROR: no scan-derived billet exists for L = %.1f mm.\n"
+                      "  expected: %s\n"
+                      "  Build one by stretching the clamped end of the scan (keeps topology and\n"
+                      "  the real cross-section; the scan itself is only %.1f mm and is NOT\n"
+                      "  watertight, so cut-and-union is not an option here), or pass\n"
+                      "  AGF_ALLOW_CYLINDER_IC=1 to deliberately run the nominal cylinder."
+                      % (_stock_l, _want, REAL_STOCK_LENGTH_MM))
+                return 2
+            os.environ["AGF_BILLET_MESH"] = _want
+            print("[batch_arms] IC defaulted to the scan-derived billet: %s" % _want)
 
     hits = load_real_hits_for_sim("genesis", args.n_hits)
     if _dL:
