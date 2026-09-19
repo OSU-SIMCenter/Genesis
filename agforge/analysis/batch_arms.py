@@ -278,6 +278,26 @@ def main():
         if os.path.exists(ctrl._diag_out):
             os.remove(ctrl._diag_out)
 
+        # AGF_RECORD_EPISODE=1 records a replayable HDF5 episode for agforge.replay_episode.
+        #
+        # The genesis adapter DISARMS the recorder that reset_simulation() arms (see
+        # genesis_forge_adapter.init_stock), because otherwise every batch run buffers every
+        # physics frame in memory and writes it into the sim repo's data/. That default is
+        # right -- a 17-hit arm is roughly 900 frames, and at 12,250 particles x (pos, vel,
+        # temp, detF) x float32 that is around 350 MB per arm. This re-arms it per arm, only
+        # when asked, so a run intended for the viewer can be replayed without making every
+        # accuracy run pay for it.
+        #
+        # record_frame() is already called from step_simulation(), guarded only by strike
+        # state, so nothing else has to change: it short-circuits on is_recording and starts
+        # buffering the moment the episode opens.
+        _rec = os.environ.get("AGF_RECORD_EPISODE") == "1"
+        if _rec:
+            _est_mb = len(hits) * 55.0 * expect_n * 8 * 4 / 1e6 if expect_n else 0.0
+            print("  AGF_RECORD_EPISODE=1 -- recording a replayable episode for this arm "
+                  "(~%.0f MB buffered, written to the sim repo's data/)." % _est_mb)
+            ctrl.recorder.start_new_episode(tag)
+
         status, n_done, err = "completed", 0, None
         per_hit = {}
         for h in hits:
@@ -296,6 +316,31 @@ def main():
                 break
         if per_hit:
             np.savez_compressed(os.path.join(OUT, "%s_hits.npz" % tag), **per_hit)
+
+        if _rec and getattr(ctrl, "recorder", None) and ctrl.recorder.is_recording:
+            # Flush even when the arm failed: a partial episode still replays, and an episode
+            # left open would be silently dropped along with everything buffered for it.
+            # Write the geometry the replay needs to rebuild the RIGHT scene. Without these,
+            # replay_episode falls back to its own defaults -- a 59 mm bar -- so a lengthened
+            # run would replay inside a scene 33 mm too short and silently look wrong. The
+            # recorder already has the extra_attrs hook; nothing in it needs changing.
+            _rc = getattr(state.env, "cfg", None)
+            _rr = getattr(_rc, "robot", None) if _rc else None
+            ctrl.recorder.flush_episode(
+                success_flag=(status == "completed"),
+                language_instruction="batch_arms %s: %d/%d hits, L=%.1f mm, %s"
+                                     % (tag, n_done, len(hits), _stock_l, status),
+                extra_attrs={
+                    "stock_length_m": float(_stock_l) / 1000.0,
+                    "stock_diameter_m": 2.0 * float(_stock_r) / 1000.0,
+                    "gripper_axial_width_m": (float(getattr(_rr, "gripper_axial_width", 0.0))
+                                              or None) if _rr else None,
+                    "hit_z_shift_mm": float(_dL),
+                    "billet_mesh": os.environ.get("AGF_BILLET_MESH") or None,
+                    "arm_tag": tag,
+                })
+            print("  episode flushed (%d/%d hits) -- replay with: pixi run python -m "
+                  "agforge.replay_episode --data data/train/shard_0000.h5" % (n_done, len(hits)))
 
         P = adapter.to_mesh(state).vertices
         finite = np.all(np.isfinite(P)) if P is not None and len(P) else False
