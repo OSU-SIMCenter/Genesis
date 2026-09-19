@@ -1,0 +1,90 @@
+"""Common scoring window for runs of DIFFERENT billet length.
+
+WHY THIS EXISTS. Two reported defects turned out to be one defect seen twice:
+
+  metrics -- a whole-bar statistic over a 92 mm bar and a 59 mm bar is not the same
+             measurement. `detF_p01` is a PERCENTILE, so a longer bar's extra pristine
+             particles dilute it UPWARD; `detF_min` is an EXTREME VALUE, so more draws
+             push it DOWN. Biased in OPPOSITE directions, so neither is sample-size
+             neutral and an effect that moves only one of them is suspect.
+  renders -- [Thomas, 2026-09-19] "a thin region of red particles on the L 92 and L 125
+             runs", and the error renders "don't adjust/account for the increased
+             length". Same cause: the longer bar carries material with no counterpart in
+             the reference, and every aggregate silently includes it.
+
+THE REGISTRATION, which decides everything below. `Hit.z` is measured from the PINNED
+FACE (`forge_common.hit`); the adapter sets `qpos[0,0] = x_pinned_face - z`; and
+`batch_arms` shifts every hit z by `+dL` when the billet is lengthened. That shift holds
+each strike a FIXED distance from the FREE end while the wall retreats. So:
+
+    the forged features are FREE-END registered, and the added metal is ALL at the
+    pinned end.
+
+Verified, not assumed: the 17-hit program reads z 60.48..82.53 mm at L=92 and
+27.48..49.53 mm at L=59, which is the same u = L - z to the millimetre.
+
+GEOMETRY (agforge/options.py). `cylinder_pos` is x=0, so the billet spans [-L/2, +L/2];
+`fixed_region_center = cylinder_pos + [0.5*L, 0, 0]` and `fixed_region_size_x = 0.35*L`,
+so the clamp occupies x in [0.325*L, 0.675*L] and its INNER EDGE sits at z = 0.175*L
+from the pinned face.
+
+THE TWO EXCLUSIONS.
+  * reference extent -- material past the real stock's own length has nothing to be
+    scored against. At L=92 that is exactly the 33 mm synthesized stub. A correctly
+    clipped score is therefore robust to the stub's geometry by construction, which
+    matters because that stub is (2026-09-19) known to be defective.
+  * clamp artifact -- the fixed-end BC corrupts a band just inside the clamp. Measured
+    at ~<=1.2*dx, consistent with a P2G stencil half-width. Excluded as
+    0.175*L + CLAMP_ARTIFACT_DX * dx, measured from the PINNED face, so it differs per
+    run and must be intersected across the set being compared.
+
+The free end needs no exclusion -- it is real material in every run.
+"""
+import numpy as np
+
+REAL_STOCK_LENGTH_MM = 59.0   # forge_common.real_scale -- a fact about the world
+CLAMP_ARTIFACT_DX = 1.2       # measured band width, in dx. See BACKLOG "clamp boundary artifact".
+
+
+def to_free_end_mm(x_mm, stock_length_mm):
+    """Raw-sim x (mm) -> distance from the FREE end (mm). u=0 free end, u=L pinned face."""
+    return np.asarray(x_mm, dtype=np.float64) + 0.5 * float(stock_length_mm)
+
+
+def to_pinned_face_mm(x_mm, stock_length_mm):
+    """Raw-sim x (mm) -> distance from the PINNED face (mm), the `Hit.z` convention."""
+    return 0.5 * float(stock_length_mm) - np.asarray(x_mm, dtype=np.float64)
+
+
+def clean_u_max(stock_length_mm, dx_mm, real_length_mm=REAL_STOCK_LENGTH_MM):
+    """Largest u this ONE run can be scored to: the nearer of the reference extent and
+    the clamp artifact's outer reach."""
+    L = float(stock_length_mm)
+    by_reference = min(L, float(real_length_mm))
+    by_clamp = 0.825 * L - CLAMP_ARTIFACT_DX * float(dx_mm)
+    return min(by_reference, by_clamp)
+
+
+def common_u_max(runs):
+    """Intersection over runs. `runs` is an iterable of (stock_length_mm, dx_mm)."""
+    return min(clean_u_max(L, dx) for L, dx in runs)
+
+
+def mask(pos_mm, stock_length_mm, u_max, u_min=0.0):
+    """Boolean mask selecting particles inside [u_min, u_max] from the free end.
+
+    `pos_mm` is (N,3) raw-sim position in MILLIMETRES."""
+    u = to_free_end_mm(np.asarray(pos_mm)[:, 0], stock_length_mm)
+    return (u >= float(u_min)) & (u <= float(u_max))
+
+
+def describe(stock_length_mm, dx_mm, real_length_mm=REAL_STOCK_LENGTH_MM):
+    L = float(stock_length_mm)
+    return {
+        "stock_length_mm": L,
+        "dx_mm": float(dx_mm),
+        "clamp_inner_edge_z_mm": 0.175 * L,
+        "clamp_artifact_reach_z_mm": 0.175 * L + CLAMP_ARTIFACT_DX * float(dx_mm),
+        "reference_extent_u_mm": min(L, float(real_length_mm)),
+        "clean_u_max_mm": clean_u_max(L, dx_mm, real_length_mm),
+    }
