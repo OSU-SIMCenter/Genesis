@@ -88,3 +88,55 @@ def describe(stock_length_mm, dx_mm, real_length_mm=REAL_STOCK_LENGTH_MM):
         "reference_extent_u_mm": min(L, float(real_length_mm)),
         "clean_u_max_mm": clean_u_max(L, dx_mm, real_length_mm),
     }
+
+
+# ------------------------------------------------------------------ canonical-frame registration
+# The stored `*_hits.npz` clouds are in the CANONICAL mm frame the adapter writes:
+#     canon_x = (x_pinned_face_m - sim_x) * 1000
+# so canon_x = 0 at the PINNED face and increases toward the free end. The real scan meshes
+# (`real_meshes/hit_NN.npz`) use the same frame and the same origin.
+#
+# 🚨 THAT SHARED ORIGIN IS A TRAP FOR A LENGTHENED RUN. `batch_arms` shifts every commanded hit
+# z by +dL, so the forged features sit dL further from the pinned face than the real part's do.
+# Overlay the two on canon_x as stored and a 92 mm run is compared against the real part shifted
+# by 33 mm -- the sim's forged zone against the real part's unforged shank. With the renderer's
+# +-3 mm colour clamp, everything saturates.
+#
+# MEASURED, 2026-09-19, mesh92_n17 vs real_meshes:
+#     raw    free end 91.99 vs real 58.98   -> off +33.01 mm
+#     minus dL                              -> off  +0.01 mm
+#     commanded hit z 56.43..94.60, minus dL -> 23.43..61.60, identical to the L=59 run
+# So subtracting `hit_z_shift_mm` registers the FREE ENDS, which is the registration the hit
+# program already uses. Residual offsets at later hits (+1.76 / -2.81 mm at hits 8 / 17) are
+# genuine sim-vs-real forging differences and are what the comparison is for.
+
+
+def align_to_reference(canon_x_mm, hit_z_shift_mm):
+    """Canonical x as stored -> canonical x registered against the real scan (free ends)."""
+    return np.asarray(canon_x_mm, dtype=np.float64) - float(hit_z_shift_mm)
+
+
+def scored_window_canon(stock_length_mm, dx_mm, hit_z_shift_mm, real_free_end_mm=None):
+    """[lo, hi] in ALIGNED canonical mm holding material that can honestly be scored.
+
+    The LOWER bound is the real exclusion and it is asymmetric on purpose. Below it sits
+    material past the real part's own pinned face -- the synthesized stub on a lengthened bar --
+    and material the fixed-end BC has corrupted. Neither is error; colouring it red is what
+    produced the reported "thin region of red particles on the L 92 and L 125 runs".
+
+    The UPPER bound defaults to none, and that is deliberate. Sim material beyond the real
+    part's free end is NOT unmatched -- it is genuine OVER-ELONGATION, which is exactly the
+    error a signed-distance render exists to show. Clipping there would hide a real defect.
+    Pass `real_free_end_mm` only for an AGGREGATE over a matched extent, where material with no
+    counterpart to difference against would bias the statistic."""
+    lo = max(0.0, 0.175 * float(stock_length_mm)
+             + CLAMP_ARTIFACT_DX * float(dx_mm) - float(hit_z_shift_mm))
+    hi = float("inf") if real_free_end_mm is None else float(real_free_end_mm)
+    return lo, hi
+
+
+def scored_mask_canon(canon_x_mm_aligned, stock_length_mm, dx_mm, hit_z_shift_mm,
+                      real_free_end_mm=None):
+    lo, hi = scored_window_canon(stock_length_mm, dx_mm, hit_z_shift_mm, real_free_end_mm)
+    x = np.asarray(canon_x_mm_aligned, dtype=np.float64)
+    return (x >= lo) & (x <= hi)

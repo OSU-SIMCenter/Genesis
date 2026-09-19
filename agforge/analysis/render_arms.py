@@ -25,6 +25,7 @@ Arms that go unstable HOLD their last good frame and are labelled FAILED (matchi
 forge_common.viz.render_common_gif's convention) so a short arm never silently vanishes.
 """
 import argparse
+import json
 import os
 import sys
 
@@ -39,6 +40,8 @@ sys.path.insert(0, os.path.expanduser("~/GitHub/Genesis/forge_common/main"))
 # VTK's software GL reserves far more than that in VIRTUAL address space -- so importing it here
 # makes rendering die as `LLVM ERROR: out of memory` / `std::bad_alloc` with no traceback. Both
 # helpers are a few lines and neither needs trimesh, since only vertices are used.
+from agforge.analysis import clip
+
 REAL_MESH_DIR = os.path.expanduser("~/GitHub/Genesis/forge_common/main/outputs/real_meshes")
 SIM_STOCK_R_MM, SIM_STOCK_L_MM = 20.0, 59.0
 
@@ -109,6 +112,33 @@ GRID_DX_MM = 4.0
 GRID_PHASE = (29.5 % GRID_DX_MM, 0.0, 120.0 % GRID_DX_MM)   # -> x = 1.5, y = 0.0, z = 0.0 (mod 4)
 
 
+UNMATCHED_COLOR = "#9a9a9a"   # material the real part has no counterpart for: shown, never scored
+
+
+def run_geometry(d):
+    """Billet geometry for this batch, read from its own run_meta.json.
+
+    Nothing here can be assumed. A lengthened run shifts every commanded hit z by +dL, so its
+    forged features sit dL further from the pinned face than the real part's -- overlaying the
+    two on canon_x as stored compares a 92 mm sim's forged zone against the real part's
+    unforged shank (measured: 33.01 mm out; 0.01 mm after correcting). psize likewise: seeding
+    from a mesh drops N ~10%% while the nominal volume does not, so deriving it from a cylinder
+    reads ~3.5%% high. batch_arms records both truthfully."""
+    p = os.path.join(d, "run_meta.json")
+    g = {"hit_z_shift_mm": 0.0, "stock_length_mm": SIM_STOCK_L_MM, "dx_mm": GRID_DX_MM,
+         "psize_mm": None}
+    if os.path.exists(p):
+        with open(p, encoding="utf-8") as fh:
+            m = json.load(fh)
+        for k in g:
+            if m.get(k) is not None:
+                g[k] = float(m[k])
+    else:
+        print("WARNING: no run_meta.json in %s -- assuming L=%.1f mm and no hit shift, which is "
+              "WRONG for any lengthened run." % (d, SIM_STOCK_L_MM))
+    return g
+
+
 def load_hits(d, tag):
     p = os.path.join(d, "%s_hits.npz" % tag)
     if not os.path.exists(p):
@@ -154,7 +184,19 @@ def main():
 
     d = os.path.expanduser("~/GitHub/Genesis/forge_common/main/outputs/%s" % args.batch)
     tags = [t.strip() for t in args.arms.split(",") if t.strip()]
+    geom = run_geometry(d)
     clouds = {t: load_hits(d, t) for t in tags}
+    # Register the FREE ENDS against the real scan. See clip.align_to_reference.
+    _dL = geom["hit_z_shift_mm"]
+    if _dL:
+        for t in clouds:
+            for hh in clouds[t]:
+                clouds[t][hh] = clouds[t][hh].copy()
+                clouds[t][hh][:, 0] = clip.align_to_reference(clouds[t][hh][:, 0], _dL)
+        print("registered sim clouds to the real scan: canon_x shifted by %+.1f mm "
+              "(billet L = %.1f mm)" % (-_dL, geom["stock_length_mm"]))
+    if geom["psize_mm"]:
+        os.environ.setdefault("AGF_PSIZE_MM", "%.6f" % geom["psize_mm"])
     if [t for t in tags if not clouds[t]]:
         print("no per-hit clouds for: %s" % ", ".join(t for t in tags if not clouds[t]))
         return 1
@@ -299,15 +341,34 @@ def main():
                 else:
                     pts = P
                     sc = signed_err(pts, h) if (args.color_error and not is_real) else None
+                    # Material outside the scored window is NOT error -- it is material the
+                    # reference has no counterpart for, or material the fixed-end BC has
+                    # corrupted. Colouring it red is what produced the reported "thin region of
+                    # red particles on the L 92 and L 125 runs".
+                    unmatched = None
+                    if sc is not None:
+                        # No upper bound: sim material past the real free end is genuine
+                        # over-elongation, which is error worth seeing, not unmatched material.
+                        _lo, _hi = clip.scored_window_canon(
+                            geom["stock_length_mm"], geom["dx_mm"], geom["hit_z_shift_mm"])
+                        _in = (pts[:, 0] >= _lo) & (pts[:, 0] <= _hi)
+                        if not _in.all():
+                            unmatched = pts[~_in]
+                            pts, sc = pts[_in], sc[_in]
                     if cut is not None:
                         keep = np.abs(pts[:, cut] - ctr[cut]) <= slab
                         if int(keep.sum()) >= 10:
                             pts = pts[keep]
                             if sc is not None:
                                 sc = sc[keep]
+                        if unmatched is not None and len(unmatched):
+                            uk = np.abs(unmatched[:, cut] - ctr[cut]) <= slab
+                            unmatched = unmatched[uk]
                     kw = dict(point_size=5 if cut is None else 8,
                               render_points_as_spheres=True)
-                    if sc is not None:
+                    if unmatched is not None and len(unmatched):
+                        pl.add_mesh(pv.PolyData(unmatched), color=UNMATCHED_COLOR, **kw)
+                    if sc is not None and len(pts):
                         # Diverging map clamped tight: most particles sit deep inside and would
                         # otherwise saturate the scale, hiding the surface detail that matters.
                         pl.add_mesh(pv.PolyData(pts), scalars=sc, cmap="coolwarm",
