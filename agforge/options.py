@@ -201,6 +201,9 @@ class RobotOptions(Options):
     cylinder_diameter: Optional[float] = None
     cylinder_radius: Optional[float] = None
     cylinder_height: Optional[float] = None
+    # Billet length the die window and camera framing were tuned at. Declared (not just
+    # assigned) because RobotOptions is a pydantic model and rejects undeclared attributes.
+    ref_height: Optional[float] = None
     cylinder_pos: object = None
     cylinder_euler: Optional[tuple] = None
     # Optional jaw axial (X) full-width override [m]; None = the default 0.5*radius half-extent.
@@ -234,6 +237,11 @@ class RobotOptions(Options):
         if self.cylinder_height is None:
             self.cylinder_height = 8 * self.cylinder_radius
         self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
+        # Reference billet length the die window and the camera framing were tuned at
+        # (forge_common REAL_STOCK_LENGTH_MM = 59 mm). Geometry that must NOT stretch when the
+        # billet is lengthened is anchored to this instead of to cylinder_height. At the
+        # shipped length the two are numerically identical, so nothing moves by default.
+        self.ref_height = env_float("AGF_REF_STOCK_LENGTH_MM", 59.0) / 1000.0
         self.cylinder_euler = (0.0, 90.0, 0.0)
 
         # Cells across one billet diameter. 7 is the long-standing default; the die's
@@ -279,7 +287,12 @@ class RobotOptions(Options):
             target_guide_box_pos + target_guide_box_size / 2,
         ]))
 
-        action_x_center = self.cylinder_pos[0] - self.cylinder_height * 0.75
+        # Anchored to the billet FREE end plus a fixed offset, not to a multiple of the
+        # billet length. Identical at L = 59 mm (free end at -H/2, centre 0.25*H beyond it).
+        # They diverge the moment L changes: the free end moves -dL/2 while -0.75*H moves
+        # -0.75*dL, so the +-30 mm window would slide 0.25*dL off the strikes and SILENTLY
+        # clamp them -- environment.step clamps the action, it does not raise.
+        action_x_center = (self.cylinder_pos[0] - self.cylinder_height / 2.0) - 0.25 * self.ref_height
         action_x_width = 0.06
         action_hinge_angle_limit_deg = 40.0
         action_gripper_open_val = 20 * self.cylinder_radius
@@ -479,7 +492,10 @@ class AgilityForgeOptions(Options):
         self.profiling = ProfilingOptions(enabled=True, show_FPS=False)
 
         camera_lookat = tuple(self.robot.cylinder_pos)
-        camera_pos_offset = np.array([-2.75 * self.robot.cylinder_height, -8.0 * self.robot.cylinder_radius, 3.0 * self.robot.cylinder_height])
+        # Framed on ref_height, not cylinder_height: a longer billet would otherwise pull the
+        # camera back and render at a different visual scale, so before/after animations of a
+        # length change could not be compared side by side.
+        camera_pos_offset = np.array([-2.75 * self.robot.ref_height, -8.0 * self.robot.cylinder_radius, 3.0 * self.robot.ref_height])
         camera_pos = tuple(self.robot.cylinder_pos + camera_pos_offset)
 
         self.viewer = ViewerOptions(

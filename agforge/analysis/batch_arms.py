@@ -25,6 +25,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import replace
 
 import numpy as np
 
@@ -130,6 +131,29 @@ def main():
     # unless AGF_CELLS_PER_DIAMETER is rescaled to compensate -- see the note where it is used.
     _stock_r = float(os.environ.get("AGF_STOCK_RADIUS_MM", REAL_STOCK_RADIUS_MM))
 
+    # AGF_STOCK_LENGTH_MM puts more compliant material between the fixed (pinned) end and the
+    # forged region -- a standing request, to test whether the convergence trouble is partly
+    # the deformation sitting ~13 mm from a rigid wall.
+    #
+    # Length ALONE makes that worse, which is why this is not a one-liner. Hit.z is measured
+    # from the PINNED FACE (see forge_common.hit) and the clamp is 0.35*H centred on that
+    # face, reaching 0.175*H into the bar, so the free span is
+    #     span = z - 0.175*H
+    # and raising H with z untouched SHRINKS it -- at L 59 -> 79 the nearest hit goes
+    # 13.11 -> 9.61 mm -- while the added metal lands past the free end doing nothing.
+    #
+    # So every hit z shifts by the same dL. That holds each strike at a FIXED distance from
+    # the FREE end (identical forging geometry and die approach) while the wall retreats:
+    #     span = (z + dL) - 0.175*(H + dL) = span_old + 0.825*dL
+    #     L 59 mm (default): 13.11 mm   <- unchanged; this is opt-in only
+    #     L 69 mm:           21.36 mm  (+63%)
+    #     L 79 mm:           29.61 mm  (+126%)
+    # Unlike AGF_STOCK_RADIUS_MM this does NOT move dx or the timestep: base_grid_density is
+    # int(cells_per_diameter / cylinder_diameter), a function of DIAMETER only. It does grow
+    # the x domain (padding scales with H), so cell count and runtime rise roughly linearly.
+    _stock_l = float(os.environ.get("AGF_STOCK_LENGTH_MM", REAL_STOCK_LENGTH_MM))
+    _dL = _stock_l - REAL_STOCK_LENGTH_MM
+
     wanted = [a.strip() for a in args.arms.split(",") if a.strip()]
     arms = [a for a in ARMS if not wanted or a["tag"] in wanted]
 
@@ -143,6 +167,14 @@ def main():
                 for r in range(1, args.reps + 1) for a in arms]
 
     hits = load_real_hits_for_sim("genesis", args.n_hits)
+    if _dL:
+        _z0 = min(h.z for h in hits)
+        hits = [replace(h, z=h.z + _dL) for h in hits]
+        print("[batch_arms] billet L %.1f -> %.1f mm; shifted %d hit z by %+.1f mm "
+              "(free-end registration held). Clamp-to-nearest-hit span %.2f -> %.2f mm."
+              % (REAL_STOCK_LENGTH_MM, _stock_l, len(hits), _dL,
+                 _z0 - 0.175 * REAL_STOCK_LENGTH_MM,
+                 _z0 + _dL - 0.175 * _stock_l))
     adapter = build_adapter("genesis")
 
     t_start = time.time()
@@ -157,7 +189,7 @@ def main():
         print("=" * 78)
 
         # init_stock rebuilds on the first call and resets on every later one.
-        state = adapter.init_stock(radius_mm=_stock_r, length_mm=REAL_STOCK_LENGTH_MM)
+        state = adapter.init_stock(radius_mm=_stock_r, length_mm=_stock_l)
         t_setup = time.time() - t0
 
         if expect_n is None:
