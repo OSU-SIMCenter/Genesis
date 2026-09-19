@@ -285,7 +285,21 @@ class RobotOptions(Options):
         self.mpm_lower_bound = tuple(self.cylinder_pos - mpm_lower_offset)
         self.mpm_upper_bound = tuple(self.cylinder_pos + mpm_upper_offset)
 
-        fixed_region_size = np.array([0.35 * self.cylinder_height, 4 * self.cylinder_radius, 4 * self.cylinder_radius])
+        # AGF_CLAMP_FRACTION: the clamp is a FRACTION of the billet, so lengthening the bar
+        # lengthens the clamp as well as the clearance -- 20.65 mm at L=59, 32.20 mm at L=92.
+        # The 2026-09-19 length result changed both at once (clearance x3.1, clamp x1.56), so
+        # "length is what fixes the clamp" attributes to clearance an effect that clamp length
+        # is an uncontrolled co-variate in. This knob exists to separate them: hold the clamp
+        # at a fixed ABSOLUTE length while the bar grows. 0.35 is the shipped default and
+        # reproduces every prior run exactly.
+        #     L=92 with the same absolute clamp as L=59:  0.35 * 59 / 92 = 0.22446
+        _clamp_frac = env_float("AGF_CLAMP_FRACTION", 0.35)
+        if abs(_clamp_frac - 0.35) > 1e-9:
+            print("[options] AGF_CLAMP_FRACTION=%.5f -- clamp is %.2f mm on a %.1f mm billet "
+                  "(default 0.35 would give %.2f mm). Not comparable with runs at the default."
+                  % (_clamp_frac, _clamp_frac * self.cylinder_height * 1000.0,
+                     self.cylinder_height * 1000.0, 0.35 * self.cylinder_height * 1000.0))
+        fixed_region_size = np.array([_clamp_frac * self.cylinder_height, 4 * self.cylinder_radius, 4 * self.cylinder_radius])
         fixed_region_center = self.cylinder_pos + np.array([0.5 * self.cylinder_height, 0, 0])
         self.fixed_region_bounds = torch.tensor(np.array([
             fixed_region_center - fixed_region_size / 2,
