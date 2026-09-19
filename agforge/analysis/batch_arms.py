@@ -269,6 +269,14 @@ def main():
                 "psize_mm": float(_ent.particle_size) * 1000.0,
                 "n_particles": int(_ent.n_particles),
                 "billet_mesh": os.environ.get("AGF_BILLET_MESH") or None,
+                # Resolved VALUES, not env-var-with-literal-fallback: both are read once above
+                # and handed straight to init_stock, so recording them here OBSERVES the run
+                # rather than re-guessing it. Without these a lengthened run is indistinguishable
+                # from a 59 mm one in its own metadata -- the exact defect the block below warns
+                # about. hit_z_shift_mm is what keeps the strikes registered to the free end.
+                "stock_length_mm": _stock_l,
+                "stock_radius_mm": _stock_r,
+                "hit_z_shift_mm": _dL,
                 # These fall back to LITERALS, so they re-guess the configuration rather than
                 # observing it: with no AGF_ var set they record whatever is written here, not
                 # what the sim used. Keep them equal to the defaults in options.py or run_meta
