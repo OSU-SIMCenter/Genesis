@@ -89,18 +89,36 @@ def to_pinned_face_mm(x_mm, stock_length_mm):
     return 0.5 * float(stock_length_mm) - np.asarray(x_mm, dtype=np.float64)
 
 
-def clean_u_max(stock_length_mm, dx_mm, real_length_mm=REAL_STOCK_LENGTH_MM):
+def clamp_inner_edge_z_mm(stock_length_mm, clamp_fraction=CLAMP_FRACTION_OF_LENGTH):
+    """Distance from the PINNED face to the clamp's inner edge.
+
+    The clamp is `clamp_fraction * L` long and CENTRED on the pinned face, so only half of it
+    lies in the bar: the inner edge sits at `clamp_fraction/2 * L`."""
+    return 0.5 * float(clamp_fraction) * float(stock_length_mm)
+
+
+def clean_u_max(stock_length_mm, dx_mm, real_length_mm=REAL_STOCK_LENGTH_MM,
+                clamp_fraction=CLAMP_FRACTION_OF_LENGTH):
     """Largest u this ONE run can be scored to: the nearer of the reference extent and
-    the clamp artifact's outer reach."""
+    the clamp artifact's outer reach.
+
+    ⚠️ `clamp_fraction` is a REAL parameter, not decoration. This used to hardcode 0.825,
+    which is 1 - 0.35/2 and therefore silently assumed the default clamp. With AGF_CLAMP_FRACTION
+    a run can have any clamp, and the window would then have been computed for a clamp the run did
+    not have. Caught by free-cloud-compute-branch-5 on the first non-default run, where it did NOT
+    bite only because the reference extent binds at L=92 for both clamps (71.1 mm at 0.35 and
+    76.9 mm at 0.22446, against a 59 mm reference)."""
     L = float(stock_length_mm)
     by_reference = min(L, float(real_length_mm))
-    by_clamp = 0.825 * L - CLAMP_ARTIFACT_DX * float(dx_mm)
+    by_clamp = L - clamp_inner_edge_z_mm(L, clamp_fraction) - CLAMP_ARTIFACT_DX * float(dx_mm)
     return min(by_reference, by_clamp)
 
 
 def common_u_max(runs):
-    """Intersection over runs. `runs` is an iterable of (stock_length_mm, dx_mm)."""
-    return min(clean_u_max(L, dx) for L, dx in runs)
+    """Intersection over runs. `runs` is an iterable of (stock_length_mm, dx_mm) or
+    (stock_length_mm, dx_mm, clamp_fraction)."""
+    return min(clean_u_max(*r[:2], clamp_fraction=(r[2] if len(r) > 2 else CLAMP_FRACTION_OF_LENGTH))
+               for r in runs)
 
 
 def mask(pos_mm, stock_length_mm, u_max, u_min=0.0):
@@ -111,16 +129,34 @@ def mask(pos_mm, stock_length_mm, u_max, u_min=0.0):
     return (u >= float(u_min)) & (u <= float(u_max))
 
 
-def describe(stock_length_mm, dx_mm, real_length_mm=REAL_STOCK_LENGTH_MM):
+def describe(stock_length_mm, dx_mm, real_length_mm=REAL_STOCK_LENGTH_MM,
+             clamp_fraction=CLAMP_FRACTION_OF_LENGTH):
     L = float(stock_length_mm)
+    edge = clamp_inner_edge_z_mm(L, clamp_fraction)
     return {
         "stock_length_mm": L,
         "dx_mm": float(dx_mm),
-        "clamp_inner_edge_z_mm": 0.175 * L,
-        "clamp_artifact_reach_z_mm": 0.175 * L + CLAMP_ARTIFACT_DX * float(dx_mm),
+        "clamp_fraction": float(clamp_fraction),
+        "clamp_length_mm": float(clamp_fraction) * L,
+        "clamp_inner_edge_z_mm": edge,
+        "clamp_artifact_reach_z_mm": edge + CLAMP_ARTIFACT_DX * float(dx_mm),
         "reference_extent_u_mm": min(L, float(real_length_mm)),
-        "clean_u_max_mm": clean_u_max(L, dx_mm, real_length_mm),
+        "clean_u_max_mm": clean_u_max(L, dx_mm, real_length_mm, clamp_fraction),
     }
+
+
+def clamp_band_z_mm(stock_length_mm, dx_mm, clamp_fraction=CLAMP_FRACTION_OF_LENGTH):
+    """The damaged band, in distance from the PINNED face: [edge - 1.2*dx, edge + 1.2*dx].
+
+    🚨 DEFINE THIS RELATIVE TO THE CLAMP'S OWN INNER EDGE, NEVER AS A FIXED FRACTION OF L.
+    The tracker's original band was "~0.08 -> 0.17 L", which is only equivalent at the DEFAULT
+    clamp fraction: at 0.22446 the inner edge sits at 0.1122*L, so a fixed 0.08-0.17*L window runs
+    from deep inside the clamp to well outside it and is not the same measurement. Differencing a
+    fixed-fraction band against an edge-relative one is the same convention error as everything
+    else found on 2026-09-19."""
+    edge = clamp_inner_edge_z_mm(stock_length_mm, clamp_fraction)
+    reach = CLAMP_ARTIFACT_DX * float(dx_mm)
+    return edge - reach, edge + reach
 
 
 # ------------------------------------------------------------------ canonical-frame registration
@@ -149,7 +185,8 @@ def align_to_reference(canon_x_mm, hit_z_shift_mm):
     return np.asarray(canon_x_mm, dtype=np.float64) - float(hit_z_shift_mm)
 
 
-def scored_window_canon(stock_length_mm, dx_mm, hit_z_shift_mm, real_free_end_mm=None):
+def scored_window_canon(stock_length_mm, dx_mm, hit_z_shift_mm, real_free_end_mm=None,
+                        clamp_fraction=CLAMP_FRACTION_OF_LENGTH):
     """[lo, hi] in ALIGNED canonical mm holding material that can honestly be scored.
 
     The LOWER bound is the real exclusion and it is asymmetric on purpose. Below it sits
@@ -162,14 +199,15 @@ def scored_window_canon(stock_length_mm, dx_mm, hit_z_shift_mm, real_free_end_mm
     error a signed-distance render exists to show. Clipping there would hide a real defect.
     Pass `real_free_end_mm` only for an AGGREGATE over a matched extent, where material with no
     counterpart to difference against would bias the statistic."""
-    lo = max(0.0, 0.175 * float(stock_length_mm)
+    lo = max(0.0, clamp_inner_edge_z_mm(stock_length_mm, clamp_fraction)
              + CLAMP_ARTIFACT_DX * float(dx_mm) - float(hit_z_shift_mm))
     hi = float("inf") if real_free_end_mm is None else float(real_free_end_mm)
     return lo, hi
 
 
 def scored_mask_canon(canon_x_mm_aligned, stock_length_mm, dx_mm, hit_z_shift_mm,
-                      real_free_end_mm=None):
-    lo, hi = scored_window_canon(stock_length_mm, dx_mm, hit_z_shift_mm, real_free_end_mm)
+                      real_free_end_mm=None, clamp_fraction=CLAMP_FRACTION_OF_LENGTH):
+    lo, hi = scored_window_canon(stock_length_mm, dx_mm, hit_z_shift_mm, real_free_end_mm,
+                                 clamp_fraction)
     x = np.asarray(canon_x_mm_aligned, dtype=np.float64)
     return (x >= lo) & (x <= hi)
