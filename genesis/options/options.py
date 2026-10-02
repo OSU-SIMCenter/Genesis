@@ -46,7 +46,12 @@ class Options(RBC, BaseModel):
         # Aggregate invalid type errors
         err_invalid_infos = {}
         for err in exception.errors():
-            err_type, (attr, *index), msg, value = err["type"], err["loc"], err["msg"], err.get("input")
+            # A field validator reports loc=("field_name",). A MODEL-level error -- anything
+            # raised from model_post_init or a model validator -- reports loc=(), and
+            # unpacking an empty tuple raised "not enough values to unpack" from inside
+            # this handler, so the actual complaint never reached the caller.
+            err_type, (attr, *index), msg, value = (
+                err["type"], err["loc"] or ("<model>",), err["msg"], err.get("input"))
             if msg.startswith("Input should be a valid "):
                 info = err_invalid_infos.setdefault(attr, {"type": {}})
                 info["type"].setdefault(tuple(index), []).append(msg[24:])
@@ -56,7 +61,8 @@ class Options(RBC, BaseModel):
         # Format all errors without early stopping
         filtered_attrs = set()
         for err in exception.errors():
-            err_type, (attr, *index), msg, value = err["type"], err["loc"], err["msg"], err.get("input")
+            err_type, (attr, *index), msg, value = (
+                err["type"], err["loc"] or ("<model>",), err["msg"], err.get("input"))
             attr_indexed = f"{attr}{index}" if index else attr
 
             if attr in filtered_attrs:
