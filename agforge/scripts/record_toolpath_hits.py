@@ -137,6 +137,13 @@ def load_toolpath(jsonl_path: Path, n_hits: int = 0, z_shift_mm: float = 0.0):
 
     Returns ``(hits, meta)``. ``meta["exposed_length_mm"]`` is the toolpath's own
     ``workpiece_length_mm`` before the first press, or None when the file omits it.
+
+    Only the FIRST record's length is read, and deliberately so. The rest of the
+    series is a forecast, not a measurement: it rises monotonically to the length
+    the bar is expected to reach, and on the hot series it tracks the slab model's
+    own prediction to about 0.03 mm. Scoring simulated elongation against it would
+    be comparing one model to another and calling it validation. Use the scans for
+    that. The first value is the stock that went in, which is an input.
     """
     records = []
     with jsonl_path.open(encoding="utf-8") as f:
@@ -230,7 +237,9 @@ def main() -> None:
                    help="Exposed stock length. Required unless --length-from-toolpath.")
     p.add_argument("--length-from-toolpath", action="store_true",
                    help="Take the exposed length from the file's own "
-                        "workpiece_length_mm before press 1.")
+                        "workpiece_length_mm before press 1. Only that first value "
+                        "is used; the rest of the series is a forecast, not a "
+                        "measurement (see load_toolpath).")
     p.add_argument("--z-shift-mm", type=float, default=0.0,
                    help="Added to every z. Use with AGF_PIN_EXTRA_MM when stock is held "
                         "on the chuck side, so z stays measured from the chuck face.")

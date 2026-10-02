@@ -91,6 +91,11 @@ simulating only the exposed length puts a rigid clamp directly behind the first 
 `--z-shift-mm` moves every `z` by the same amount, because `z` is measured from the chuck face and
 the chuck face has moved.
 
+`--length-from-toolpath` reads only the **first** `workpiece_length_mm`, the stock that went in. The
+rest of that series is a forecast of what the bar will reach, and on the hot series it follows the
+slab model's own prediction to about 0.03 mm — so scoring simulated elongation against it compares
+two models and calls the result validation. Score against the scans.
+
 All three go together. The trap is the clamp: it defaults to a *fraction* of the billet, so on a
 100 mm bar it grips 17.50 mm back from the pinned face while the innermost blows of the aluminium
 programs are at z = 15.68 and 17.87 mm — the die lands on rigid particles and that material cannot
