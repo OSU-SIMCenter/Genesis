@@ -111,6 +111,39 @@ from the chuck face toward the free end, bar axis at the origin.
 so scoring centres against a scanned surface reads consistently small. `agforge/analysis/surface_recon.py`
 documents the reconstruction and the stretch beyond which its gap-closing stops working.
 
+### Reproducing the published point clouds
+
+The published clouds were produced on a different line of development, so the settings do not map
+one-to-one. Checked on press 1 of the Roll2 series, 13 cells, Tool2 mesh, 400 C card:
+
+| | published | this branch | difference |
+|---|---|---|---|
+| free end | 100.627 mm | 100.627 mm | 0.000 mm |
+| barrel radius, median over x = 10-60 mm | 19.043 mm | 19.043 mm | 0.001 mm |
+| half-thickness at the press, z = 77.06 mm | 16.671 mm | 16.678 mm | 0.007 mm |
+
+The files are **not** byte-identical: the 150,000 points are subsampled from a slightly different
+vertex set. The geometry agrees to microns, which is three orders of magnitude inside the 0.79 mm
+95th-percentile error against the scan, and inside the scanner's own 0.12-0.19 mm offset.
+
+Settings used, which differ from the published run's in two ways worth knowing. `AGF_PIN_EXTRA_MM`
+**adds** to the length here, so the exposed length is passed, not the total: the published run passed
+a 125 mm length with 25 mm held, and the equivalent here is `--length-from-toolpath` on a file that
+records 100 mm. And four knobs that were compiled in on the old line are defaults here, so they are
+set explicitly:
+
+```bash
+  AGF_MATERIAL=6063_400C AGF_CELLS_PER_DIAMETER=13 AGF_CFL_SAFETY=0.45   AGF_MAX_FORCE=1e12 AGF_PIN_EXTRA_MM=25 AGF_CLAMP_DEPTH_MM=25   AGF_DIE_MESH=/path/to/Tool2.stl   AGF_ENABLE_CPIC=1 AGF_MPM_X_PAD_LOWER=0.85 AGF_APPROACH_CFL_RATIO=0.0205   python -u -m agforge.scripts.record_toolpath_hits     --jsonl roll2_toolpath.jsonl --n-hits 1 --length-from-toolpath     --z-shift-mm 25 --hit-dir out/roll2_p1
+```
+
+One press took **49 s** at 13 cells and 44,678 particles on an RTX 3060 Laptop, after about two
+minutes of one-time scene construction and kernel compilation. The press stopped on Target Strain at
+strain 0.1943 with a peak force near 56 kN, inside the 54.9-61.2 kN the published run reported.
+
+On exit, a headless run raises `OpenGL.error.Error: Attempt to retrieve context when no valid
+context` from an `atexit` handler in the bundled pyrender. It happens after the presses are finished
+and written, and does not affect results.
+
 ## Materials
 
 `AGF_MATERIAL` selects a card from `agforge/material_presets.py`. Unset is the shipped 316L, and
