@@ -119,17 +119,38 @@ documents the reconstruction and the stretch beyond which its gap-closing stops 
 ### Reproducing the published point clouds
 
 The published clouds were produced on a different line of development, so the settings do not map
-one-to-one. Checked on press 1 of the Roll2 series, 13 cells, Tool2 mesh, 400 C card:
+one-to-one. Checked by re-running the whole Roll2 series here, 13 cells, Tool2 mesh, 400 C card, and
+measuring both sets of clouds with the same estimators:
 
-| | published | this branch | difference |
-|---|---|---|---|
-| free end | 100.627 mm | 100.627 mm | 0.000 mm |
-| barrel radius, median over x = 10-60 mm | 19.043 mm | 19.043 mm | 0.001 mm |
-| half-thickness at the press, z = 77.06 mm | 16.671 mm | 16.678 mm | 0.007 mm |
+| | published | this branch |
+|---|---|---|
+| presses completed | 12 of 12 | 12 of 12, every one on Target Strain |
+| free end, each of the 12 presses | — | same reconstruction voxel as published, all 12 |
+| free-end growth, press 1 to 12 | +6.350 mm | +6.350 mm |
+| barrel radius, median, press 1 | 19.043 mm | 19.043 mm (-0.0002) |
+| barrel radius, median, press 12 | 18.813 mm | 18.801 mm (-0.013) |
+| half-thickness at the press, press 1 | 16.671 mm | 16.678 mm (+0.007) |
 
-The files are **not** byte-identical: the 150,000 points are subsampled from a slightly different
-vertex set. The geometry agrees to microns, which is three orders of magnitude inside the 0.79 mm
-95th-percentile error against the scan, and inside the scanner's own 0.12-0.19 mm offset.
+**Read the free-end agreement carefully.** That metric is the largest x on a surface contoured over a
+voxel grid of `psize/6` = 0.244 mm, and the published series moves in exact integer multiples of
+that voxel. So "the same voxel at all 12 presses" means agreement to **0.244 mm**, the metric's own
+resolution, not to microns. The published README quotes +6.42 mm for this series using a
+99.9th-percentile free end; the +6.350 above uses the maximum on both sides, so the two columns are
+comparable to each other but not to that figure.
+
+The radius is not quantised that way, and it is where the real divergence shows: the two runs agree
+to 0.0002 mm at press 1 and drift to about 0.03 mm by press 10. **Twelve presses of accumulated
+material response diverge by a few hundredths of a millimetre** — a few per cent of the 0.79 mm
+95th-percentile error against the scan, and well inside the scanner's own 0.12-0.19 mm offset.
+
+The files are **not** byte-identical; the 150,000 points subsample from a slightly different vertex
+set.
+
+One comparison that does **not** work: the cross-section centroid near the chuck face. It swings by
+0.2 to 0.9 mm press to press with no trend and random sign in both runs, because a barely-deformed
+section has a poorly determined centre. It cannot resolve a difference between the two at this
+length, and it should not be read as a bend. Absolute magnitudes at press 12 are 0.52 mm published
+and 0.29 mm here, both inside the roughly 0.5 mm the real bar is straight to.
 
 Settings used, which differ from the published run's in two ways worth knowing. `AGF_PIN_EXTRA_MM`
 **adds** to the length here, so the exposed length is passed, not the total: the published run passed
@@ -141,9 +162,12 @@ set explicitly:
   AGF_MATERIAL=6063_400C AGF_CELLS_PER_DIAMETER=13 AGF_CFL_SAFETY=0.45   AGF_MAX_FORCE=1e12 AGF_PIN_EXTRA_MM=25 AGF_CLAMP_DEPTH_MM=25   AGF_DIE_MESH=/path/to/Tool2.stl   AGF_ENABLE_CPIC=1 AGF_MPM_X_PAD_LOWER=0.85 AGF_APPROACH_CFL_RATIO=0.0205   python -u -m agforge.scripts.record_toolpath_hits     --jsonl roll2_toolpath.jsonl --n-hits 1 --length-from-toolpath     --z-shift-mm 25 --hit-dir out/roll2_p1
 ```
 
-One press took **49 s** at 13 cells and 44,678 particles on an RTX 3060 Laptop, after about two
-minutes of one-time scene construction and kernel compilation. The press stopped on Target Strain at
-strain 0.1943 with a peak force near 56 kN, inside the 54.9-61.2 kN the published run reported.
+Timing on an RTX 3060 Laptop, 13 cells, 44,678 particles: the full 12-press sequence took **355 s,
+29.6 s per press**, plus about two minutes of one-time scene construction and kernel compilation.
+A single press measured 49 s, so the per-press cost falls once the kernels are warm. Press 1 stopped
+on Target Strain at strain 0.1943 with a peak force near 56 kN, inside the 54.9-61.2 kN the
+published run reported; all twelve stopped on Target Strain, with none hitting a force stop or the
+particle-velocity guard.
 
 On exit, a headless run raises `OpenGL.error.Error: Attempt to retrieve context when no valid
 context` from an `atexit` handler in the bundled pyrender. It happens after the presses are finished
