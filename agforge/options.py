@@ -206,6 +206,9 @@ class RobotOptions(Options):
     ref_height: Optional[float] = None
     cylinder_pos: object = None
     cylinder_euler: Optional[tuple] = None
+    # Stock held in the chuck, beyond the exposed length a toolpath records. Resolved in
+    # model_post_init from AGF_PIN_EXTRA_MM; recorded so a run can report what it held.
+    pin_extra_m: Optional[float] = None
     # Optional jaw axial (X) full-width override [m]; None = the default 0.5*radius half-extent.
     gripper_axial_width: Optional[float] = None
     base_grid_density: Optional[int] = None
@@ -236,7 +239,27 @@ class RobotOptions(Options):
         self.coil_radius = self.coil_radius_multiplier * self.cylinder_radius
         if self.cylinder_height is None:
             self.cylinder_height = 8 * self.cylinder_radius
-        self.cylinder_pos = np.array([0.0, 0.0, 6 * self.cylinder_radius])
+        # Stock that continues past the exposed length into the chuck, added on the pinned
+        # (+x) side. A recorded toolpath measures z from the chuck face and its exposed
+        # length is what the blows are positioned against, so the FREE end must not move
+        # when the held stock is added: the bar grows by the extension on +x and is then
+        # shifted by half of it, leaving -x where it was. 0 is the shipped geometry.
+        #
+        # This is the chuck-side counterpart of AGF_STOCK_LENGTH_MM, which lengthens the
+        # bar on the free side and shifts the hits to match. Use this one when the extra
+        # material is held rather than forged.
+        #   AGF_PIN_EXTRA_MM=25 <cmd>
+        #
+        # Pair it with AGF_CLAMP_DEPTH_MM at the same value, or the clamp -- a fraction of
+        # the now-longer bar -- reaches past the chuck face into material the dies strike.
+        self.pin_extra_m = env_float("AGF_PIN_EXTRA_MM", 0.0) / 1000.0
+        if self.pin_extra_m < 0.0:
+            raise ValueError(
+                "AGF_PIN_EXTRA_MM=%g is negative. It adds stock on the chuck side; "
+                "it cannot remove any." % (self.pin_extra_m * 1000.0)
+            )
+        self.cylinder_height += self.pin_extra_m
+        self.cylinder_pos = np.array([self.pin_extra_m / 2.0, 0.0, 6 * self.cylinder_radius])
         # Reference billet length the die window and the camera framing were tuned at
         # (forge_common REAL_STOCK_LENGTH_MM = 59 mm). Geometry that must NOT stretch when the
         # billet is lengthened is anchored to this instead of to cylinder_height. At the
