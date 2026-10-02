@@ -12,6 +12,7 @@ apply_early_wsl_graphics_defaults()
 
 import genesis as gs
 
+from agforge.env_knobs import env_str
 from agforge.options import AgilityForgeOptions, RobotOptions, GENERATED_ROBOT_XML_PATH
 from agforge.environment import AgilityForgeEnv
 
@@ -36,6 +37,19 @@ class RobotXMLGenerator:
             robot_cfg.cylinder_radius * 0.4,  # Y-dimension (width/thickness)
             robot_cfg.cylinder_radius * 1.2,  # Z-dimension (depth)
         ])
+
+        # The die's contact shape. Unset, each jaw is the box above, whose Y half-extent
+        # (0.4 * radius) is the measured flat of the real tool at its working depth. Set,
+        # the jaw keeps that box's kinematics and gap target and only the CONTACT SURFACE
+        # becomes the tool geometry, so a box/mesh pair differs in shape alone.
+        #   AGF_DIE_MESH=/path/to/Tool2.stl <cmd>
+        # Millimetres, working face on y=0, bar axis along x, flat spanning z.
+        self.die_mesh_path = env_str("AGF_DIE_MESH", "").strip()
+        if self.die_mesh_path and not os.path.isfile(self.die_mesh_path):
+            raise FileNotFoundError(
+                f"AGF_DIE_MESH={self.die_mesh_path!r} does not exist. Unset it to use the "
+                f"box die."
+            )
 
         # Induction coil visualizer metrics
         self.coil_offset_x = robot_cfg.coil_offset_x
@@ -64,6 +78,30 @@ class RobotXMLGenerator:
         """Formats a numpy array into an XML-compatible string."""
         return ' '.join(f'{x:.{precision}f}' for x in arr)
 
+    def _die_mesh_asset(self):
+        """The <mesh> asset line, or nothing when the box die is in use."""
+        if not self.die_mesh_path:
+            return ""
+        return (f'\n    <mesh name="die_mesh" file="{self.die_mesh_path}" '
+                f'scale="0.001 0.001 0.001"/>')
+
+    def _die_geom(self, face_sign):
+        """One jaw's contact geom.
+
+        face_sign is +1 for the jaw that closes along +y (its contact face is its own
+        +y face) and -1 for the jaw that closes along -y. The mesh is authored with its
+        working face on y=0 and its body extending toward +y, so it is placed AT that
+        face and the +y jaw is turned 180 degrees about x to put its body behind the
+        face rather than through the bar. Both jaws therefore present the tool surface
+        exactly where the box's face was, which is what keeps the gap target unchanged.
+        """
+        if not self.die_mesh_path:
+            return f'<geom type="box" size="{self._to_str(self.gripper_size)}" material="gripper"/>'
+        half_y = float(self.gripper_size[1])
+        euler = "180 0 0" if face_sign > 0 else "0 0 0"
+        return (f'<geom type="mesh" mesh="die_mesh" pos="0 {face_sign * half_y:.6f} 0" '
+                f'euler="{euler}" material="gripper"/>')
+
     def generate_content(self):
         """Populates the XML template with the derived parameters."""
         return f"""
@@ -71,7 +109,7 @@ class RobotXMLGenerator:
   <compiler angle="degree" inertiafromgeom="false"/>
 
   <asset>
-    <material name="gripper" rgba="0.8 0.2 0.2 1"/>
+    <material name="gripper" rgba="0.8 0.2 0.2 1"/>{self._die_mesh_asset()}
   </asset>
 
   <worldbody>
@@ -92,12 +130,12 @@ class RobotXMLGenerator:
           <body name="left_gripper" pos="0 {-self.gripper_start_pos_y:.4f} 0">
             <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
             <joint name="left_gripper_slide" type="slide" axis="0 1 0" range="{self._to_str(self.gripper_slide_range)}"/>
-            <geom type="box" size="{self._to_str(self.gripper_size)}" material="gripper"/>
+            {self._die_geom(+1)}
           </body>
           <body name="right_gripper" pos="0 {self.gripper_start_pos_y:.4f} 0">
             <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
             <joint name="right_gripper_slide" type="slide" axis="0 -1 0" range="{self._to_str(self.gripper_slide_range)}"/>
-            <geom type="box" size="{self._to_str(self.gripper_size)}" material="gripper"/>
+            {self._die_geom(-1)}
           </body>
         </body>
       </body>
