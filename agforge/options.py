@@ -316,13 +316,42 @@ class RobotOptions(Options):
         # at a fixed ABSOLUTE length while the bar grows. 0.35 is the shipped default and
         # reproduces every prior run exactly.
         #     L=92 with the same absolute clamp as L=59:  0.35 * 59 / 92 = 0.22446
+        # AGF_CLAMP_DEPTH_MM states the clamp as an ABSOLUTE depth into the bar instead of
+        # a fraction of it, which is what a physical chuck is: it grips a set length of
+        # stock and does not reach further because the bar got longer. With held stock on
+        # the chuck side, setting this to the same value leaves the exposed bar free from
+        # the chuck face out.
+        #   AGF_PIN_EXTRA_MM=25 AGF_CLAMP_DEPTH_MM=25 <cmd>
+        # The two knobs are alternative spellings of one quantity, so setting both is an
+        # error rather than a precedence puzzle.
+        _clamp_depth_mm = env_float("AGF_CLAMP_DEPTH_MM", None)
         _clamp_frac = env_float("AGF_CLAMP_FRACTION", 0.35)
-        if abs(_clamp_frac - 0.35) > 1e-9:
-            print("[options] AGF_CLAMP_FRACTION=%.5f -- clamp is %.2f mm on a %.1f mm billet "
-                  "(default 0.35 would give %.2f mm). Not comparable with runs at the default."
-                  % (_clamp_frac, _clamp_frac * self.cylinder_height * 1000.0,
-                     self.cylinder_height * 1000.0, 0.35 * self.cylinder_height * 1000.0))
-        fixed_region_size = np.array([_clamp_frac * self.cylinder_height, 4 * self.cylinder_radius, 4 * self.cylinder_radius])
+        if _clamp_depth_mm is not None and os.environ.get("AGF_CLAMP_FRACTION", "").strip():
+            raise ValueError(
+                "AGF_CLAMP_DEPTH_MM and AGF_CLAMP_FRACTION both set. They are the same "
+                "quantity in different units; set one. Depth %g mm would be fraction "
+                "%.5f on this %.1f mm billet."
+                % (_clamp_depth_mm, 2.0 * _clamp_depth_mm / 1000.0 / self.cylinder_height,
+                   self.cylinder_height * 1000.0)
+            )
+        if _clamp_depth_mm is not None:
+            if _clamp_depth_mm <= 0.0:
+                raise ValueError("AGF_CLAMP_DEPTH_MM=%g must be positive." % _clamp_depth_mm)
+            # The box is centred on the pinned face, so half of it hangs off the end of the
+            # stock and the width is twice the depth that bites.
+            _clamp_axial = 2.0 * _clamp_depth_mm / 1000.0
+            print("[options] AGF_CLAMP_DEPTH_MM=%.3f -- clamp bites %.2f mm into a %.1f mm "
+                  "billet (fraction %.5f). Not comparable with runs at the default 0.35."
+                  % (_clamp_depth_mm, _clamp_depth_mm, self.cylinder_height * 1000.0,
+                     _clamp_axial / self.cylinder_height))
+        else:
+            if abs(_clamp_frac - 0.35) > 1e-9:
+                print("[options] AGF_CLAMP_FRACTION=%.5f -- clamp is %.2f mm on a %.1f mm billet "
+                      "(default 0.35 would give %.2f mm). Not comparable with runs at the default."
+                      % (_clamp_frac, _clamp_frac * self.cylinder_height * 1000.0,
+                         self.cylinder_height * 1000.0, 0.35 * self.cylinder_height * 1000.0))
+            _clamp_axial = _clamp_frac * self.cylinder_height
+        fixed_region_size = np.array([_clamp_axial, 4 * self.cylinder_radius, 4 * self.cylinder_radius])
         fixed_region_center = self.cylinder_pos + np.array([0.5 * self.cylinder_height, 0, 0])
         self.fixed_region_bounds = torch.tensor(np.array([
             fixed_region_center - fixed_region_size / 2,
