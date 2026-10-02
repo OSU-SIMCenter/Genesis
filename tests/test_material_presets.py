@@ -76,3 +76,33 @@ def test_geometry_and_cfl_are_not_material_properties():
     for preset in MATERIAL_PRESETS.values():
         assert "billet_length_m" not in preset
         assert "target_cfl_ratio" not in preset
+
+
+def test_6063_400C_is_the_hot_card(monkeypatch):
+    """400 C is carried in jc_A with thermal off, so the elastic card does not move."""
+    hot = _card(monkeypatch, "6063_400C")
+    cold = _card(monkeypatch, "6063T52")
+    assert hot["jc_A"] == 75.0e6
+    assert hot["E"] == cold["E"] and hot["nu"] == cold["nu"] and hot["rho"] == cold["rho"]
+
+
+def test_6063_400C_is_perfectly_plastic(monkeypatch):
+    """jc_B = 0. With hardening left on the cold card's value the hot bar would be
+    STRONGER than the cold one by 0.2 strain, which is the opposite of the intent."""
+    hot = _card(monkeypatch, "6063_400C")
+    cold = _card(monkeypatch, "6063T52")
+    assert hot["jc_B"] == 0.0
+    for eps in (0.0, 0.1, 0.2, 0.3):
+        hot_flow = hot["jc_A"] + hot["jc_B"] * eps ** hot["jc_n"]
+        cold_flow = cold["jc_A"] + cold["jc_B"] * eps ** cold["jc_n"]
+        assert hot_flow < cold_flow, f"hot card is not softer at eps={eps}"
+
+
+def test_johnson_cook_triple_always_lands_together():
+    """jc_A, jc_B and jc_n set the flow curve jointly. A preset that moves one and
+    inherits the others mixes two materials' constants -- the bug that made the
+    first 6063 card 27.3% too soft at yield."""
+    triple = ("jc_A", "jc_B", "jc_n")
+    for name, preset in MATERIAL_PRESETS.items():
+        present = [k for k in triple if k in preset]
+        assert len(present) in (0, 3), f"{name} sets only {present} of the flow-curve triple"

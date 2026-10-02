@@ -61,6 +61,44 @@ MATERIAL_PRESETS: dict[str, dict] = {
         "enable_thermal": False,   # cold, no induction; adiabatic rise ~8 K total
         "billet_temp_k": 293.15,
     },
+
+    # The hot aluminium programs (Roll2, Roll3) were run at 400 C. There is no
+    # measured T52 flow curve at that temperature, so this card is a LITERATURE
+    # ESTIMATE and must be described as one in any write-up -- not as a measured
+    # property of this bar.
+    #
+    # Two laws evaluated at 400 C and the press's strain rate (about 0.6 /s) both
+    # land near 80 MPa and are nearly flat in strain:
+    #   * Hong, Du and Yan, J. Light Industry 36(4) (2021) 86-96 -- 6063-T5
+    #     compression.
+    #   * Li et al., Mater. Res. Express 10 (2023) 106508 -- homogenized billet.
+    # 75 MPa is the round number inside that band. A 55 / 95 MPa bracket moves
+    # free-end growth by about 7% per 20 MPa, a quarter of the die effect, so the
+    # choice inside the band is not what sets the shape.
+    #
+    # The temperature is carried IN jc_A, not simulated: thermal stays off and the
+    # billet sits at jc_T_ref, so T* = 0 and the Johnson-Cook melting term is
+    # inert. This is an isothermal card AT 400 C, not a cooling billet.
+    #
+    # jc_B = 0 makes it perfectly plastic. Lowering jc_A while leaving jc_B at the
+    # cold card's 173.6 MPa would give a bar that yields soft and then hardens like
+    # cold T52 -- stronger at 0.2 strain than the cold card it was meant to soften.
+    "6063_400C": {
+        "E": 68.9e9,            # elastic card is the cold one; only flow stress moves
+        "nu": 0.33,
+        "rho": 2700.0,
+        "von_mises_yield_stress": 75.0e6,
+        "jc_A": 75.0e6,
+        "jc_B": 0.0,            # perfectly plastic; see the note above
+        "jc_n": 0.45,           # inert while jc_B is 0, carried so the triple lands together
+        "jc_C": 0.0,
+        "jc_T_ref": 293.15,
+        "jc_T_melt": 933.15,
+        "jc_m": 1.0,
+        # (builder)
+        "enable_thermal": False,
+        "billet_temp_k": 293.15,
+    },
 }
 
 DEFAULT_MATERIAL = "316L"
