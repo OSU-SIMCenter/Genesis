@@ -4,20 +4,32 @@ Hot-forging simulation of the Agility Forge press, driven from recorded robot da
 
 ## Running a forging sequence
 
-Requires WSL with an NVIDIA GPU.
+Needs Linux and an NVIDIA GPU. These runs were measured on a Windows laptop through WSL
+(Ubuntu). The commands below are ordinary Linux commands; on a native Linux machine, run them as
+they are. macOS and native Windows were not used for these runs.
 
-**Run from a login shell.** The CUDA driver lives in `/usr/lib/wsl/lib`, and only a login shell
-puts it on `LD_LIBRARY_PATH`. Without it the unversioned `libcuda.so` that the backend `dlopen()`s
-is invisible, and the simulation falls back to CPU **without reporting it** — a silent wrong answer
-rather than an error.
+On WSL the CUDA driver lives in `/usr/lib/wsl/lib`, and only a login shell puts it on
+`LD_LIBRARY_PATH`. Without it the unversioned `libcuda.so` that the backend `dlopen()`s is
+invisible, and the simulation falls back to CPU **without reporting it** — a silent wrong answer
+rather than an error. From Windows that shell is `wsl.exe -d <distro> -- bash -lc`. A login shell
+does not read `.bashrc`, so `pixi` has to already be on its `PATH`. Native Linux does not need
+that library path.
+
+**Use the Pixi environment pinned by `pixi.lock`.** Install [Pixi](https://pixi.sh). From the
+repository, once per checkout:
 
 ```bash
-wsl.exe -d my-ubuntu -- bash -lc '
-  cd ~/GitHub/Genesis/aims-genesis/<your-worktree>
-  AGF_CONTACT_RUNTIME_SWITCH=1 \
-  AGF_BILLET_MESH=~/GitHub/Genesis/forge_common/main/outputs/real_meshes/billet_hit01_before_d8000.obj \
-  python -m agforge.analysis.batch_arms --n-hits 17
-'
+pixi install
+```
+
+`pixi install` writes `.pixi/`, which git ignores. The commands below use `pixi run python`.
+Another `python` on the path is not the environment these results were measured with.
+
+```bash
+cd /path/to/Genesis
+AGF_CONTACT_RUNTIME_SWITCH=1 \
+AGF_BILLET_MESH=/path/to/forge_common/main/outputs/real_meshes/billet_hit01_before_d8000.obj \
+pixi run python -m agforge.analysis.batch_arms --n-hits 17
 ```
 
 `agforge.analysis.batch_arms` **exits 2** unless `AGF_CONTACT_RUNTIME_SWITCH=1`. Without it the
@@ -45,21 +57,19 @@ sequence.
 This needs **forge_common**, which is a separate repository
 ([OSU-SIMCenter/forge_common](https://github.com/OSU-SIMCenter/forge_common), the released runs
 used commit `73930cb`). Clone it beside this one and point `PYTHONPATH` at its `main` directory.
-The same login-shell requirement as above applies: without `/usr/lib/wsl/lib` on
-`LD_LIBRARY_PATH` the simulation falls back to CPU **without saying so**.
+Use the same `pixi install` and `pixi run python` as above. On WSL, use the login shell
+described above. The toolpath and `Tool2.stl` are inputs; they are not in this repository.
 
 ### One press, to time it
 
 ```bash
-wsl.exe -d my-ubuntu -- bash -lc '
-  cd ~/GitHub/Genesis/aims-genesis/<your-worktree>
-  PYTHONPATH=~/GitHub/Genesis/forge_common/main \
-  AGF_MATERIAL=6063T52 \
-  AGF_CELLS_PER_DIAMETER=13 \
-  python -u -m agforge.scripts.record_toolpath_hits \
-    --jsonl /path/to/roll2_toolpath.jsonl --n-hits 1 \
-    --length-from-toolpath --hit-dir /tmp/smoke
-'
+cd /path/to/Genesis
+PYTHONPATH=/path/to/forge_common/main \
+AGF_MATERIAL=6063T52 \
+AGF_CELLS_PER_DIAMETER=13 \
+pixi run python -u -m agforge.scripts.record_toolpath_hits \
+  --jsonl /path/to/roll2_toolpath.jsonl --n-hits 1 \
+  --length-from-toolpath --hit-dir /tmp/smoke
 ```
 
 Scene construction dominates a short run — it is most of the wall clock for one press, and is paid
@@ -104,7 +114,7 @@ flow. `tests/test_stock_geometry.py` pins those numbers.
 ### Point clouds
 
 ```bash
-  python -m agforge.scripts.export_run_clouds \
+  pixi run python -m agforge.scripts.export_run_clouds \
     --hit-dir /tmp/run --out /tmp/series --cells 13 --exposed-mm 100 --held-mm 25
 ```
 
@@ -159,7 +169,7 @@ records 100 mm. And four knobs that were compiled in on the old line are default
 set explicitly:
 
 ```bash
-  AGF_MATERIAL=6063_400C AGF_CELLS_PER_DIAMETER=13 AGF_CFL_SAFETY=0.45   AGF_MAX_FORCE=1e12 AGF_PIN_EXTRA_MM=25 AGF_CLAMP_DEPTH_MM=25   AGF_DIE_MESH=/path/to/Tool2.stl   AGF_ENABLE_CPIC=1 AGF_MPM_X_PAD_LOWER=0.85 AGF_APPROACH_CFL_RATIO=0.0205   python -u -m agforge.scripts.record_toolpath_hits     --jsonl roll2_toolpath.jsonl --n-hits 1 --length-from-toolpath     --z-shift-mm 25 --hit-dir out/roll2_p1
+  AGF_MATERIAL=6063_400C AGF_CELLS_PER_DIAMETER=13 AGF_CFL_SAFETY=0.45   AGF_MAX_FORCE=1e12 AGF_PIN_EXTRA_MM=25 AGF_CLAMP_DEPTH_MM=25   AGF_DIE_MESH=/path/to/Tool2.stl   AGF_ENABLE_CPIC=1 AGF_MPM_X_PAD_LOWER=0.85 AGF_APPROACH_CFL_RATIO=0.0205   pixi run python -u -m agforge.scripts.record_toolpath_hits     --jsonl roll2_toolpath.jsonl --n-hits 1 --length-from-toolpath     --z-shift-mm 25 --hit-dir out/roll2_p1
 ```
 
 Timing on an RTX 3060 Laptop, 13 cells, 44,678 particles: the full 12-press sequence took **355 s,
@@ -215,7 +225,7 @@ onto a short mode; `AGF_CONTACT_MODE=grid_penalty` is an error (use `penalty`).
 Teleport (`apply_particle_contact` mechanical projection) is in that academic set as
 `grid_position_correction`. **It is off by default since 2026-09-16**, so a scene built with mode
 `grid` and no other contact knobs is tag `grid`. Ask for the teleport with
-`python -m agforge.analysis.batch_arms --arms grid_position_correction` (or
+`pixi run python -m agforge.analysis.batch_arms --arms grid_position_correction` (or
 `AGF_PARTICLE_CONTACT_MECH=1` on a single-scene build). Die-to-billet heat transfer is the other,
 independent job of the same pass and is NOT affected: it follows `AGF_PARTICLE_CONTACT_THERMAL`,
 which still defaults on. Setting the old master `AGF_PARTICLE_CONTACT` still drives both jobs.
@@ -226,7 +236,7 @@ Every module that reads a knob should import cleanly. This is a three-second che
 the class of error where a knob is rewritten but its helper is not in scope:
 
 ```bash
-python -c "import agforge.options, agforge.environment, agforge.strike_controller"
+pixi run python -c "import agforge.options, agforge.environment, agforge.strike_controller"
 ```
 
 ## Knobs
